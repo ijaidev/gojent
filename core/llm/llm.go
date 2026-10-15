@@ -1,3 +1,5 @@
+// Package llm provides interfaces, message definitions, and provider abstractions
+// for interacting with Large Language Models.
 package llm
 
 import (
@@ -28,6 +30,7 @@ type Message struct {
 // FinishReason represents why the LLM stopped generating tokens.
 type FinishReason string
 
+// Finish reasons returned by an LLM generation.
 const (
 	FinishReasonStop   FinishReason = "stop"
 	FinishReasonLength FinishReason = "length"

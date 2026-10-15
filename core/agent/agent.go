@@ -1,3 +1,4 @@
+// Package agent provides autonomous agent abstractions, configuration, and execution loops.
 package agent
 
 import (
@@ -229,14 +230,14 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 	}
 
 	// Append the assistant's response to conversation messages
-	allMessages := append(callMessages, llm.Message{
+	callMessages = append(callMessages, llm.Message{
 		Role:    llm.RoleAssistant,
 		Content: resp.Text,
 	})
 
 	return &Response{
 		Text:         resp.Text,
-		Messages:     allMessages,
+		Messages:     callMessages,
 		FinishReason: resp.FinishReason,
 		Usage:        resp.Usage,
 		Raw:          resp.Raw,

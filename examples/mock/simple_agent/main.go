@@ -1,3 +1,4 @@
+// Package main demonstrates creating an autonomous agent with a mock LLM and runtime model swapping.
 package main
 
 import (

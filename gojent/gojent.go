@@ -1,3 +1,4 @@
+// Package gojent provides the root container for registering, managing, and executing agents and workflows.
 package gojent
 
 import (
