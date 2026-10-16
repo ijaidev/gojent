@@ -9,6 +9,7 @@ import (
 
 	"github.com/ijaidev/gojent/core/agent"
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/core/storage"
 	"github.com/ijaidev/gojent/core/tool"
 )
 
@@ -473,5 +474,221 @@ func TestAgent_PerCallToolsOverride(t *testing.T) {
 	lastCall := mock.LastCall()
 	if lastCall == nil || len(lastCall.Tools) != 1 || lastCall.Tools[0].Name != "dynamic_tool" {
 		t.Errorf("expected dynamic_tool in last call, got %+v", lastCall)
+	}
+}
+
+func TestAgent_WithStorage_ConversationMemory(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMockStorage()
+	defer func() { _ = store.Close() }()
+
+	responses := []string{
+		"Got it, your favorite color is blue.",
+		"Your favorite color is blue!",
+	}
+	mock := llm.NewMockLLM(responses...)
+
+	a, err := agent.New(agent.Config{
+		ID:           "memory-agent",
+		Instructions: "Remember facts.",
+		Model:        mock,
+		Storage:      store,
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	threadID := "user-thread-42"
+
+	// Turn 1
+	res1, err := a.Generate(ctx, "My favorite color is blue.", agent.WithThreadID(threadID), agent.WithResourceID("user-1"))
+	if err != nil {
+		t.Fatalf("Turn 1 Generate failed: %v", err)
+	}
+	if res1.Text != responses[0] {
+		t.Errorf("Turn 1 unexpected response: %s", res1.Text)
+	}
+
+	// Verify thread was automatically saved
+	th, err := store.GetThreadByID(ctx, threadID)
+	if err != nil {
+		t.Fatalf("GetThreadByID failed: %v", err)
+	}
+	if th.ResourceID != "user-1" {
+		t.Errorf("expected thread resourceID 'user-1', got %q", th.ResourceID)
+	}
+
+	// Verify messages saved after Turn 1 (user message + assistant message)
+	msgs1, err := store.ListMessages(ctx, storage.MessageFilter{ThreadID: threadID})
+	if err != nil {
+		t.Fatalf("ListMessages Turn 1 failed: %v", err)
+	}
+	if len(msgs1) != 2 {
+		t.Fatalf("expected 2 messages in store after Turn 1, got %d", len(msgs1))
+	}
+
+	// Turn 2
+	res2, err := a.Generate(ctx, "What is my favorite color?", agent.WithThreadID(threadID))
+	if err != nil {
+		t.Fatalf("Turn 2 Generate failed: %v", err)
+	}
+	if res2.Text != responses[1] {
+		t.Errorf("Turn 2 unexpected response: %s", res2.Text)
+	}
+
+	// Verify that the Turn 2 request to LLM contained history from Turn 1!
+	lastCall := mock.LastCall()
+	if lastCall == nil {
+		t.Fatalf("expected lastCall recorded on mock LLM")
+	}
+	// Expected messages: Instructions (system), Turn 1 User, Turn 1 Assistant, Turn 2 User
+	if len(lastCall.Messages) != 4 {
+		t.Fatalf("expected 4 messages sent to LLM in Turn 2, got %d: %+v", len(lastCall.Messages), lastCall.Messages)
+	}
+	if lastCall.Messages[1].Content != "My favorite color is blue." {
+		t.Errorf("expected Turn 1 history in message 1, got: %s", lastCall.Messages[1].Content)
+	}
+	if lastCall.Messages[2].Content != responses[0] {
+		t.Errorf("expected Turn 1 response in message 2, got: %s", lastCall.Messages[2].Content)
+	}
+	if lastCall.Messages[3].Content != "What is my favorite color?" {
+		t.Errorf("expected Turn 2 user prompt in message 3, got: %s", lastCall.Messages[3].Content)
+	}
+
+	// Verify that store now contains all 4 messages
+	allMsgs, err := store.ListMessages(ctx, storage.MessageFilter{ThreadID: threadID})
+	if err != nil {
+		t.Fatalf("ListMessages after Turn 2 failed: %v", err)
+	}
+	if len(allMsgs) != 4 {
+		t.Errorf("expected 4 messages total in store, got %d", len(allMsgs))
+	}
+}
+
+func TestAgent_StorageGetterAndSetter(t *testing.T) {
+	mock := llm.NewMockLLM("hello")
+	store1 := storage.NewMockStorage()
+	store2 := storage.NewMockStorage()
+
+	a, err := agent.New(agent.Config{
+		ID:      "test-agent",
+		Model:   mock,
+		Storage: store1,
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	if a.Storage() != store1 {
+		t.Errorf("expected store1, got %v", a.Storage())
+	}
+
+	a.SetStorage(store2)
+	if a.Storage() != store2 {
+		t.Errorf("expected store2 after SetStorage, got %v", a.Storage())
+	}
+}
+
+func TestAgent_Stream_WithStorage(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMockStorage()
+	defer func() { _ = store.Close() }()
+
+	mock := llm.NewMockLLM("Streamed response")
+	a, err := agent.New(agent.Config{
+		ID:      "streaming-agent",
+		Model:   mock,
+		Storage: store,
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	threadID := "stream-thread-1"
+	stream, err := a.Stream(ctx, "Hello streaming!", agent.WithThreadID(threadID))
+	if err != nil {
+		t.Fatalf("Stream failed: %v", err)
+	}
+
+	res, err := stream.Drain()
+	if err != nil {
+		t.Fatalf("Drain failed: %v", err)
+	}
+	if res.Text != "Streamed response" {
+		t.Errorf("unexpected streamed text: %s", res.Text)
+	}
+
+	// Verify messages were saved in store
+	msgs, err := store.ListMessages(ctx, storage.MessageFilter{ThreadID: threadID})
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages in store (user + assistant), got %d", len(msgs))
+	}
+	if msgs[0].Content != "Hello streaming!" || msgs[1].Content != "Streamed response" {
+		t.Errorf("unexpected saved contents: %+v", msgs)
+	}
+}
+
+func TestAgent_WithStorage_MaxSteps_NoDuplicateMessages(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMockStorage()
+	defer func() { _ = store.Close() }()
+
+	toolCalled := false
+	testTool := tool.MustNew(tool.Config[string, string]{
+		ID:          "step_tool",
+		Description: "A tool that does work",
+		Execute: func(_ context.Context, _ string) (string, error) {
+			toolCalled = true
+			return "done", nil
+		},
+	})
+
+	mock := llm.NewMockLLM().ApplyOptions(
+		llm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
+			return &llm.GenerateResponse{
+				FinishReason: llm.FinishReasonTool,
+				ToolCalls: []llm.ToolCall{
+					{ID: "c1", Name: "step_tool", Arguments: `"test"`},
+				},
+			}, nil
+		}),
+	)
+
+	a, err := agent.New(agent.Config{
+		ID:       "max-steps-agent",
+		Model:    mock,
+		Storage:  store,
+		Tools:    []tool.Tool{testTool},
+		MaxSteps: 1,
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	threadID := "max-steps-thread"
+	resp, err := a.Generate(ctx, "run tool once", agent.WithThreadID(threadID))
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	if !toolCalled {
+		t.Fatalf("expected tool to be called")
+	}
+	if resp.FinishReason != llm.FinishReasonLength {
+		t.Errorf("expected FinishReasonLength, got %v", resp.FinishReason)
+	}
+
+	// Verify messages in store: exactly 3 (User, Assistant, Tool). No duplicate!
+	msgs, err := store.ListMessages(ctx, storage.MessageFilter{ThreadID: threadID})
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected exactly 3 messages in store, got %d", len(msgs))
+	}
+	if msgs[0].Role != llm.RoleUser || msgs[1].Role != llm.RoleAssistant || msgs[2].Role != llm.RoleTool {
+		t.Errorf("unexpected message roles: %v, %v, %v", msgs[0].Role, msgs[1].Role, msgs[2].Role)
 	}
 }

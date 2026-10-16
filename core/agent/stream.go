@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/core/storage"
 	"github.com/ijaidev/gojent/core/tool"
 )
 
@@ -98,23 +99,39 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 
 			// If the model did not request any tools, it has reached its final answer!
 			if len(s.stepToolCalls) == 0 {
-				s.messages = append(s.messages, llm.Message{
+				finalMsg := llm.Message{
 					Role:    llm.RoleAssistant,
 					Content: s.stepAccumulated.String(),
 					Raw:     s.stepRaw,
-				})
+				}
+				s.messages = append(s.messages, finalMsg)
 				s.completed = true
+				if s.genCfg != nil && s.genCfg.Storage != nil && s.genCfg.ThreadID != "" {
+					stored := storage.NewMessageFromLLM(s.genCfg.ThreadID, finalMsg)
+					if s.genCfg.ResourceID != "" {
+						stored.ResourceID = s.genCfg.ResourceID
+					}
+					_, _ = s.genCfg.Storage.SaveMessages(s.ctx, []*storage.Message{stored})
+				}
 				return nil, io.EOF
 			}
 
 			// Model requested tool calls in this step
-			s.messages = append(s.messages, llm.Message{
+			assistantMsg := llm.Message{
 				Role:      llm.RoleAssistant,
 				Content:   s.stepAccumulated.String(),
 				ToolCalls: s.stepToolCalls,
 				Raw:       s.stepRaw,
-			})
+			}
+			s.messages = append(s.messages, assistantMsg)
 			s.allToolCalls = append(s.allToolCalls, s.stepToolCalls...)
+			if s.genCfg != nil && s.genCfg.Storage != nil && s.genCfg.ThreadID != "" {
+				stored := storage.NewMessageFromLLM(s.genCfg.ThreadID, assistantMsg)
+				if s.genCfg.ResourceID != "" {
+					stored.ResourceID = s.genCfg.ResourceID
+				}
+				_, _ = s.genCfg.Storage.SaveMessages(s.ctx, []*storage.Message{stored})
+			}
 
 			s.step++
 			if s.step >= s.maxSteps {
@@ -126,12 +143,20 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			// Execute all requested tool calls
 			for _, call := range s.stepToolCalls {
 				output := s.agent.executeToolCall(s.ctx, call, s.activeTools)
-				s.messages = append(s.messages, llm.Message{
+				toolMsg := llm.Message{
 					Role:       llm.RoleTool,
 					Name:       call.Name,
 					ToolCallID: call.ID,
 					Content:    output,
-				})
+				}
+				s.messages = append(s.messages, toolMsg)
+				if s.genCfg != nil && s.genCfg.Storage != nil && s.genCfg.ThreadID != "" {
+					stored := storage.NewMessageFromLLM(s.genCfg.ThreadID, toolMsg)
+					if s.genCfg.ResourceID != "" {
+						stored.ResourceID = s.genCfg.ResourceID
+					}
+					_, _ = s.genCfg.Storage.SaveMessages(s.ctx, []*storage.Message{stored})
+				}
 			}
 
 			// Reset step buffers

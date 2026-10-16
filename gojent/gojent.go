@@ -7,12 +7,14 @@ import (
 	"sync"
 
 	"github.com/ijaidev/gojent/core/agent"
+	"github.com/ijaidev/gojent/core/storage"
 )
 
-// Gojent is the central container managing agents, workflows, and integrations,
+// Gojent is the central container managing agents, workflows, and integrations.
 type Gojent struct {
-	mu     sync.RWMutex
-	agents map[string]*agent.Agent
+	mu      sync.RWMutex
+	agents  map[string]*agent.Agent
+	storage storage.Storage
 }
 
 // Option configures a Gojent instance.
@@ -24,6 +26,13 @@ func WithAgent(a *agent.Agent) Option {
 		if a != nil {
 			g.agents[a.ID()] = a
 		}
+	}
+}
+
+// WithStorage configures global storage for the Gojent container.
+func WithStorage(s storage.Storage) Option {
+	return func(g *Gojent) {
+		g.storage = s
 	}
 }
 
@@ -74,4 +83,18 @@ func (g *Gojent) ListAgents() map[string]*agent.Agent {
 	result := make(map[string]*agent.Agent, len(g.agents))
 	maps.Copy(result, g.agents)
 	return result
+}
+
+// Storage returns the configured storage backend, or nil if none is configured.
+func (g *Gojent) Storage() storage.Storage {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.storage
+}
+
+// SetStorage sets or swaps the storage backend at runtime.
+func (g *Gojent) SetStorage(s storage.Storage) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.storage = s
 }

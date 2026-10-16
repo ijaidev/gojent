@@ -6,6 +6,7 @@ import (
 
 	"github.com/ijaidev/gojent/core/agent"
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/core/storage"
 	"github.com/ijaidev/gojent/gojent"
 )
 
@@ -54,5 +55,20 @@ func TestGojent_RootContainer(t *testing.T) {
 	_, err = app.GetAgent("unknown")
 	if err == nil {
 		t.Error("expected error for non-existent agent, got nil")
+	}
+
+	// Test Container Storage
+	mockStore := storage.NewMockStorage()
+	appWithStorage := gojent.New(
+		gojent.WithStorage(mockStore),
+	)
+	if appWithStorage.Storage() != mockStore {
+		t.Errorf("expected storage %v, got %v", mockStore, appWithStorage.Storage())
+	}
+
+	swappedStore := storage.NewMockStorage()
+	appWithStorage.SetStorage(swappedStore)
+	if appWithStorage.Storage() != swappedStore {
+		t.Errorf("expected swapped storage %v, got %v", swappedStore, appWithStorage.Storage())
 	}
 }
