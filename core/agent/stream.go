@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/core/tool"
 )
 
 var (
@@ -19,69 +20,158 @@ var (
 )
 
 // StreamResponse manages the streaming lifecycle of an agent response,
-// accumulating tokens, usage statistics, and conversation messages in real time.
+// executing tools across ReAct iterations and accumulating tokens, deltas,
+// and messages in real time.
 type StreamResponse struct {
-	mu           sync.Mutex
-	ctx          context.Context
-	stream       llm.Stream
-	messages     []llm.Message
-	accumulated  strings.Builder
-	toolCalls    []llm.ToolCall
-	finishReason llm.FinishReason
-	usage        llm.Usage
-	closed       bool
-	completed    bool
-	err          error
+	mu              sync.Mutex
+	ctx             context.Context
+	agent           *Agent
+	genCfg          *GenerateConfig
+	stream          llm.Stream
+	messages        []llm.Message
+	activeTools     []tool.Tool
+	toolDefs        []llm.ToolDefinition
+	maxSteps        int
+	step            int
+	stepAccumulated strings.Builder
+	stepToolCalls   []llm.ToolCall
+	stepUsage       llm.Usage
+	allToolCalls    []llm.ToolCall
+	finishReason    llm.FinishReason
+	usage           llm.Usage
+	closed          bool
+	completed       bool
+	err             error
 }
 
-// newStreamResponse initializes a new StreamResponse wrapping an underlying LLM stream.
-func newStreamResponse(ctx context.Context, stream llm.Stream, messages []llm.Message) *StreamResponse {
+// newStreamResponse initializes a new StreamResponse managing multi-step ReAct streaming.
+func newStreamResponse(
+	ctx context.Context,
+	agent *Agent,
+	genCfg *GenerateConfig,
+	stream llm.Stream,
+	messages []llm.Message,
+	activeTools []tool.Tool,
+	toolDefs []llm.ToolDefinition,
+	maxSteps int,
+) *StreamResponse {
 	return &StreamResponse{
 		ctx:          ctx,
+		agent:        agent,
+		genCfg:       genCfg,
 		stream:       stream,
 		messages:     messages,
+		activeTools:  activeTools,
+		toolDefs:     toolDefs,
+		maxSteps:     maxSteps,
 		finishReason: llm.FinishReasonStop,
 	}
 }
 
 // Recv returns the next incremental StreamChunk from the agent's LLM stream.
-// It returns io.EOF when generation has completed normally.
+// When a step completes with tool calls, it automatically executes the tools
+// and streams the subsequent turn until the model completes its final response.
+// It returns io.EOF when all ReAct iterations have finished.
 func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.closed {
-		return nil, ErrStreamClosed
-	}
-	if s.completed {
-		return nil, io.EOF
-	}
-	if s.err != nil {
-		return nil, s.err
-	}
+	for {
+		if s.closed {
+			return nil, ErrStreamClosed
+		}
+		if s.completed {
+			return nil, io.EOF
+		}
+		if s.err != nil {
+			return nil, s.err
+		}
 
-	chunk, err := s.stream.Recv()
-	if errors.Is(err, io.EOF) {
-		s.completed = true
-		return nil, io.EOF
-	}
-	if err != nil {
-		s.err = err
-		return nil, err
-	}
+		chunk, err := s.stream.Recv()
+		if errors.Is(err, io.EOF) {
+			_ = s.stream.Close()
 
-	s.accumulated.WriteString(chunk.Delta)
-	if len(chunk.ToolCalls) > 0 {
-		s.toolCalls = append(s.toolCalls, chunk.ToolCalls...)
-	}
-	if chunk.FinishReason != "" {
-		s.finishReason = chunk.FinishReason
-	}
-	if chunk.Usage != nil {
-		s.usage = *chunk.Usage
-	}
+			s.usage.PromptTokens += s.stepUsage.PromptTokens
+			s.usage.CompletionTokens += s.stepUsage.CompletionTokens
+			s.usage.TotalTokens += s.stepUsage.TotalTokens
 
-	return chunk, nil
+			// If the model did not request any tools, it has reached its final answer!
+			if len(s.stepToolCalls) == 0 {
+				s.messages = append(s.messages, llm.Message{
+					Role:    llm.RoleAssistant,
+					Content: s.stepAccumulated.String(),
+				})
+				s.completed = true
+				return nil, io.EOF
+			}
+
+			// Model requested tool calls in this step
+			s.messages = append(s.messages, llm.Message{
+				Role:      llm.RoleAssistant,
+				Content:   s.stepAccumulated.String(),
+				ToolCalls: s.stepToolCalls,
+			})
+			s.allToolCalls = append(s.allToolCalls, s.stepToolCalls...)
+
+			s.step++
+			if s.step >= s.maxSteps {
+				s.finishReason = llm.FinishReasonLength
+				s.completed = true
+				return nil, io.EOF
+			}
+
+			// Execute all requested tool calls
+			for _, call := range s.stepToolCalls {
+				output := s.agent.executeToolCall(s.ctx, call, s.activeTools)
+				s.messages = append(s.messages, llm.Message{
+					Role:       llm.RoleTool,
+					Name:       call.Name,
+					ToolCallID: call.ID,
+					Content:    output,
+				})
+			}
+
+			// Reset step buffers
+			s.stepToolCalls = nil
+			s.stepAccumulated.Reset()
+			s.stepUsage = llm.Usage{}
+
+			// Prepare request for next ReAct iteration
+			req := llm.GenerateRequest{
+				Messages:    s.messages,
+				Tools:       s.toolDefs,
+				Temperature: s.genCfg.Temperature,
+				MaxTokens:   s.genCfg.MaxTokens,
+				TopP:        s.genCfg.TopP,
+			}
+
+			nextStream, streamErr := s.genCfg.Model.Stream(s.ctx, req)
+			if streamErr != nil {
+				s.err = streamErr
+				return nil, streamErr
+			}
+			s.stream = nextStream
+			continue
+		}
+
+		if err != nil {
+			s.err = err
+			return nil, err
+		}
+
+		s.stepAccumulated.WriteString(chunk.Delta)
+		if len(chunk.ToolCalls) > 0 {
+			s.stepToolCalls = accumulateToolCalls(s.stepToolCalls, chunk.ToolCalls)
+		}
+		if chunk.FinishReason != "" {
+			s.finishReason = chunk.FinishReason
+		}
+		if chunk.Usage != nil {
+			s.stepUsage = *chunk.Usage
+		}
+
+		return chunk, nil
+	}
 }
 
 // Close closes the underlying stream and cancels any ongoing generation.
@@ -93,26 +183,32 @@ func (s *StreamResponse) Close() error {
 		return nil
 	}
 	s.closed = true
-	return s.stream.Close()
+	if s.stream != nil {
+		return s.stream.Close()
+	}
+	return nil
 }
 
-// Text returns the text accumulated from stream deltas so far.
+// Text returns the text accumulated from stream deltas for the final generation turn.
 func (s *StreamResponse) Text() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.accumulated.String()
+	return s.stepAccumulated.String()
 }
 
-// ToolCalls returns a copy of all tool calls received during the stream.
+// ToolCalls returns a copy of all tool calls received across all ReAct steps.
 func (s *StreamResponse) ToolCalls() []llm.ToolCall {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	copied := make([]llm.ToolCall, len(s.toolCalls))
-	copy(copied, s.toolCalls)
-	return copied
+
+	total := append([]llm.ToolCall{}, s.allToolCalls...)
+	if len(s.stepToolCalls) > 0 {
+		total = append(total, s.stepToolCalls...)
+	}
+	return total
 }
 
-// Response returns the full Agent response once the stream has completed.
+// Response returns the full Agent response once the stream has completed all ReAct iterations.
 // Returns ErrStreamNotFinished if called before the stream reaches EOF.
 func (s *StreamResponse) Response() (*Response, error) {
 	s.mu.Lock()
@@ -122,19 +218,16 @@ func (s *StreamResponse) Response() (*Response, error) {
 		return nil, ErrStreamNotFinished
 	}
 
-	text := s.accumulated.String()
-	fullMessages := make([]llm.Message, len(s.messages)+1)
-	copy(fullMessages, s.messages)
-	fullMessages[len(fullMessages)-1] = llm.Message{
-		Role:      llm.RoleAssistant,
-		Content:   text,
-		ToolCalls: s.toolCalls,
+	text := s.stepAccumulated.String()
+	toolCalls := s.allToolCalls
+	if len(toolCalls) == 0 && len(s.stepToolCalls) > 0 {
+		toolCalls = s.stepToolCalls
 	}
 
 	return &Response{
 		Text:         text,
-		ToolCalls:    s.toolCalls,
-		Messages:     fullMessages,
+		ToolCalls:    toolCalls,
+		Messages:     s.messages,
 		FinishReason: s.finishReason,
 		Usage:        s.usage,
 	}, nil
@@ -171,4 +264,25 @@ func (s *StreamResponse) All() iter.Seq2[*llm.StreamChunk, error] {
 			}
 		}
 	}
+}
+
+// accumulateToolCalls merges incoming tool call chunks or argument deltas into existing tool calls.
+func accumulateToolCalls(existing, incoming []llm.ToolCall) []llm.ToolCall {
+	for _, in := range incoming {
+		found := false
+		for i := range existing {
+			if (in.ID != "" && existing[i].ID == in.ID) || (in.ID == "" && in.Name != "" && existing[i].Name == in.Name) {
+				if in.Name != "" && existing[i].Name == "" {
+					existing[i].Name = in.Name
+				}
+				existing[i].Arguments += in.Arguments
+				found = true
+				break
+			}
+		}
+		if !found {
+			existing = append(existing, in)
+		}
+	}
+	return existing
 }

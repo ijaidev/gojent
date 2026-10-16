@@ -3,7 +3,9 @@ package google
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 
@@ -107,6 +109,23 @@ func (m *Model) Generate(ctx context.Context, req llm.GenerateRequest) (*llm.Gen
 		finishReason = mapFinishReason(resp.Candidates[0].FinishReason)
 	}
 
+	var toolCalls []llm.ToolCall
+	for _, fc := range resp.FunctionCalls() {
+		argsBytes, _ := json.Marshal(fc.Args)
+		callID := fc.ID
+		if callID == "" {
+			callID = fmt.Sprintf("call_%s", fc.Name)
+		}
+		toolCalls = append(toolCalls, llm.ToolCall{
+			ID:        callID,
+			Name:      fc.Name,
+			Arguments: string(argsBytes),
+		})
+	}
+	if len(toolCalls) > 0 && finishReason == llm.FinishReasonStop {
+		finishReason = llm.FinishReasonTool
+	}
+
 	var usage llm.Usage
 	if resp.UsageMetadata != nil {
 		usage = llm.Usage{
@@ -118,6 +137,7 @@ func (m *Model) Generate(ctx context.Context, req llm.GenerateRequest) (*llm.Gen
 
 	return &llm.GenerateResponse{
 		Text:         text,
+		ToolCalls:    toolCalls,
 		FinishReason: finishReason,
 		Usage:        usage,
 		Raw:          resp,
@@ -162,6 +182,23 @@ func (m *Model) Stream(ctx context.Context, req llm.GenerateRequest) (llm.Stream
 				}
 			}
 
+			var toolCalls []llm.ToolCall
+			for _, fc := range resp.FunctionCalls() {
+				argsBytes, _ := json.Marshal(fc.Args)
+				callID := fc.ID
+				if callID == "" {
+					callID = fmt.Sprintf("call_%s", fc.Name)
+				}
+				toolCalls = append(toolCalls, llm.ToolCall{
+					ID:        callID,
+					Name:      fc.Name,
+					Arguments: string(argsBytes),
+				})
+			}
+			if len(toolCalls) > 0 && (finishReason == "" || finishReason == llm.FinishReasonStop) {
+				finishReason = llm.FinishReasonTool
+			}
+
 			if resp.UsageMetadata != nil {
 				usage = &llm.Usage{
 					PromptTokens:     int(resp.UsageMetadata.PromptTokenCount),
@@ -172,6 +209,7 @@ func (m *Model) Stream(ctx context.Context, req llm.GenerateRequest) (llm.Stream
 
 			chunk := &llm.StreamChunk{
 				Delta:        deltaText,
+				ToolCalls:    toolCalls,
 				FinishReason: finishReason,
 				Usage:        usage,
 				Raw:          resp,
@@ -199,19 +237,57 @@ func convertMessages(messages []llm.Message) (contents []*genai.Content, systemI
 				systemParts = append(systemParts, &genai.Part{Text: msg.Content})
 			}
 		case llm.RoleAssistant:
+			var parts []*genai.Part
+			if msg.Content != "" {
+				parts = append(parts, &genai.Part{Text: msg.Content})
+			}
+			for _, tc := range msg.ToolCalls {
+				var argsMap map[string]any
+				if tc.Arguments != "" {
+					_ = json.Unmarshal([]byte(tc.Arguments), &argsMap)
+				}
+				if argsMap == nil {
+					argsMap = make(map[string]any)
+				}
+				parts = append(parts, &genai.Part{
+					FunctionCall: &genai.FunctionCall{
+						ID:   tc.ID,
+						Name: tc.Name,
+						Args: argsMap,
+					},
+				})
+			}
+			if len(parts) == 0 {
+				parts = append(parts, &genai.Part{Text: ""})
+			}
 			contents = append(contents, &genai.Content{
 				Role:  "model",
-				Parts: []*genai.Part{{Text: msg.Content}},
-			})
-		case llm.RoleUser:
-			contents = append(contents, &genai.Content{
-				Role:  "user",
-				Parts: []*genai.Part{{Text: msg.Content}},
+				Parts: parts,
 			})
 		case llm.RoleTool:
+			var respMap map[string]any
+			if msg.Content != "" {
+				if err := json.Unmarshal([]byte(msg.Content), &respMap); err != nil {
+					respMap = map[string]any{"output": msg.Content}
+				}
+			} else {
+				respMap = map[string]any{"output": ""}
+			}
+			name := msg.Name
+			if name == "" {
+				name = msg.ToolCallID
+			}
 			contents = append(contents, &genai.Content{
-				Role:  "tool",
-				Parts: []*genai.Part{{Text: msg.Content}},
+				Role: "tool",
+				Parts: []*genai.Part{
+					{
+						FunctionResponse: &genai.FunctionResponse{
+							ID:       msg.ToolCallID,
+							Name:     name,
+							Response: respMap,
+						},
+					},
+				},
 			})
 		default:
 			contents = append(contents, &genai.Content{
@@ -234,6 +310,23 @@ func convertMessages(messages []llm.Message) (contents []*genai.Content, systemI
 func convertConfig(req llm.GenerateRequest, systemInstruction *genai.Content) *genai.GenerateContentConfig {
 	cfg := &genai.GenerateContentConfig{
 		SystemInstruction: systemInstruction,
+	}
+
+	if len(req.Tools) > 0 {
+		var decls []*genai.FunctionDeclaration
+		for _, t := range req.Tools {
+			decl := &genai.FunctionDeclaration{
+				Name:                 t.Name,
+				Description:          t.Description,
+				ParametersJsonSchema: t.Parameters,
+			}
+			decls = append(decls, decl)
+		}
+		cfg.Tools = []*genai.Tool{
+			{
+				FunctionDeclarations: decls,
+			},
+		}
 	}
 
 	if req.Temperature != nil {

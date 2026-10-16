@@ -3,7 +3,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/ijaidev/gojent/core/llm"
@@ -19,6 +21,8 @@ var (
 	ErrToolNil = errors.New("agent: cannot add nil tool")
 )
 
+const defaultMaxSteps = 5
+
 // Config defines the initialization options for an Agent.
 type Config struct {
 	// ID is the unique identifier for the agent (e.g. "chef-agent").
@@ -33,6 +37,8 @@ type Config struct {
 	Model llm.LLM
 	// Tools contains the list of tools available to the agent.
 	Tools []tool.Tool
+	// MaxSteps sets the default maximum number of ReAct loop iterations (defaults to 5).
+	MaxSteps int
 }
 
 // Agent represents an autonomous AI agent that leverages a Large Language Model.
@@ -45,6 +51,7 @@ type Agent struct {
 	instructions string
 	model        llm.LLM
 	tools        map[string]tool.Tool
+	maxSteps     int
 }
 
 // New creates and initializes a new Agent with the given configuration.
@@ -67,6 +74,11 @@ func New(cfg Config) (*Agent, error) {
 		}
 	}
 
+	maxSteps := cfg.MaxSteps
+	if maxSteps <= 0 {
+		maxSteps = defaultMaxSteps
+	}
+
 	return &Agent{
 		id:           cfg.ID,
 		name:         name,
@@ -74,6 +86,7 @@ func New(cfg Config) (*Agent, error) {
 		instructions: cfg.Instructions,
 		model:        cfg.Model,
 		tools:        toolsMap,
+		maxSteps:     maxSteps,
 	}, nil
 }
 
@@ -149,6 +162,23 @@ func (a *Agent) RemoveTool(id string) {
 	delete(a.tools, id)
 }
 
+// MaxSteps returns the default maximum number of ReAct loop iterations for this agent.
+func (a *Agent) MaxSteps() int {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.maxSteps
+}
+
+// SetMaxSteps updates the default maximum number of ReAct loop iterations for this agent.
+func (a *Agent) SetMaxSteps(n int) {
+	if n <= 0 {
+		n = defaultMaxSteps
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.maxSteps = n
+}
+
 // SetModel swaps the LLM implementation for this agent at runtime.
 func (a *Agent) SetModel(m llm.LLM) error {
 	if m == nil {
@@ -191,6 +221,7 @@ type GenerateConfig struct {
 	TopP        *float64
 	Messages    []llm.Message
 	Tools       []tool.Tool
+	MaxSteps    *int
 }
 
 // GenerateOption allows customizing an individual Generate call.
@@ -231,6 +262,13 @@ func WithTools(tools ...tool.Tool) GenerateOption {
 	}
 }
 
+// WithMaxSteps overrides the maximum number of ReAct loop iterations for this generation.
+func WithMaxSteps(n int) GenerateOption {
+	return func(cfg *GenerateConfig) {
+		cfg.MaxSteps = &n
+	}
+}
+
 // Generate runs the agent with a string prompt, returning the model's response.
 func (a *Agent) Generate(ctx context.Context, prompt string, opts ...GenerateOption) (*Response, error) {
 	var userMsg []llm.Message
@@ -243,11 +281,12 @@ func (a *Agent) Generate(ctx context.Context, prompt string, opts ...GenerateOpt
 	return a.GenerateMessages(ctx, userMsg, opts...)
 }
 
-// GenerateMessages executes the agent with a slice of chat messages.
+// GenerateMessages executes the agent with a slice of chat messages running the ReAct execution loop.
 func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, opts ...GenerateOption) (*Response, error) {
 	a.mu.RLock()
 	activeModel := a.model
 	instructions := a.instructions
+	defaultSteps := a.maxSteps
 	a.mu.RUnlock()
 
 	genCfg := &GenerateConfig{
@@ -261,36 +300,76 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 		return nil, ErrModelRequired
 	}
 
+	maxSteps := defaultSteps
+	if genCfg.MaxSteps != nil && *genCfg.MaxSteps > 0 {
+		maxSteps = *genCfg.MaxSteps
+	}
+
 	callMessages := a.prepareMessages(instructions, genCfg.Messages, messages)
 	activeTools := a.collectTools(genCfg.Tools)
+	toolDefs := tool.ToDefinitions(activeTools)
 
-	req := llm.GenerateRequest{
-		Messages:    callMessages,
-		Tools:       tool.ToDefinitions(activeTools),
-		Temperature: genCfg.Temperature,
-		MaxTokens:   genCfg.MaxTokens,
-		TopP:        genCfg.TopP,
+	var cumulativeUsage llm.Usage
+	var lastRaw any
+
+	for step := 0; step < maxSteps; step++ {
+		req := llm.GenerateRequest{
+			Messages:    callMessages,
+			Tools:       toolDefs,
+			Temperature: genCfg.Temperature,
+			MaxTokens:   genCfg.MaxTokens,
+			TopP:        genCfg.TopP,
+		}
+
+		resp, err := genCfg.Model.Generate(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+
+		cumulativeUsage.PromptTokens += resp.Usage.PromptTokens
+		cumulativeUsage.CompletionTokens += resp.Usage.CompletionTokens
+		cumulativeUsage.TotalTokens += resp.Usage.TotalTokens
+		lastRaw = resp.Raw
+
+		// Append the assistant's response to conversation messages
+		callMessages = append(callMessages, llm.Message{
+			Role:      llm.RoleAssistant,
+			Content:   resp.Text,
+			ToolCalls: resp.ToolCalls,
+		})
+
+		// If no tool calls were requested, the model provided its final response
+		if len(resp.ToolCalls) == 0 {
+			return &Response{
+				Text:         resp.Text,
+				Messages:     callMessages,
+				FinishReason: resp.FinishReason,
+				Usage:        cumulativeUsage,
+				Raw:          lastRaw,
+			}, nil
+		}
+
+		// Execute tool calls
+		for _, call := range resp.ToolCalls {
+			toolOutput := a.executeToolCall(ctx, call, activeTools)
+			callMessages = append(callMessages, llm.Message{
+				Role:       llm.RoleTool,
+				Name:       call.Name,
+				ToolCallID: call.ID,
+				Content:    toolOutput,
+			})
+		}
 	}
 
-	resp, err := genCfg.Model.Generate(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	// Append the assistant's response to conversation messages
-	callMessages = append(callMessages, llm.Message{
-		Role:      llm.RoleAssistant,
-		Content:   resp.Text,
-		ToolCalls: resp.ToolCalls,
-	})
-
+	// MaxSteps reached
+	lastMsg := callMessages[len(callMessages)-1]
 	return &Response{
-		Text:         resp.Text,
-		ToolCalls:    resp.ToolCalls,
+		Text:         lastMsg.Content,
+		ToolCalls:    lastMsg.ToolCalls,
 		Messages:     callMessages,
-		FinishReason: resp.FinishReason,
-		Usage:        resp.Usage,
-		Raw:          resp.Raw,
+		FinishReason: llm.FinishReasonLength,
+		Usage:        cumulativeUsage,
+		Raw:          lastRaw,
 	}, nil
 }
 
@@ -311,6 +390,7 @@ func (a *Agent) StreamMessages(ctx context.Context, messages []llm.Message, opts
 	a.mu.RLock()
 	activeModel := a.model
 	instructions := a.instructions
+	defaultSteps := a.maxSteps
 	a.mu.RUnlock()
 
 	genCfg := &GenerateConfig{
@@ -324,12 +404,18 @@ func (a *Agent) StreamMessages(ctx context.Context, messages []llm.Message, opts
 		return nil, ErrModelRequired
 	}
 
+	maxSteps := defaultSteps
+	if genCfg.MaxSteps != nil && *genCfg.MaxSteps > 0 {
+		maxSteps = *genCfg.MaxSteps
+	}
+
 	callMessages := a.prepareMessages(instructions, genCfg.Messages, messages)
 	activeTools := a.collectTools(genCfg.Tools)
+	toolDefs := tool.ToDefinitions(activeTools)
 
 	req := llm.GenerateRequest{
 		Messages:    callMessages,
-		Tools:       tool.ToDefinitions(activeTools),
+		Tools:       toolDefs,
 		Temperature: genCfg.Temperature,
 		MaxTokens:   genCfg.MaxTokens,
 		TopP:        genCfg.TopP,
@@ -340,7 +426,39 @@ func (a *Agent) StreamMessages(ctx context.Context, messages []llm.Message, opts
 		return nil, err
 	}
 
-	return newStreamResponse(ctx, rawStream, callMessages), nil
+	return newStreamResponse(ctx, a, genCfg, rawStream, callMessages, activeTools, toolDefs, maxSteps), nil
+}
+
+// executeToolCall executes a single tool call against registered tools and returns its string output.
+func (a *Agent) executeToolCall(ctx context.Context, call llm.ToolCall, activeTools []tool.Tool) string {
+	var target tool.Tool
+	for _, t := range activeTools {
+		if t != nil && t.ID() == call.Name {
+			target = t
+			break
+		}
+	}
+	if target == nil {
+		return fmt.Sprintf(`{"error":"tool '%s' not found"}`, call.Name)
+	}
+
+	out, err := target.Execute(ctx, []byte(call.Arguments))
+	if err != nil {
+		return fmt.Sprintf(`{"error":%q}`, err.Error())
+	}
+
+	switch v := out.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	default:
+		b, marshalErr := json.Marshal(v)
+		if marshalErr != nil {
+			return fmt.Sprintf("%v", v)
+		}
+		return string(b)
+	}
 }
 
 // collectTools merges agent-level tools with any per-call extra tools.

@@ -252,6 +252,161 @@ func TestModel_Stream_EndToEndMockServer(t *testing.T) {
 	}
 }
 
+func TestModel_Generate_FunctionCall(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{
+			"candidates": []map[string]any{
+				{
+					"content": map[string]any{
+						"role": "model",
+						"parts": []map[string]any{
+							{
+								"functionCall": map[string]any{
+									"name": "get_weather",
+									"args": map[string]any{
+										"location": "San Francisco",
+									},
+								},
+							},
+						},
+					},
+					"finishReason": "STOP",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	ctx := context.Background()
+	m, err := google.New(ctx, google.Config{
+		Model:  "gemini-2.5-flash",
+		APIKey: "test-key",
+		ClientConfig: &genai.ClientConfig{
+			HTTPOptions: genai.HTTPOptions{
+				BaseURL: ts.URL,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create model: %v", err)
+	}
+
+	req := llm.GenerateRequest{
+		Messages: []llm.Message{
+			llm.UserMessage("What is the weather in SF?"),
+			llm.ToolResultMessage("call-1", `{"temp":20}`),
+		},
+		Tools: []llm.ToolDefinition{
+			{Name: "get_weather", Description: "Fetches weather"},
+		},
+	}
+
+	res, err := m.Generate(ctx, req)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	if res.FinishReason != llm.FinishReasonTool {
+		t.Errorf("expected finish reason tool_calls, got %s", res.FinishReason)
+	}
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(res.ToolCalls))
+	}
+	if res.ToolCalls[0].Name != "get_weather" {
+		t.Errorf("expected tool name 'get_weather', got %s", res.ToolCalls[0].Name)
+	}
+
+	var parsedArgs map[string]any
+	if err := res.ToolCalls[0].UnmarshalArgs(&parsedArgs); err != nil {
+		t.Fatalf("failed to unmarshal args: %v", err)
+	}
+	if parsedArgs["location"] != "San Francisco" {
+		t.Errorf("unexpected arg location: %v", parsedArgs["location"])
+	}
+}
+
+func TestModel_Stream_FunctionCall(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		chunk := map[string]any{
+			"candidates": []map[string]any{
+				{
+					"content": map[string]any{
+						"parts": []map[string]any{
+							{
+								"functionCall": map[string]any{
+									"id":   "call-stream-1",
+									"name": "fetch_data",
+									"args": map[string]any{
+										"id": 42,
+									},
+								},
+							},
+						},
+					},
+					"finishReason": "STOP",
+				},
+			},
+		}
+
+		cBytes, _ := json.Marshal(chunk)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", cBytes)
+		flusher.Flush()
+	}))
+	defer ts.Close()
+
+	ctx := context.Background()
+	m, err := google.New(ctx, google.Config{
+		Model:  "gemini-2.5-flash",
+		APIKey: "test-key",
+		ClientConfig: &genai.ClientConfig{
+			HTTPOptions: genai.HTTPOptions{
+				BaseURL: ts.URL,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create model: %v", err)
+	}
+
+	stream, err := m.Stream(ctx, llm.GenerateRequest{
+		Messages: []llm.Message{llm.UserMessage("fetch 42")},
+		Tools: []llm.ToolDefinition{
+			{Name: "fetch_data", Description: "Fetches data by id"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Stream failed: %v", err)
+	}
+	defer func() {
+		_ = stream.Close()
+	}()
+
+	chunk, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("stream.Recv failed: %v", err)
+	}
+
+	if len(chunk.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call in chunk, got %d", len(chunk.ToolCalls))
+	}
+	if chunk.ToolCalls[0].Name != "fetch_data" || chunk.ToolCalls[0].ID != "call-stream-1" {
+		t.Errorf("unexpected tool call: %+v", chunk.ToolCalls[0])
+	}
+	if chunk.FinishReason != llm.FinishReasonTool {
+		t.Errorf("expected finish reason tool_calls, got %s", chunk.FinishReason)
+	}
+}
+
 func init() {
 	// Ensure tests do not fail on missing credentials when running in test environments
 	_ = os.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "false")

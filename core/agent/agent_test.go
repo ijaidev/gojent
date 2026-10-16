@@ -3,6 +3,8 @@ package agent_test
 import (
 	"context"
 	"errors"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/ijaidev/gojent/core/agent"
@@ -232,71 +234,134 @@ func TestAgent_Generate_PassesToolsToLLM(t *testing.T) {
 	}
 }
 
-func TestAgent_Generate_ReceivesToolCalls(t *testing.T) {
-	expectedCalls := []llm.ToolCall{
-		{
-			ID:        "call-xyz",
-			Name:      "search",
-			Arguments: `{"query":"golang"}`,
+func TestAgent_Generate_ReActLoop(t *testing.T) {
+	calcTool := tool.MustNew(tool.Config[string, string]{
+		ID:          "calc",
+		Description: "Perform calculations",
+		Execute: func(_ context.Context, in string) (string, error) {
+			if in == `{"expr":"2+2"}` {
+				return "4", nil
+			}
+			return "unknown", nil
 		},
-	}
+	})
 
+	callCount := 0
 	mock := llm.NewMockLLM().ApplyOptions(
-		llm.WithToolCalls(expectedCalls...),
+		llm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
+			callCount++
+			if callCount == 1 {
+				return &llm.GenerateResponse{
+					FinishReason: llm.FinishReasonTool,
+					ToolCalls: []llm.ToolCall{
+						{
+							ID:        "call-1",
+							Name:      "calc",
+							Arguments: `{"expr":"2+2"}`,
+						},
+					},
+					Usage: llm.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
+				}, nil
+			}
+			return &llm.GenerateResponse{
+				Text:         "The answer is 4",
+				FinishReason: llm.FinishReasonStop,
+				Usage:        llm.Usage{PromptTokens: 20, CompletionTokens: 10, TotalTokens: 30},
+			}, nil
+		}),
 	)
 
 	a, err := agent.New(agent.Config{
-		ID:    "agent-search",
+		ID:    "agent-calc",
 		Model: mock,
+		Tools: []tool.Tool{calcTool},
 	})
 	if err != nil {
 		t.Fatalf("failed to create agent: %v", err)
 	}
 
-	res, err := a.Generate(context.Background(), "search for golang")
+	res, err := a.Generate(context.Background(), "What is 2+2?")
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	if res.FinishReason != llm.FinishReasonTool {
-		t.Errorf("expected finish reason tool_calls, got %s", res.FinishReason)
+	if callCount != 2 {
+		t.Errorf("expected 2 calls in ReAct loop, got %d", callCount)
 	}
-	if len(res.ToolCalls) != 1 || res.ToolCalls[0].ID != "call-xyz" {
-		t.Errorf("expected tool call call-xyz, got %+v", res.ToolCalls)
+	if res.Text != "The answer is 4" {
+		t.Errorf("expected final answer 'The answer is 4', got '%s'", res.Text)
+	}
+	if res.Usage.TotalTokens != 45 {
+		t.Errorf("expected cumulative 45 total tokens, got %d", res.Usage.TotalTokens)
 	}
 
-	// Verify the assistant conversation message includes tool calls
-	lastMsg := res.Messages[len(res.Messages)-1]
-	if lastMsg.Role != llm.RoleAssistant {
-		t.Errorf("expected assistant message, got %s", lastMsg.Role)
+	if len(res.Messages) != 4 {
+		t.Fatalf("expected 4 conversation messages, got %d", len(res.Messages))
 	}
-	if len(lastMsg.ToolCalls) != 1 || lastMsg.ToolCalls[0].Name != "search" {
-		t.Errorf("expected assistant message to contain tool call, got %+v", lastMsg.ToolCalls)
+	if res.Messages[0].Role != llm.RoleUser {
+		t.Errorf("expected user message first, got %s", res.Messages[0].Role)
+	}
+	if res.Messages[1].Role != llm.RoleAssistant || len(res.Messages[1].ToolCalls) != 1 {
+		t.Errorf("expected assistant tool call message second, got %+v", res.Messages[1])
+	}
+	if res.Messages[2].Role != llm.RoleTool || res.Messages[2].Content != "4" {
+		t.Errorf("expected tool result message third with '4', got %+v", res.Messages[2])
+	}
+	if res.Messages[3].Role != llm.RoleAssistant || res.Messages[3].Content != "The answer is 4" {
+		t.Errorf("expected final assistant reply fourth, got %+v", res.Messages[3])
 	}
 }
 
-func TestAgent_Stream_ReceivesToolCalls(t *testing.T) {
-	expectedCalls := []llm.ToolCall{
-		{
-			ID:        "stream-call-1",
-			Name:      "fetch_data",
-			Arguments: `{"id":1}`,
+func TestAgent_Stream_ReActLoop_WithToolArgumentStreaming(t *testing.T) {
+	weatherTool := tool.MustNew(tool.Config[string, string]{
+		ID:          "get_weather",
+		Description: "Fetch weather",
+		Execute: func(_ context.Context, _ string) (string, error) {
+			return `{"weather":"sunny"}`, nil
 		},
-	}
+	})
 
-	mock := llm.NewMockLLM("stream chunk").ApplyOptions(
-		llm.WithToolCalls(expectedCalls...),
+	stepIndex := 0
+	mock := llm.NewMockLLM().ApplyOptions(
+		llm.WithCustomStreamHandler(func(ctx context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
+			stepIndex++
+			if stepIndex == 1 {
+				// Step 1: Model streams tool arguments in chunks (argument delta streaming)
+				chunks := []*llm.StreamChunk{
+					{
+						ToolCalls: []llm.ToolCall{
+							{ID: "call-1", Name: "get_weather", Arguments: `{"location":"`},
+						},
+					},
+					{
+						ToolCalls: []llm.ToolCall{
+							{ID: "call-1", Arguments: `Tokyo"}`},
+						},
+						FinishReason: llm.FinishReasonTool,
+					},
+				}
+				return llm.NewSliceStream(ctx, chunks), nil
+			}
+
+			// Step 2: Final response stream
+			chunks := []*llm.StreamChunk{
+				{Delta: "The weather "},
+				{Delta: "is sunny!"},
+			}
+			return llm.NewSliceStream(ctx, chunks), nil
+		}),
 	)
 
 	a, err := agent.New(agent.Config{
 		ID:    "stream-agent",
 		Model: mock,
+		Tools: []tool.Tool{weatherTool},
 	})
 	if err != nil {
 		t.Fatalf("failed to create agent: %v", err)
 	}
 
-	stream, err := a.Stream(context.Background(), "stream with tool")
+	stream, err := a.Stream(context.Background(), "Weather in Tokyo?")
 	if err != nil {
 		t.Fatalf("Stream failed: %v", err)
 	}
@@ -304,16 +369,81 @@ func TestAgent_Stream_ReceivesToolCalls(t *testing.T) {
 		_ = stream.Close()
 	}()
 
-	res, err := stream.Drain()
-	if err != nil {
-		t.Fatalf("Drain failed: %v", err)
+	var receivedDeltas strings.Builder
+	for {
+		chunk, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Recv failed: %v", err)
+		}
+		receivedDeltas.WriteString(chunk.Delta)
 	}
 
-	if len(res.ToolCalls) != 1 || res.ToolCalls[0].ID != "stream-call-1" {
-		t.Errorf("unexpected tool calls in drained response: %+v", res.ToolCalls)
+	if receivedDeltas.String() != "The weather is sunny!" {
+		t.Errorf("unexpected streamed deltas: %s", receivedDeltas.String())
 	}
+
+	res, err := stream.Response()
+	if err != nil {
+		t.Fatalf("Response failed: %v", err)
+	}
+
+	if res.Text != "The weather is sunny!" {
+		t.Errorf("unexpected final text: %s", res.Text)
+	}
+
 	if len(stream.ToolCalls()) != 1 {
-		t.Errorf("expected stream.ToolCalls() to report 1 call, got %d", len(stream.ToolCalls()))
+		t.Fatalf("expected 1 tool call, got %d", len(stream.ToolCalls()))
+	}
+	if stream.ToolCalls()[0].Arguments != `{"location":"Tokyo"}` {
+		t.Errorf("expected accumulated args '{\"location\":\"Tokyo\"}', got '%s'", stream.ToolCalls()[0].Arguments)
+	}
+}
+
+func TestAgent_MaxSteps(t *testing.T) {
+	repeatingTool := tool.MustNew(tool.Config[string, string]{
+		ID:          "loop_tool",
+		Description: "Loops",
+		Execute: func(_ context.Context, _ string) (string, error) {
+			return "done", nil
+		},
+	})
+
+	callCount := 0
+	mock := llm.NewMockLLM().ApplyOptions(
+		llm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
+			callCount++
+			return &llm.GenerateResponse{
+				FinishReason: llm.FinishReasonTool,
+				ToolCalls: []llm.ToolCall{
+					{ID: "loop-call", Name: "loop_tool", Arguments: "{}"},
+				},
+			}, nil
+		}),
+	)
+
+	a, err := agent.New(agent.Config{
+		ID:       "looping-agent",
+		Model:    mock,
+		Tools:    []tool.Tool{repeatingTool},
+		MaxSteps: 3,
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	res, err := a.Generate(context.Background(), "start loop")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	if callCount != 3 {
+		t.Errorf("expected exactly 3 calls (maxSteps), got %d", callCount)
+	}
+	if res.FinishReason != llm.FinishReasonLength {
+		t.Errorf("expected FinishReasonLength when max steps reached, got %s", res.FinishReason)
 	}
 }
 
