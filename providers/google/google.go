@@ -33,12 +33,15 @@ type Config struct {
 	Client *genai.Client
 	// ClientConfig allows custom client options (e.g., custom HTTP options or Vertex AI backend).
 	ClientConfig *genai.ClientConfig
+	// ThinkingBudget optionally configures the thinking token budget (0 to disable thinking on supported models).
+	ThinkingBudget *int32
 }
 
 // Model implements the llm.LLM interface using Google's Gen AI SDK.
 type Model struct {
-	modelID string
-	client  *genai.Client
+	modelID        string
+	client         *genai.Client
+	thinkingBudget *int32
 }
 
 // New creates and initializes a new Google Gen AI model provider.
@@ -74,8 +77,9 @@ func New(ctx context.Context, cfg Config) (*Model, error) {
 	}
 
 	return &Model{
-		modelID: modelID,
-		client:  client,
+		modelID:        modelID,
+		client:         client,
+		thinkingBudget: cfg.ThinkingBudget,
 	}, nil
 }
 
@@ -96,14 +100,14 @@ func (m *Model) Generate(ctx context.Context, req llm.GenerateRequest) (*llm.Gen
 	}
 
 	contents, systemInstruction := convertMessages(req.Messages)
-	config := convertConfig(req, systemInstruction)
+	config := m.convertConfig(req, systemInstruction)
 
 	resp, err := m.client.Models.GenerateContent(ctx, m.modelID, contents, config)
 	if err != nil {
 		return nil, err
 	}
 
-	text := resp.Text()
+	text := extractCandidateText(resp.Candidates)
 	finishReason := llm.FinishReasonStop
 	if len(resp.Candidates) > 0 && resp.Candidates[0].FinishReason != "" {
 		finishReason = mapFinishReason(resp.Candidates[0].FinishReason)
@@ -151,7 +155,7 @@ func (m *Model) Stream(ctx context.Context, req llm.GenerateRequest) (llm.Stream
 	}
 
 	contents, systemInstruction := convertMessages(req.Messages)
-	config := convertConfig(req, systemInstruction)
+	config := m.convertConfig(req, systemInstruction)
 
 	streamCtx, cancel := context.WithCancel(ctx)
 	ch := make(chan *llm.StreamChunk)
@@ -161,6 +165,7 @@ func (m *Model) Stream(ctx context.Context, req llm.GenerateRequest) (llm.Stream
 		defer close(ch)
 		defer close(errCh)
 
+		var accumulatedParts []*genai.Part
 		iterSeq := m.client.Models.GenerateContentStream(streamCtx, m.modelID, contents, config)
 		for resp, err := range iterSeq {
 			if err != nil {
@@ -171,12 +176,19 @@ func (m *Model) Stream(ctx context.Context, req llm.GenerateRequest) (llm.Stream
 				return
 			}
 
-			deltaText := resp.Text()
+			deltaText := extractCandidateText(resp.Candidates)
 			var finishReason llm.FinishReason
 			var usage *llm.Usage
 
 			if len(resp.Candidates) > 0 {
 				cand := resp.Candidates[0]
+				if cand.Content != nil {
+					for _, p := range cand.Content.Parts {
+						if isPartValid(p) {
+							accumulatedParts = append(accumulatedParts, p)
+						}
+					}
+				}
 				if cand.FinishReason != "" {
 					finishReason = mapFinishReason(cand.FinishReason)
 				}
@@ -207,12 +219,20 @@ func (m *Model) Stream(ctx context.Context, req llm.GenerateRequest) (llm.Stream
 				}
 			}
 
+			var rawContent *genai.Content
+			if len(accumulatedParts) > 0 {
+				rawContent = &genai.Content{
+					Role:  genai.RoleModel,
+					Parts: append([]*genai.Part(nil), accumulatedParts...),
+				}
+			}
+
 			chunk := &llm.StreamChunk{
 				Delta:        deltaText,
 				ToolCalls:    toolCalls,
 				FinishReason: finishReason,
 				Usage:        usage,
-				Raw:          resp,
+				Raw:          rawContent,
 			}
 
 			select {
@@ -237,6 +257,14 @@ func convertMessages(messages []llm.Message) (contents []*genai.Content, systemI
 				systemParts = append(systemParts, &genai.Part{Text: msg.Content})
 			}
 		case llm.RoleAssistant:
+			// If we have the original raw Gemini response content, preserve it directly.
+			// This preserves all thought blocks, thought signatures, and function call metadata
+			// required by Gemini 2.5+ models in multi-turn interactions.
+			if rawContent := extractRawGeminiContent(msg.Raw); rawContent != nil {
+				contents = append(contents, rawContent)
+				continue
+			}
+
 			var parts []*genai.Part
 			if msg.Content != "" {
 				parts = append(parts, &genai.Part{Text: msg.Content})
@@ -257,13 +285,12 @@ func convertMessages(messages []llm.Message) (contents []*genai.Content, systemI
 					},
 				})
 			}
-			if len(parts) == 0 {
-				parts = append(parts, &genai.Part{Text: ""})
+			if len(parts) > 0 {
+				contents = append(contents, &genai.Content{
+					Role:  genai.RoleModel,
+					Parts: parts,
+				})
 			}
-			contents = append(contents, &genai.Content{
-				Role:  "model",
-				Parts: parts,
-			})
 		case llm.RoleTool:
 			var respMap map[string]any
 			if msg.Content != "" {
@@ -277,23 +304,33 @@ func convertMessages(messages []llm.Message) (contents []*genai.Content, systemI
 			if name == "" {
 				name = msg.ToolCallID
 			}
-			contents = append(contents, &genai.Content{
-				Role: "tool",
-				Parts: []*genai.Part{
-					{
-						FunctionResponse: &genai.FunctionResponse{
-							ID:       msg.ToolCallID,
-							Name:     name,
-							Response: respMap,
-						},
-					},
+			part := &genai.Part{
+				FunctionResponse: &genai.FunctionResponse{
+					ID:       msg.ToolCallID,
+					Name:     name,
+					Response: respMap,
 				},
-			})
+			}
+			// Gemini requires function responses to have role "user".
+			// If the immediately preceding content is already a user turn with function responses,
+			// merge parts into it to maintain strictly alternating turns (user -> model -> user).
+			if len(contents) > 0 && contents[len(contents)-1].Role == genai.RoleUser &&
+				len(contents[len(contents)-1].Parts) > 0 &&
+				contents[len(contents)-1].Parts[0].FunctionResponse != nil {
+				contents[len(contents)-1].Parts = append(contents[len(contents)-1].Parts, part)
+			} else {
+				contents = append(contents, &genai.Content{
+					Role:  genai.RoleUser,
+					Parts: []*genai.Part{part},
+				})
+			}
 		default:
-			contents = append(contents, &genai.Content{
-				Role:  string(msg.Role),
-				Parts: []*genai.Part{{Text: msg.Content}},
-			})
+			if msg.Content != "" {
+				contents = append(contents, &genai.Content{
+					Role:  string(msg.Role),
+					Parts: []*genai.Part{{Text: msg.Content}},
+				})
+			}
 		}
 	}
 
@@ -307,9 +344,15 @@ func convertMessages(messages []llm.Message) (contents []*genai.Content, systemI
 }
 
 // convertConfig prepares the genai.GenerateContentConfig from Gojent request parameters.
-func convertConfig(req llm.GenerateRequest, systemInstruction *genai.Content) *genai.GenerateContentConfig {
+func (m *Model) convertConfig(req llm.GenerateRequest, systemInstruction *genai.Content) *genai.GenerateContentConfig {
 	cfg := &genai.GenerateContentConfig{
 		SystemInstruction: systemInstruction,
+	}
+
+	if m.thinkingBudget != nil {
+		cfg.ThinkingConfig = &genai.ThinkingConfig{
+			ThinkingBudget: m.thinkingBudget,
+		}
 	}
 
 	if len(req.Tools) > 0 {
@@ -362,4 +405,75 @@ func mapFinishReason(fr genai.FinishReason) llm.FinishReason {
 	default:
 		return llm.FinishReason(strings.ToLower(string(fr)))
 	}
+}
+
+// extractCandidateText retrieves text parts across candidates without logging warnings on function calls.
+func extractCandidateText(candidates []*genai.Candidate) string {
+	var sb strings.Builder
+	for _, cand := range candidates {
+		if cand.Content != nil {
+			for _, part := range cand.Content.Parts {
+				if part.Text != "" {
+					sb.WriteString(part.Text)
+				}
+			}
+		}
+	}
+	return sb.String()
+}
+
+// extractRawGeminiContent attempts to retrieve the original *genai.Content from a raw response payload,
+// filtering out any empty parts that lack initialized 'data' fields required by the Gemini API.
+func extractRawGeminiContent(raw any) *genai.Content {
+	if raw == nil {
+		return nil
+	}
+	var rawParts []*genai.Part
+	var role string
+	switch r := raw.(type) {
+	case *genai.GenerateContentResponse:
+		if len(r.Candidates) > 0 && r.Candidates[0].Content != nil {
+			role = r.Candidates[0].Content.Role
+			rawParts = r.Candidates[0].Content.Parts
+		}
+	case *genai.Content:
+		role = r.Role
+		rawParts = r.Parts
+	}
+
+	if len(rawParts) == 0 {
+		return nil
+	}
+
+	var validParts []*genai.Part
+	for _, p := range rawParts {
+		if isPartValid(p) {
+			validParts = append(validParts, p)
+		}
+	}
+	if len(validParts) == 0 {
+		return nil
+	}
+
+	if role == "" {
+		role = genai.RoleModel
+	}
+	return &genai.Content{
+		Role:  role,
+		Parts: validParts,
+	}
+}
+
+// isPartValid returns true if the Part contains an initialized payload for the 'data' oneof.
+func isPartValid(p *genai.Part) bool {
+	if p == nil {
+		return false
+	}
+	return p.Text != "" ||
+		p.FunctionCall != nil ||
+		p.FunctionResponse != nil ||
+		p.InlineData != nil ||
+		p.FileData != nil ||
+		p.ExecutableCode != nil ||
+		p.CodeExecutionResult != nil
 }

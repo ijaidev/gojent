@@ -336,6 +336,7 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 			Role:      llm.RoleAssistant,
 			Content:   resp.Text,
 			ToolCalls: resp.ToolCalls,
+			Raw:       resp.Raw,
 		})
 
 		// If no tool calls were requested, the model provided its final response

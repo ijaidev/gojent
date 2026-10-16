@@ -36,6 +36,7 @@ type StreamResponse struct {
 	stepAccumulated strings.Builder
 	stepToolCalls   []llm.ToolCall
 	stepUsage       llm.Usage
+	stepRaw         any
 	allToolCalls    []llm.ToolCall
 	finishReason    llm.FinishReason
 	usage           llm.Usage
@@ -100,6 +101,7 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 				s.messages = append(s.messages, llm.Message{
 					Role:    llm.RoleAssistant,
 					Content: s.stepAccumulated.String(),
+					Raw:     s.stepRaw,
 				})
 				s.completed = true
 				return nil, io.EOF
@@ -110,6 +112,7 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 				Role:      llm.RoleAssistant,
 				Content:   s.stepAccumulated.String(),
 				ToolCalls: s.stepToolCalls,
+				Raw:       s.stepRaw,
 			})
 			s.allToolCalls = append(s.allToolCalls, s.stepToolCalls...)
 
@@ -135,6 +138,7 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			s.stepToolCalls = nil
 			s.stepAccumulated.Reset()
 			s.stepUsage = llm.Usage{}
+			s.stepRaw = nil
 
 			// Prepare request for next ReAct iteration
 			req := llm.GenerateRequest{
@@ -168,6 +172,9 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 		}
 		if chunk.Usage != nil {
 			s.stepUsage = *chunk.Usage
+		}
+		if chunk.Raw != nil {
+			s.stepRaw = chunk.Raw
 		}
 
 		return chunk, nil

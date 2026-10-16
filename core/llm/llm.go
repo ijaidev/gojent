@@ -53,6 +53,8 @@ type Message struct {
 	Name       string     `json:"name,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
+	// Raw holds provider-specific message/content payload (e.g. Gemini thought signatures or OpenAI metadata).
+	Raw any `json:"raw,omitempty"`
 }
 
 // UserMessage creates a user message with the given content.

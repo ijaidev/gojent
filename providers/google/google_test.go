@@ -407,6 +407,114 @@ func TestModel_Stream_FunctionCall(t *testing.T) {
 	}
 }
 
+func TestModel_Generate_ToolResponseRole(t *testing.T) {
+	var capturedBody []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		capturedBody = body
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{
+			"candidates": []map[string]any{
+				{
+					"content": map[string]any{
+						"role": "model",
+						"parts": []map[string]any{
+							{"text": "The weather is 20C."},
+						},
+					},
+					"finishReason": "STOP",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	ctx := context.Background()
+	m, err := google.New(ctx, google.Config{
+		Model:  "gemini-2.5-flash",
+		APIKey: "test-key",
+		ClientConfig: &genai.ClientConfig{
+			HTTPOptions: genai.HTTPOptions{
+				BaseURL: ts.URL,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create model: %v", err)
+	}
+
+	req := llm.GenerateRequest{
+		Messages: []llm.Message{
+			llm.UserMessage("Weather?"),
+			{
+				Role: llm.RoleAssistant,
+				ToolCalls: []llm.ToolCall{
+					{ID: "call-1", Name: "get_weather", Arguments: `{"location":"Tokyo"}`},
+				},
+				Raw: &genai.Content{
+					Role: "model",
+					Parts: []*genai.Part{
+						{
+							FunctionCall: &genai.FunctionCall{
+								Name: "get_weather",
+								Args: map[string]any{"location": "Tokyo"},
+							},
+							ThoughtSignature: []byte("opaque-signature-1234"),
+						},
+					},
+				},
+			},
+			{
+				Role:       llm.RoleTool,
+				Name:       "get_weather",
+				ToolCallID: "call-1",
+				Content:    `{"temperature":20}`,
+			},
+		},
+	}
+
+	res, err := m.Generate(ctx, req)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	if res.Text != "The weather is 20C." {
+		t.Errorf("unexpected text: %s", res.Text)
+	}
+
+	// Verify that the JSON request sent to Gemini uses role 'user' for function response
+	var reqJSON map[string]any
+	if err := json.Unmarshal(capturedBody, &reqJSON); err != nil {
+		t.Fatalf("failed to parse captured request body: %v", err)
+	}
+	contents, ok := reqJSON["contents"].([]any)
+	if !ok || len(contents) != 3 {
+		t.Fatalf("expected 3 contents, got %v", reqJSON["contents"])
+	}
+
+	// Verify model turn preserved thought signature
+	modelTurn, ok := contents[1].(map[string]any)
+	if !ok {
+		t.Fatalf("expected model turn map, got %v", contents[1])
+	}
+	modelParts, ok := modelTurn["parts"].([]any)
+	if !ok || len(modelParts) == 0 {
+		t.Fatalf("expected parts in model turn, got %v", modelTurn)
+	}
+	partMap, ok := modelParts[0].(map[string]any)
+	if !ok || partMap["thoughtSignature"] == nil {
+		t.Errorf("expected thoughtSignature preserved in model turn, got %v", modelParts[0])
+	}
+
+	toolTurn, ok := contents[2].(map[string]any)
+	if !ok {
+		t.Fatalf("expected tool turn map, got %v", contents[2])
+	}
+	if toolTurn["role"] != "user" {
+		t.Errorf("expected role 'user' for tool response content, got %v", toolTurn["role"])
+	}
+}
+
 func init() {
 	// Ensure tests do not fail on missing credentials when running in test environments
 	_ = os.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "false")
