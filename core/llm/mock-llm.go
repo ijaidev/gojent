@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"strings"
 	"sync"
 )
 
@@ -9,13 +10,14 @@ import (
 // It is designed for unit testing, integration tests, and local simulation
 // without making external network calls.
 type MockLLM struct {
-	mu        sync.RWMutex
-	modelID   string
-	responses []string
-	callIndex int
-	calls     []GenerateRequest
-	customFn  func(ctx context.Context, req GenerateRequest) (*GenerateResponse, error)
-	usage     Usage
+	mu             sync.RWMutex
+	modelID        string
+	responses      []string
+	callIndex      int
+	calls          []GenerateRequest
+	customFn       func(ctx context.Context, req GenerateRequest) (*GenerateResponse, error)
+	customStreamFn func(ctx context.Context, req GenerateRequest) (Stream, error)
+	usage          Usage
 }
 
 // MockOption configures a MockLLM.
@@ -32,6 +34,13 @@ func WithModelID(id string) MockOption {
 func WithCustomHandler(fn func(ctx context.Context, req GenerateRequest) (*GenerateResponse, error)) MockOption {
 	return func(m *MockLLM) {
 		m.customFn = fn
+	}
+}
+
+// WithCustomStreamHandler configures a dynamic stream generator function.
+func WithCustomStreamHandler(fn func(ctx context.Context, req GenerateRequest) (Stream, error)) MockOption {
+	return func(m *MockLLM) {
+		m.customStreamFn = fn
 	}
 }
 
@@ -123,6 +132,78 @@ func (m *MockLLM) Generate(ctx context.Context, req GenerateRequest) (*GenerateR
 		FinishReason: FinishReasonStop,
 		Usage:        m.usage,
 	}, nil
+}
+
+// Stream implements the LLM interface, splitting responses into token deltas.
+func (m *MockLLM) Stream(ctx context.Context, req GenerateRequest) (Stream, error) {
+	// Respect context cancellation
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Record the request for testing inspection
+	m.calls = append(m.calls, req)
+
+	// If a custom stream handler is set, delegate to it
+	if m.customStreamFn != nil {
+		return m.customStreamFn(ctx, req)
+	}
+
+	text := ""
+	if len(m.responses) > 0 {
+		if m.callIndex < len(m.responses) {
+			text = m.responses[m.callIndex]
+			m.callIndex++
+		} else {
+			text = m.responses[len(m.responses)-1]
+		}
+	}
+
+	chunks := splitIntoChunks(text, m.usage)
+	return NewSliceStream(ctx, chunks), nil
+}
+
+// splitIntoChunks splits a full response text into word-like delta chunks
+// while preserving exact whitespace, newlines, and attached terminal metadata.
+func splitIntoChunks(text string, usage Usage) []*StreamChunk {
+	if text == "" {
+		return []*StreamChunk{
+			{
+				Delta:        "",
+				FinishReason: FinishReasonStop,
+				Usage:        &usage,
+			},
+		}
+	}
+
+	var chunks []*StreamChunk
+	var current strings.Builder
+
+	for i, r := range text {
+		current.WriteRune(r)
+		if r == ' ' || r == '\n' || r == '\t' || i == len(text)-1 {
+			chunks = append(chunks, &StreamChunk{
+				Delta: current.String(),
+			})
+			current.Reset()
+		}
+	}
+	if current.Len() > 0 {
+		chunks = append(chunks, &StreamChunk{
+			Delta: current.String(),
+		})
+	}
+
+	if len(chunks) > 0 {
+		last := chunks[len(chunks)-1]
+		last.FinishReason = FinishReasonStop
+		last.Usage = &usage
+	}
+
+	return chunks
 }
 
 // Calls returns a copy of all requests received by this mock.

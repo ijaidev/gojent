@@ -68,6 +68,8 @@ type GenerateResponse struct {
 type LLM interface {
 	// Generate generates a non-streaming response for the given request.
 	Generate(ctx context.Context, req GenerateRequest) (*GenerateResponse, error)
+	// Stream generates a streaming response for the given request.
+	Stream(ctx context.Context, req GenerateRequest) (Stream, error)
 	// ModelID returns the identifier of the model (e.g. "gpt-4o", "claude-3-5-sonnet", "mock-llm").
 	ModelID() string
 }

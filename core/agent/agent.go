@@ -200,22 +200,7 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 		return nil, ErrModelRequired
 	}
 
-	// Prepare messages: instructions as system message first if provided and not already present
-	var callMessages []llm.Message
-	if instructions != "" {
-		callMessages = append(callMessages, llm.Message{
-			Role:    llm.RoleSystem,
-			Content: instructions,
-		})
-	}
-
-	// Append any prior context messages
-	if len(genCfg.Messages) > 0 {
-		callMessages = append(callMessages, genCfg.Messages...)
-	}
-
-	// Append input messages
-	callMessages = append(callMessages, messages...)
+	callMessages := a.prepareMessages(instructions, genCfg.Messages, messages)
 
 	req := llm.GenerateRequest{
 		Messages:    callMessages,
@@ -242,4 +227,68 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 		Usage:        resp.Usage,
 		Raw:          resp.Raw,
 	}, nil
+}
+
+// Stream runs the agent with a string prompt and returns an active StreamResponse.
+func (a *Agent) Stream(ctx context.Context, prompt string, opts ...GenerateOption) (*StreamResponse, error) {
+	var userMsg []llm.Message
+	if prompt != "" {
+		userMsg = []llm.Message{{
+			Role:    llm.RoleUser,
+			Content: prompt,
+		}}
+	}
+	return a.StreamMessages(ctx, userMsg, opts...)
+}
+
+// StreamMessages executes the agent with a slice of chat messages and returns an active StreamResponse.
+func (a *Agent) StreamMessages(ctx context.Context, messages []llm.Message, opts ...GenerateOption) (*StreamResponse, error) {
+	a.mu.RLock()
+	activeModel := a.model
+	instructions := a.instructions
+	a.mu.RUnlock()
+
+	genCfg := &GenerateConfig{
+		Model: activeModel,
+	}
+	for _, opt := range opts {
+		opt(genCfg)
+	}
+
+	if genCfg.Model == nil {
+		return nil, ErrModelRequired
+	}
+
+	callMessages := a.prepareMessages(instructions, genCfg.Messages, messages)
+
+	req := llm.GenerateRequest{
+		Messages:    callMessages,
+		Temperature: genCfg.Temperature,
+		MaxTokens:   genCfg.MaxTokens,
+		TopP:        genCfg.TopP,
+	}
+
+	rawStream, err := genCfg.Model.Stream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	return newStreamResponse(ctx, rawStream, callMessages), nil
+}
+
+// prepareMessages constructs the initial messages slice consisting of system instructions,
+// prior context messages, and the current turn's input messages.
+func (a *Agent) prepareMessages(instructions string, priorMsgs, inputMsgs []llm.Message) []llm.Message {
+	var callMessages []llm.Message
+	if instructions != "" {
+		callMessages = append(callMessages, llm.Message{
+			Role:    llm.RoleSystem,
+			Content: instructions,
+		})
+	}
+	if len(priorMsgs) > 0 {
+		callMessages = append(callMessages, priorMsgs...)
+	}
+	callMessages = append(callMessages, inputMsgs...)
+	return callMessages
 }
