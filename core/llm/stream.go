@@ -19,6 +19,8 @@ var (
 type StreamChunk struct {
 	// Delta is the newly generated text fragment.
 	Delta string `json:"delta"`
+	// ToolCalls contains any tool calls requested by the model during generation.
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 	// FinishReason explains why generation ended, populated on the terminal chunk.
 	FinishReason FinishReason `json:"finish_reason,omitempty"`
 	// Usage contains token consumption statistics, typically populated on the final chunk.

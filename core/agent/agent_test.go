@@ -2,10 +2,12 @@ package agent_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/ijaidev/gojent/core/agent"
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/core/tool"
 )
 
 func TestAgent_Validation(t *testing.T) {
@@ -131,5 +133,215 @@ func TestAgent_PerCallModelOverride(t *testing.T) {
 	}
 	if overrideMock.CallCount() != 1 {
 		t.Errorf("expected override mock to be called once, got count %d", overrideMock.CallCount())
+	}
+}
+
+func TestAgent_ToolRegistrationAndManagement(t *testing.T) {
+	dummyTool := tool.MustNew(tool.Config[string, string]{
+		ID:          "calc",
+		Description: "Perform calculations",
+		Execute: func(_ context.Context, in string) (string, error) {
+			return in, nil
+		},
+	})
+
+	mock := llm.NewMockLLM("ok")
+	a, err := agent.New(agent.Config{
+		ID:    "agent-tools",
+		Model: mock,
+		Tools: []tool.Tool{dummyTool},
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	// Verify tool registration
+	tools := a.Tools()
+	if len(tools) != 1 || tools[0].ID() != "calc" {
+		t.Errorf("expected calc tool in list, got %+v", tools)
+	}
+
+	retrieved, found := a.GetTool("calc")
+	if !found || retrieved.ID() != "calc" {
+		t.Errorf("failed to retrieve registered tool: %+v", retrieved)
+	}
+
+	// Add nil tool fails
+	err = a.AddTool(nil)
+	if !errors.Is(err, agent.ErrToolNil) {
+		t.Errorf("expected ErrToolNil, got %v", err)
+	}
+
+	// Add new tool
+	newTool := tool.MustNew(tool.Config[string, string]{
+		ID:          "greeter",
+		Description: "Greets user",
+		Execute: func(_ context.Context, in string) (string, error) {
+			return "Hello " + in, nil
+		},
+	})
+	err = a.AddTool(newTool)
+	if err != nil {
+		t.Fatalf("AddTool failed: %v", err)
+	}
+	if len(a.Tools()) != 2 {
+		t.Errorf("expected 2 tools, got %d", len(a.Tools()))
+	}
+
+	// Remove tool
+	a.RemoveTool("calc")
+	if len(a.Tools()) != 1 {
+		t.Errorf("expected 1 tool after removal, got %d", len(a.Tools()))
+	}
+	_, found = a.GetTool("calc")
+	if found {
+		t.Error("expected calc tool to be removed")
+	}
+}
+
+func TestAgent_Generate_PassesToolsToLLM(t *testing.T) {
+	calcTool := tool.MustNew(tool.Config[string, string]{
+		ID:          "calc",
+		Description: "A calculator",
+		Execute: func(_ context.Context, in string) (string, error) {
+			return in, nil
+		},
+	})
+
+	mock := llm.NewMockLLM("computed")
+	a, err := agent.New(agent.Config{
+		ID:    "agent-calc",
+		Model: mock,
+		Tools: []tool.Tool{calcTool},
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	_, err = a.Generate(context.Background(), "calculate 2+2")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	lastCall := mock.LastCall()
+	if lastCall == nil {
+		t.Fatal("expected mock to record call")
+	}
+	if len(lastCall.Tools) != 1 || lastCall.Tools[0].Name != "calc" {
+		t.Errorf("expected LLM request to contain calc tool, got %+v", lastCall.Tools)
+	}
+}
+
+func TestAgent_Generate_ReceivesToolCalls(t *testing.T) {
+	expectedCalls := []llm.ToolCall{
+		{
+			ID:        "call-xyz",
+			Name:      "search",
+			Arguments: `{"query":"golang"}`,
+		},
+	}
+
+	mock := llm.NewMockLLM().ApplyOptions(
+		llm.WithToolCalls(expectedCalls...),
+	)
+
+	a, err := agent.New(agent.Config{
+		ID:    "agent-search",
+		Model: mock,
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	res, err := a.Generate(context.Background(), "search for golang")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	if res.FinishReason != llm.FinishReasonTool {
+		t.Errorf("expected finish reason tool_calls, got %s", res.FinishReason)
+	}
+	if len(res.ToolCalls) != 1 || res.ToolCalls[0].ID != "call-xyz" {
+		t.Errorf("expected tool call call-xyz, got %+v", res.ToolCalls)
+	}
+
+	// Verify the assistant conversation message includes tool calls
+	lastMsg := res.Messages[len(res.Messages)-1]
+	if lastMsg.Role != llm.RoleAssistant {
+		t.Errorf("expected assistant message, got %s", lastMsg.Role)
+	}
+	if len(lastMsg.ToolCalls) != 1 || lastMsg.ToolCalls[0].Name != "search" {
+		t.Errorf("expected assistant message to contain tool call, got %+v", lastMsg.ToolCalls)
+	}
+}
+
+func TestAgent_Stream_ReceivesToolCalls(t *testing.T) {
+	expectedCalls := []llm.ToolCall{
+		{
+			ID:        "stream-call-1",
+			Name:      "fetch_data",
+			Arguments: `{"id":1}`,
+		},
+	}
+
+	mock := llm.NewMockLLM("stream chunk").ApplyOptions(
+		llm.WithToolCalls(expectedCalls...),
+	)
+
+	a, err := agent.New(agent.Config{
+		ID:    "stream-agent",
+		Model: mock,
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	stream, err := a.Stream(context.Background(), "stream with tool")
+	if err != nil {
+		t.Fatalf("Stream failed: %v", err)
+	}
+	defer func() {
+		_ = stream.Close()
+	}()
+
+	res, err := stream.Drain()
+	if err != nil {
+		t.Fatalf("Drain failed: %v", err)
+	}
+
+	if len(res.ToolCalls) != 1 || res.ToolCalls[0].ID != "stream-call-1" {
+		t.Errorf("unexpected tool calls in drained response: %+v", res.ToolCalls)
+	}
+	if len(stream.ToolCalls()) != 1 {
+		t.Errorf("expected stream.ToolCalls() to report 1 call, got %d", len(stream.ToolCalls()))
+	}
+}
+
+func TestAgent_PerCallToolsOverride(t *testing.T) {
+	perCallTool := tool.MustNew(tool.Config[string, string]{
+		ID:          "dynamic_tool",
+		Description: "A dynamic tool",
+		Execute: func(_ context.Context, in string) (string, error) {
+			return in, nil
+		},
+	})
+
+	mock := llm.NewMockLLM("response")
+	a, err := agent.New(agent.Config{
+		ID:    "agent-no-default-tools",
+		Model: mock,
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	_, err = a.Generate(context.Background(), "call dynamic", agent.WithTools(perCallTool))
+	if err != nil {
+		t.Fatalf("Generate with tools failed: %v", err)
+	}
+
+	lastCall := mock.LastCall()
+	if lastCall == nil || len(lastCall.Tools) != 1 || lastCall.Tools[0].Name != "dynamic_tool" {
+		t.Errorf("expected dynamic_tool in last call, got %+v", lastCall)
 	}
 }

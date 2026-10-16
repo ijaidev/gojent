@@ -26,6 +26,7 @@ type StreamResponse struct {
 	stream       llm.Stream
 	messages     []llm.Message
 	accumulated  strings.Builder
+	toolCalls    []llm.ToolCall
 	finishReason llm.FinishReason
 	usage        llm.Usage
 	closed       bool
@@ -70,6 +71,9 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 	}
 
 	s.accumulated.WriteString(chunk.Delta)
+	if len(chunk.ToolCalls) > 0 {
+		s.toolCalls = append(s.toolCalls, chunk.ToolCalls...)
+	}
 	if chunk.FinishReason != "" {
 		s.finishReason = chunk.FinishReason
 	}
@@ -99,6 +103,15 @@ func (s *StreamResponse) Text() string {
 	return s.accumulated.String()
 }
 
+// ToolCalls returns a copy of all tool calls received during the stream.
+func (s *StreamResponse) ToolCalls() []llm.ToolCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	copied := make([]llm.ToolCall, len(s.toolCalls))
+	copy(copied, s.toolCalls)
+	return copied
+}
+
 // Response returns the full Agent response once the stream has completed.
 // Returns ErrStreamNotFinished if called before the stream reaches EOF.
 func (s *StreamResponse) Response() (*Response, error) {
@@ -113,12 +126,14 @@ func (s *StreamResponse) Response() (*Response, error) {
 	fullMessages := make([]llm.Message, len(s.messages)+1)
 	copy(fullMessages, s.messages)
 	fullMessages[len(fullMessages)-1] = llm.Message{
-		Role:    llm.RoleAssistant,
-		Content: text,
+		Role:      llm.RoleAssistant,
+		Content:   text,
+		ToolCalls: s.toolCalls,
 	}
 
 	return &Response{
 		Text:         text,
+		ToolCalls:    s.toolCalls,
 		Messages:     fullMessages,
 		FinishReason: s.finishReason,
 		Usage:        s.usage,

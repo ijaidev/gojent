@@ -18,6 +18,7 @@ type MockLLM struct {
 	customFn       func(ctx context.Context, req GenerateRequest) (*GenerateResponse, error)
 	customStreamFn func(ctx context.Context, req GenerateRequest) (Stream, error)
 	usage          Usage
+	toolCalls      []ToolCall
 }
 
 // MockOption configures a MockLLM.
@@ -48,6 +49,13 @@ func WithCustomStreamHandler(fn func(ctx context.Context, req GenerateRequest) (
 func WithUsage(u Usage) MockOption {
 	return func(m *MockLLM) {
 		m.usage = u
+	}
+}
+
+// WithToolCalls configures tool calls returned on generation.
+func WithToolCalls(calls ...ToolCall) MockOption {
+	return func(m *MockLLM) {
+		m.toolCalls = calls
 	}
 }
 
@@ -127,6 +135,15 @@ func (m *MockLLM) Generate(ctx context.Context, req GenerateRequest) (*GenerateR
 		}
 	}
 
+	if len(m.toolCalls) > 0 {
+		return &GenerateResponse{
+			Text:         text,
+			ToolCalls:    m.toolCalls,
+			FinishReason: FinishReasonTool,
+			Usage:        m.usage,
+		}, nil
+	}
+
 	return &GenerateResponse{
 		Text:         text,
 		FinishReason: FinishReasonStop,
@@ -163,6 +180,11 @@ func (m *MockLLM) Stream(ctx context.Context, req GenerateRequest) (Stream, erro
 	}
 
 	chunks := splitIntoChunks(text, m.usage)
+	if len(m.toolCalls) > 0 && len(chunks) > 0 {
+		last := chunks[len(chunks)-1]
+		last.ToolCalls = m.toolCalls
+		last.FinishReason = FinishReasonTool
+	}
 	return NewSliceStream(ctx, chunks), nil
 }
 
@@ -233,10 +255,18 @@ func (m *MockLLM) CallCount() int {
 	return len(m.calls)
 }
 
+// SetToolCalls dynamically configures tool calls returned on future generations.
+func (m *MockLLM) SetToolCalls(calls ...ToolCall) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.toolCalls = calls
+}
+
 // Reset clears recorded calls and resets the response index.
 func (m *MockLLM) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.callIndex = 0
 	m.calls = make([]GenerateRequest, 0)
+	m.toolCalls = nil
 }
