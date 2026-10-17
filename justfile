@@ -1,17 +1,32 @@
 # Run all unit tests across the whole package
 test:
-    go test -v ./... ./providers/google/... ./examples/google/... ./stores/inmemory/... ./stores/sqlite/...
+    go test -v ./... ./providers/google/... ./examples/google/... ./stores/inmemory/... ./stores/postgres/... ./stores/sqlite/...
 
 # Run static analysis and linting across all packages
 lint:
-    golangci-lint run ./... ./providers/google/... ./examples/google/... ./stores/inmemory/... ./stores/sqlite/...
+    golangci-lint run ./... ./providers/google/... ./examples/google/... ./stores/inmemory/... ./stores/postgres/... ./stores/sqlite/...
 
 # Format all Go source files according to standard Go formatting
 fmt:
     gofmt -s -w .
 
-# Run all checks (tidy check, lint, and unit tests)
-check: tidy-check lint test
+# Check that all Go source files are formatted according to standard Go formatting
+fmt-check:
+    #!/usr/bin/env bash
+    set -e
+    unformatted=$(gofmt -l .)
+    if [ -n "$unformatted" ]; then
+        echo "[ERROR] The following files are not formatted:"
+        echo "$unformatted"
+        echo ""
+        echo "Please run 'just fmt' or 'gofmt -s -w .' to format your code before committing."
+        exit 1
+    fi
+    echo "Formatting check passed."
+
+# Run all checks (formatting check, tidy check, lint, and unit tests)
+check: fmt-check tidy-check lint test
+
 
 # Tidy all go.mod and go.sum files across all modules
 tidy:
@@ -42,6 +57,9 @@ tidy-check:
 
 # Alias check-tidy to tidy-check
 alias check-tidy := tidy-check
+
+# Alias pre-commit to check
+alias pre-commit := check
 
 # Configure git to use repository pre-commit hooks
 setup-hooks:
