@@ -1,59 +1,17 @@
 #!/usr/bin/env bash
 set -e
 
-echo "[pre-commit] Running verification checks..."
+# Include common user binary directories in PATH (for git GUI clients and non-login shells)
+export PATH="$HOME/.cargo/bin:$HOME/go/bin:$HOME/.local/bin:$PATH"
 
-# 1. Check formatting
-unformatted=$(gofmt -l .)
-if [ -n "$unformatted" ]; then
-    echo "[ERROR] The following files are not formatted:"
-    echo "$unformatted"
-    echo ""
-    echo "Please run 'just fmt' or 'gofmt -s -w .' to format your code before committing."
-    exit 1
-fi
-echo "[OK] Formatting check passed."
-
-# 2. Check that all go.mod files across the repository are tidy
-root_diff=$(go mod tidy -diff 2>&1 || true)
-if [ -n "$root_diff" ]; then
-    echo ""
-    echo "[ERROR] Root module dependencies are not tidy:"
-    echo "$root_diff"
-    echo ""
-    echo "Please run 'go mod tidy' before committing."
+if ! command -v just >/dev/null 2>&1; then
+    echo "[ERROR] 'just' command runner is required for pre-commit hooks."
+    echo "Please install just (e.g. 'sudo apt install just' or 'cargo install just')."
     exit 1
 fi
 
-# Verify workspace modules synchronization
-go work sync
-sync_diff=$(git diff --name-only "*go.mod" "*go.sum" "go.work.sum")
-if [ -n "$sync_diff" ]; then
-    echo ""
-    echo "[ERROR] Workspace modules are out of sync with go.work:"
-    echo "$sync_diff"
-    echo ""
-    echo "Please run 'go work sync' (or 'just tidy') before committing."
-    exit 1
-fi
-echo "[OK] Go modules tidy check passed."
+echo "[pre-commit] Running verification checks via 'just check'..."
 
-# 3. Run linter
-if ! golangci-lint run ./... ./providers/google/... ./examples/google/...; then
-    echo ""
-    echo "[ERROR] Linting issues detected. Commit aborted."
-    echo "Please run 'just lint' or 'golangci-lint run ./...' to fix the issues."
-    exit 1
-fi
-echo "[OK] Linting check passed."
-
-# 4. Run unit tests
-if ! go test ./... ./providers/google/... ./examples/google/...; then
-    echo ""
-    echo "[ERROR] Unit tests failed. Commit aborted."
-    echo "Please run 'just test' or 'go test -v ./...' to inspect failures."
-    exit 1
-fi
-echo "[OK] Unit tests passed."
+just check
 
 echo "[pre-commit] All checks passed successfully."
