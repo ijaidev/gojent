@@ -2,12 +2,14 @@ package storage
 
 import (
 	"maps"
+	"strings"
 	"time"
 
 	"github.com/ijaidev/gojent/core/llm"
 )
 
 // Message represents a durable conversation message stored within a thread.
+// Content is multipart by default, containing one or more multimodal parts.
 type Message struct {
 	// ID is the unique identifier for this message.
 	ID string `json:"id"`
@@ -17,8 +19,8 @@ type Message struct {
 	ResourceID string `json:"resource_id,omitempty"`
 	// Role identifies the author role (system, user, assistant, tool).
 	Role llm.Role `json:"role"`
-	// Content contains the message text.
-	Content string `json:"content"`
+	// Content contains the multimodal parts of the message.
+	Content []llm.Part `json:"content"`
 	// Name specifies an author name or tool name.
 	Name string `json:"name,omitempty"`
 	// ToolCalls contains model-requested tool calls (for assistant messages).
@@ -33,12 +35,33 @@ type Message struct {
 	Raw any `json:"raw,omitempty"`
 }
 
+// Text returns the aggregated textual output of all text parts in the message.
+func (m *Message) Text() string {
+	if m == nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, p := range m.Content {
+		if p.Type == llm.PartTypeText && p.Text != "" {
+			if sb.Len() > 0 {
+				sb.WriteString("\n")
+			}
+			sb.WriteString(p.Text)
+		}
+	}
+	return sb.String()
+}
+
 // Clone returns a deep copy of the Message to prevent mutation races.
 func (m *Message) Clone() *Message {
 	if m == nil {
 		return nil
 	}
 	clone := *m
+	if m.Content != nil {
+		clone.Content = make([]llm.Part, len(m.Content))
+		copy(clone.Content, m.Content)
+	}
 	if m.ToolCalls != nil {
 		clone.ToolCalls = make([]llm.ToolCall, len(m.ToolCalls))
 		copy(clone.ToolCalls, m.ToolCalls)
@@ -70,7 +93,17 @@ func NewMessage(threadID string, role llm.Role, content string) *Message {
 	return &Message{
 		ThreadID:  threadID,
 		Role:      role,
-		Content:   content,
+		Content:   []llm.Part{llm.TextPart(content)},
+		CreatedAt: time.Now().UTC(),
+	}
+}
+
+// NewMessageWithParts constructs a new storage Message with explicit multimodal parts.
+func NewMessageWithParts(threadID string, role llm.Role, parts ...llm.Part) *Message {
+	return &Message{
+		ThreadID:  threadID,
+		Role:      role,
+		Content:   parts,
 		CreatedAt: time.Now().UTC(),
 	}
 }

@@ -171,7 +171,7 @@ func TestHooks_BeforeModelMutatesRequest(t *testing.T) {
 	}
 	found := false
 	for _, m := range last.Messages {
-		if m.Content == "injected by hook" {
+		if m.Text() == "injected by hook" {
 			found = true
 			break
 		}
@@ -268,7 +268,7 @@ func TestHooks_BeforeToolSkip(t *testing.T) {
 	}
 	secondCall := calls[1]
 	last := secondCall.Messages[len(secondCall.Messages)-1]
-	if last.Role != llm.RoleTool || !strings.Contains(last.Content, "denied by policy") {
+	if last.Role != llm.RoleTool || !strings.Contains(last.Text(), "denied by policy") {
 		t.Errorf("expected denial tool message sent to model, got %+v", last)
 	}
 	if res.Text != "recovered" {

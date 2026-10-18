@@ -16,7 +16,7 @@ func TestMockLLM_Stream(t *testing.T) {
 
 	req := llm.GenerateRequest{
 		Messages: []llm.Message{
-			{Role: llm.RoleUser, Content: "hi"},
+			llm.UserMessage("hi"),
 		},
 	}
 

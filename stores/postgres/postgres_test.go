@@ -266,7 +266,7 @@ func TestStore_MessageOperations(t *testing.T) {
 		t.Errorf("expected ErrInvalidInput for nil message, got: %v", err)
 	}
 
-	_, err = store.SaveMessages(ctx, []*storage.Message{{Content: "hello"}})
+	_, err = store.SaveMessages(ctx, []*storage.Message{{Content: []llm.Part{llm.TextPart("hello")}}})
 	if !errors.Is(err, storage.ErrThreadRequired) {
 		t.Errorf("expected ErrThreadRequired for empty threadID, got: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestStore_MessageOperations(t *testing.T) {
 			"th-1",
 			"res-parent",
 			string(llm.RoleUser),
-			"Hello agent",
+			`[{"type":"text","text":"Hello agent"}]`,
 			"",
 			"[]",
 			"",
@@ -300,7 +300,7 @@ func TestStore_MessageOperations(t *testing.T) {
 		{
 			ThreadID: "th-1",
 			Role:     llm.RoleUser,
-			Content:  "Hello agent",
+			Content:  []llm.Part{llm.TextPart("Hello agent")},
 			Metadata: map[string]any{"source": "web"},
 		},
 	})
@@ -322,7 +322,7 @@ func TestStore_MessageOperations(t *testing.T) {
 			"th-1",
 			"res-explicit",
 			string(llm.RoleAssistant),
-			"Response",
+			`[{"type":"text","text":"Response"}]`,
 			"",
 			"[]",
 			"",
@@ -342,7 +342,7 @@ func TestStore_MessageOperations(t *testing.T) {
 			ThreadID:   "th-1",
 			ResourceID: "res-explicit",
 			Role:       llm.RoleAssistant,
-			Content:    "Response",
+			Content:    []llm.Part{llm.TextPart("Response")},
 		},
 	})
 	if err != nil {

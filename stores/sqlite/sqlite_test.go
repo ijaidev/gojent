@@ -167,13 +167,13 @@ func TestStore_MessageOperations(t *testing.T) {
 	m1 := &storage.Message{
 		ThreadID:  th.ID,
 		Role:      llm.RoleUser,
-		Content:   "Initial question",
+		Content:   []llm.Part{llm.TextPart("Initial question")},
 		CreatedAt: t0,
 	}
 	m2 := &storage.Message{
 		ThreadID:  th.ID,
 		Role:      llm.RoleAssistant,
-		Content:   "Here is an answer",
+		Content:   []llm.Part{llm.TextPart("Here is an answer")},
 		CreatedAt: t1,
 		ToolCalls: []llm.ToolCall{
 			{ID: "c1", Name: "calculator", Arguments: `{"expr":"2+2"}`},
@@ -210,7 +210,7 @@ func TestStore_MessageOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListMessages by Role failed: %v", err)
 	}
-	if len(userMsgs) != 1 || userMsgs[0].Content != "Initial question" {
+	if len(userMsgs) != 1 || userMsgs[0].Text() != "Initial question" {
 		t.Errorf("unexpected user message filter result: %+v", userMsgs)
 	}
 
@@ -223,7 +223,7 @@ func TestStore_MessageOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListMessages Since failed: %v", err)
 	}
-	if len(afterSinceMsgs) != 1 || afterSinceMsgs[0].Content != "Here is an answer" {
+	if len(afterSinceMsgs) != 1 || afterSinceMsgs[0].Text() != "Here is an answer" {
 		t.Errorf("unexpected since filter result: %+v", afterSinceMsgs)
 	}
 
@@ -261,12 +261,12 @@ func TestStore_MessageOperations(t *testing.T) {
 	msgNilMeta := &storage.Message{
 		ThreadID: th.ID,
 		Role:     llm.RoleUser,
-		Content:  "Nil fields",
+		Content:  []llm.Part{llm.TextPart("Nil fields")},
 	}
 	msgEmptyMeta := &storage.Message{
 		ThreadID:  th.ID,
 		Role:      llm.RoleAssistant,
-		Content:   "Empty non-nil fields",
+		Content:   []llm.Part{llm.TextPart("Empty non-nil fields")},
 		ToolCalls: []llm.ToolCall{},
 		Metadata:  map[string]any{},
 	}
@@ -590,7 +590,7 @@ func TestStore_MessageUpdateNoDuplicatesAndTimestampPreservation(t *testing.T) {
 
 	// 1. Initial message save
 	saved, err := store.SaveMessages(ctx, []*storage.Message{
-		{ID: "msg-1", ThreadID: th.ID, Role: llm.RoleUser, Content: "Version 1"},
+		{ID: "msg-1", ThreadID: th.ID, Role: llm.RoleUser, Content: []llm.Part{llm.TextPart("Version 1")}},
 	})
 	if err != nil {
 		t.Fatalf("SaveMessages v1 failed: %v", err)
@@ -599,12 +599,12 @@ func TestStore_MessageUpdateNoDuplicatesAndTimestampPreservation(t *testing.T) {
 
 	// 2. Update the message by saving with same ID and empty CreatedAt
 	updated, err := store.SaveMessages(ctx, []*storage.Message{
-		{ID: "msg-1", ThreadID: th.ID, Role: llm.RoleUser, Content: "Version 2"},
+		{ID: "msg-1", ThreadID: th.ID, Role: llm.RoleUser, Content: []llm.Part{llm.TextPart("Version 2")}},
 	})
 	if err != nil {
 		t.Fatalf("SaveMessages v2 failed: %v", err)
 	}
-	if updated[0].Content != "Version 2" {
+	if updated[0].Text() != "Version 2" {
 		t.Errorf("expected content 'Version 2', got %q", updated[0].Content)
 	}
 	if !updated[0].CreatedAt.Equal(origCreatedAt) {
@@ -619,7 +619,7 @@ func TestStore_MessageUpdateNoDuplicatesAndTimestampPreservation(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected exactly 1 message after update, got %d", len(msgs))
 	}
-	if msgs[0].Content != "Version 2" {
+	if msgs[0].Text() != "Version 2" {
 		t.Errorf("expected 'Version 2', got %q", msgs[0].Content)
 	}
 }
@@ -679,7 +679,7 @@ func TestStore_FilePersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListMessages in store2 failed: %v", err)
 	}
-	if len(msgs) != 1 || msgs[0].Content != "persistent message" {
+	if len(msgs) != 1 || msgs[0].Text() != "persistent message" {
 		t.Errorf("expected 1 persistent message, got %+v", msgs)
 	}
 
@@ -970,4 +970,40 @@ func TestStore_MetadataFilteringEdgeCases(t *testing.T) {
 			t.Fatalf("expected 1 thread th-special-key, got %d", len(res))
 		}
 	})
+}
+
+func TestStore_MultipartMessage_SQLite(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.New(":memory:")
+	if err != nil {
+		t.Fatalf("failed to open sqlite store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	th, err := store.SaveThread(ctx, &storage.Thread{Title: "Multimodal Thread"})
+	if err != nil {
+		t.Fatalf("SaveThread failed: %v", err)
+	}
+
+	imgPart := llm.ImageFromBytes([]byte{10, 20, 30}, "image/png")
+	msg := storage.NewMessageWithParts(th.ID, llm.RoleUser, llm.TextPart("Inspect this photo"), imgPart)
+
+	saved, err := store.SaveMessages(ctx, []*storage.Message{msg})
+	if err != nil {
+		t.Fatalf("SaveMessages failed: %v", err)
+	}
+	if len(saved) != 1 || len(saved[0].Content) != 2 {
+		t.Fatalf("unexpected saved message: %+v", saved)
+	}
+
+	msgs, err := store.ListMessages(ctx, storage.MessageFilter{ThreadID: th.ID})
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(msgs) != 1 || len(msgs[0].Content) != 2 {
+		t.Fatalf("expected 1 message with 2 parts, got %d", len(msgs))
+	}
+	if msgs[0].Content[0].Text != "Inspect this photo" || msgs[0].Content[1].Type != llm.PartTypeImage {
+		t.Errorf("unexpected content parts in retrieved message: %+v", msgs[0].Content)
+	}
 }

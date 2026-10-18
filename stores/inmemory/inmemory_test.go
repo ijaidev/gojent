@@ -125,13 +125,13 @@ func TestStore_MessageOperations(t *testing.T) {
 	m1 := &storage.Message{
 		ThreadID:  th.ID,
 		Role:      llm.RoleUser,
-		Content:   "Initial question",
+		Content:   []llm.Part{llm.TextPart("Initial question")},
 		CreatedAt: t0,
 	}
 	m2 := &storage.Message{
 		ThreadID:  th.ID,
 		Role:      llm.RoleAssistant,
-		Content:   "Here is an answer",
+		Content:   []llm.Part{llm.TextPart("Here is an answer")},
 		CreatedAt: t1,
 		ToolCalls: []llm.ToolCall{
 			{ID: "c1", Name: "calculator", Arguments: `{"expr":"2+2"}`},
@@ -157,7 +157,7 @@ func TestStore_MessageOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListMessages by Role failed: %v", err)
 	}
-	if len(userMsgs) != 1 || userMsgs[0].Content != "Initial question" {
+	if len(userMsgs) != 1 || userMsgs[0].Text() != "Initial question" {
 		t.Errorf("unexpected user message filter result: %+v", userMsgs)
 	}
 
@@ -170,7 +170,7 @@ func TestStore_MessageOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListMessages Since failed: %v", err)
 	}
-	if len(afterSinceMsgs) != 1 || afterSinceMsgs[0].Content != "Here is an answer" {
+	if len(afterSinceMsgs) != 1 || afterSinceMsgs[0].Text() != "Here is an answer" {
 		t.Errorf("unexpected since filter result: %+v", afterSinceMsgs)
 	}
 
@@ -436,7 +436,7 @@ func TestStore_MessageUpdateNoDuplicatesAndTimestampPreservation(t *testing.T) {
 
 	// 1. Initial message save
 	saved, err := store.SaveMessages(ctx, []*storage.Message{
-		{ID: "msg-1", ThreadID: th.ID, Role: llm.RoleUser, Content: "Version 1"},
+		{ID: "msg-1", ThreadID: th.ID, Role: llm.RoleUser, Content: []llm.Part{llm.TextPart("Version 1")}},
 	})
 	if err != nil {
 		t.Fatalf("SaveMessages v1 failed: %v", err)
@@ -445,12 +445,12 @@ func TestStore_MessageUpdateNoDuplicatesAndTimestampPreservation(t *testing.T) {
 
 	// 2. Update the message by saving with same ID and empty CreatedAt
 	updated, err := store.SaveMessages(ctx, []*storage.Message{
-		{ID: "msg-1", ThreadID: th.ID, Role: llm.RoleUser, Content: "Version 2"},
+		{ID: "msg-1", ThreadID: th.ID, Role: llm.RoleUser, Content: []llm.Part{llm.TextPart("Version 2")}},
 	})
 	if err != nil {
 		t.Fatalf("SaveMessages v2 failed: %v", err)
 	}
-	if updated[0].Content != "Version 2" {
+	if updated[0].Text() != "Version 2" {
 		t.Errorf("expected content 'Version 2', got %q", updated[0].Content)
 	}
 	if !updated[0].CreatedAt.Equal(origCreatedAt) {
@@ -465,7 +465,7 @@ func TestStore_MessageUpdateNoDuplicatesAndTimestampPreservation(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("expected exactly 1 message after update, got %d", len(msgs))
 	}
-	if msgs[0].Content != "Version 2" {
+	if msgs[0].Text() != "Version 2" {
 		t.Errorf("expected 'Version 2', got %q", msgs[0].Content)
 	}
 }

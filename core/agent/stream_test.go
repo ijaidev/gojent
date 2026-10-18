@@ -64,13 +64,13 @@ func TestAgent_Stream_WithMockLLM(t *testing.T) {
 	if len(res.Messages) != 3 {
 		t.Fatalf("expected 3 conversation messages, got %d", len(res.Messages))
 	}
-	if res.Messages[0].Role != llm.RoleSystem || res.Messages[0].Content != "You are a concise assistant." {
+	if res.Messages[0].Role != llm.RoleSystem || res.Messages[0].Text() != "You are a concise assistant." {
 		t.Errorf("expected system message, got %+v", res.Messages[0])
 	}
-	if res.Messages[1].Role != llm.RoleUser || res.Messages[1].Content != "give me the steps" {
+	if res.Messages[1].Role != llm.RoleUser || res.Messages[1].Text() != "give me the steps" {
 		t.Errorf("expected user prompt, got %+v", res.Messages[1])
 	}
-	if res.Messages[2].Role != llm.RoleAssistant || res.Messages[2].Content != expectedText {
+	if res.Messages[2].Role != llm.RoleAssistant || res.Messages[2].Text() != expectedText {
 		t.Errorf("expected assistant reply, got %+v", res.Messages[2])
 	}
 	if res.FinishReason != llm.FinishReasonStop {

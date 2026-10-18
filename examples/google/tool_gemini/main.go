@@ -162,19 +162,19 @@ func run() error {
 	for i, msg := range res1.Messages {
 		switch msg.Role {
 		case llm.RoleSystem:
-			fmt.Printf("  Step %d [%s]: %s\n", i+1, msg.Role, msg.Content)
+			fmt.Printf("  Step %d [%s]: %s\n", i+1, msg.Role, msg.Text())
 		case llm.RoleUser:
-			fmt.Printf("  Step %d [%s]: %s\n", i+1, msg.Role, msg.Content)
+			fmt.Printf("  Step %d [%s]: %s\n", i+1, msg.Role, msg.Text())
 		case llm.RoleAssistant:
 			if len(msg.ToolCalls) > 0 {
 				fmt.Printf("  Step %d [%s Tool Call]: Name=%s, Args=%s\n",
 					i+1, msg.Role, msg.ToolCalls[0].Name, msg.ToolCalls[0].Arguments)
 			} else {
-				fmt.Printf("  Step %d [%s Reply]: %s\n", i+1, msg.Role, msg.Content)
+				fmt.Printf("  Step %d [%s Reply]: %s\n", i+1, msg.Role, msg.Text())
 			}
 		case llm.RoleTool:
 			fmt.Printf("  Step %d [%s Result]: Name=%s, Content=%s\n",
-				i+1, msg.Role, msg.Name, msg.Content)
+				i+1, msg.Role, msg.Name, msg.Text())
 		}
 	}
 

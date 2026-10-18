@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ijaidev/gojent/core/llm"
@@ -99,7 +102,10 @@ func (m *Model) Generate(ctx context.Context, req llm.GenerateRequest) (*llm.Gen
 		return nil, err
 	}
 
-	contents, systemInstruction := convertMessages(req.Messages)
+	contents, systemInstruction, err := convertMessages(req.Messages)
+	if err != nil {
+		return nil, err
+	}
 	config := m.convertConfig(req, systemInstruction)
 
 	resp, err := m.client.Models.GenerateContent(ctx, m.modelID, contents, config)
@@ -154,7 +160,10 @@ func (m *Model) Stream(ctx context.Context, req llm.GenerateRequest) (llm.Stream
 		return nil, err
 	}
 
-	contents, systemInstruction := convertMessages(req.Messages)
+	contents, systemInstruction, err := convertMessages(req.Messages)
+	if err != nil {
+		return nil, err
+	}
 	config := m.convertConfig(req, systemInstruction)
 
 	streamCtx, cancel := context.WithCancel(ctx)
@@ -247,14 +256,20 @@ func (m *Model) Stream(ctx context.Context, req llm.GenerateRequest) (llm.Stream
 }
 
 // convertMessages translates Gojent messages to Google Gen AI contents and extracts system instructions.
-func convertMessages(messages []llm.Message) (contents []*genai.Content, systemInstruction *genai.Content) {
+func convertMessages(messages []llm.Message) (contents []*genai.Content, systemInstruction *genai.Content, err error) {
 	var systemParts []*genai.Part
 
 	for _, msg := range messages {
 		switch msg.Role {
 		case llm.RoleSystem:
-			if msg.Content != "" {
-				systemParts = append(systemParts, &genai.Part{Text: msg.Content})
+			for _, p := range msg.Content {
+				if p.Type == llm.PartTypeText {
+					if p.Text != "" {
+						systemParts = append(systemParts, &genai.Part{Text: p.Text})
+					}
+				} else {
+					return nil, nil, fmt.Errorf("google: system message only supports text parts, got %q: %w", p.Type, llm.ErrUnsupportedPartType)
+				}
 			}
 		case llm.RoleAssistant:
 			// If we have the original raw Gemini response content, preserve it directly.
@@ -266,8 +281,18 @@ func convertMessages(messages []llm.Message) (contents []*genai.Content, systemI
 			}
 
 			var parts []*genai.Part
-			if msg.Content != "" {
-				parts = append(parts, &genai.Part{Text: msg.Content})
+			for _, p := range msg.Content {
+				if p.Type == llm.PartTypeText {
+					if p.Text != "" {
+						parts = append(parts, &genai.Part{Text: p.Text})
+					}
+				} else {
+					converted, err := convertPartToGemini(p)
+					if err != nil {
+						return nil, nil, err
+					}
+					parts = append(parts, converted)
+				}
 			}
 			for _, tc := range msg.ToolCalls {
 				var argsMap map[string]any
@@ -292,10 +317,32 @@ func convertMessages(messages []llm.Message) (contents []*genai.Content, systemI
 				})
 			}
 		case llm.RoleTool:
+			var textOutput string
+			var fnParts []*genai.FunctionResponsePart
+
+			for _, p := range msg.Content {
+				switch p.Type {
+				case llm.PartTypeText:
+					if textOutput == "" {
+						textOutput = p.Text
+					} else {
+						textOutput += "\n" + p.Text
+					}
+				case llm.PartTypeImage, llm.PartTypeAudio, llm.PartTypeVideo, llm.PartTypeDocument, llm.PartTypeFile:
+					fnPart, err := convertToolPartToGemini(p)
+					if err != nil {
+						return nil, nil, err
+					}
+					fnParts = append(fnParts, fnPart)
+				default:
+					return nil, nil, fmt.Errorf("google: tool message unsupported part type %q: %w", p.Type, llm.ErrUnsupportedPartType)
+				}
+			}
+
 			var respMap map[string]any
-			if msg.Content != "" {
-				if err := json.Unmarshal([]byte(msg.Content), &respMap); err != nil {
-					respMap = map[string]any{"output": msg.Content}
+			if textOutput != "" {
+				if err := json.Unmarshal([]byte(textOutput), &respMap); err != nil {
+					respMap = map[string]any{"output": textOutput}
 				}
 			} else {
 				respMap = map[string]any{"output": ""}
@@ -304,13 +351,14 @@ func convertMessages(messages []llm.Message) (contents []*genai.Content, systemI
 			if name == "" {
 				name = msg.ToolCallID
 			}
-			part := &genai.Part{
-				FunctionResponse: &genai.FunctionResponse{
-					ID:       msg.ToolCallID,
-					Name:     name,
-					Response: respMap,
-				},
+
+			var part *genai.Part
+			if len(fnParts) > 0 {
+				part = genai.NewPartFromFunctionResponseWithParts(name, respMap, fnParts)
+			} else {
+				part = genai.NewPartFromFunctionResponse(name, respMap)
 			}
+
 			// Gemini requires function responses to have role "user".
 			// If the immediately preceding content is already a user turn with function responses,
 			// merge parts into it to maintain strictly alternating turns (user -> model -> user).
@@ -325,10 +373,18 @@ func convertMessages(messages []llm.Message) (contents []*genai.Content, systemI
 				})
 			}
 		default:
-			if msg.Content != "" {
+			var parts []*genai.Part
+			for _, p := range msg.Content {
+				converted, err := convertPartToGemini(p)
+				if err != nil {
+					return nil, nil, err
+				}
+				parts = append(parts, converted)
+			}
+			if len(parts) > 0 {
 				contents = append(contents, &genai.Content{
 					Role:  string(msg.Role),
-					Parts: []*genai.Part{{Text: msg.Content}},
+					Parts: parts,
 				})
 			}
 		}
@@ -340,7 +396,235 @@ func convertMessages(messages []llm.Message) (contents []*genai.Content, systemI
 		}
 	}
 
-	return contents, systemInstruction
+	return contents, systemInstruction, nil
+}
+
+// convertPartToGemini translates an individual Gojent llm.Part to a Google Gen AI genai.Part.
+func convertPartToGemini(p llm.Part) (*genai.Part, error) {
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+
+	switch p.Type {
+	case llm.PartTypeText:
+		return genai.NewPartFromText(p.Text), nil
+
+	case llm.PartTypeImage:
+		mimeType := p.MIMEType
+		data := p.Data
+		if len(data) == 0 && p.Path != "" {
+			var err error
+			data, err = os.ReadFile(p.Path)
+			if err != nil {
+				return nil, fmt.Errorf("google: failed to read image from %q: %w", p.Path, err)
+			}
+			if mimeType == "" {
+				mimeType = detectMIMEType(p.Path, data)
+			}
+		}
+
+		if mimeType != "" && !isSupportedImageMIME(mimeType) {
+			return nil, fmt.Errorf("google: unsupported image MIME type %q: %w", mimeType, llm.ErrUnsupportedMIMEType)
+		}
+		if mimeType == "" {
+			mimeType = "image/png"
+		}
+
+		if len(data) > 0 {
+			return genai.NewPartFromBytes(data, mimeType), nil
+		}
+
+		if p.URL != "" {
+			if strings.HasPrefix(p.URL, "gs://") || strings.HasPrefix(p.URL, "https://generativelanguage.googleapis.com/") {
+				return genai.NewPartFromURI(p.URL, mimeType), nil
+			}
+			return nil, fmt.Errorf("google: direct HTTP/HTTPS URL %q not supported by Gemini API (upload via Files API or provide inline bytes): %w", p.URL, llm.ErrUnsupportedPart)
+		}
+
+		return nil, fmt.Errorf("google: image part must provide Data, URL, or Path: %w", llm.ErrInvalidPart)
+
+	case llm.PartTypeAudio:
+		mimeType := p.MIMEType
+		data := p.Data
+		if len(data) == 0 && p.Path != "" {
+			var err error
+			data, err = os.ReadFile(p.Path)
+			if err != nil {
+				return nil, fmt.Errorf("google: failed to read audio from %q: %w", p.Path, err)
+			}
+			if mimeType == "" {
+				mimeType = detectMIMEType(p.Path, data)
+			}
+		}
+
+		if mimeType != "" && !isSupportedAudioMIME(mimeType) {
+			return nil, fmt.Errorf("google: unsupported audio MIME type %q: %w", mimeType, llm.ErrUnsupportedMIMEType)
+		}
+		if mimeType == "" {
+			mimeType = "audio/wav"
+		}
+
+		if len(data) > 0 {
+			return genai.NewPartFromBytes(data, mimeType), nil
+		}
+		if p.URL != "" {
+			return genai.NewPartFromURI(p.URL, mimeType), nil
+		}
+		return nil, fmt.Errorf("google: audio part must provide Data, URL, or Path: %w", llm.ErrInvalidPart)
+
+	case llm.PartTypeVideo:
+		mimeType := p.MIMEType
+		data := p.Data
+		if len(data) == 0 && p.Path != "" {
+			var err error
+			data, err = os.ReadFile(p.Path)
+			if err != nil {
+				return nil, fmt.Errorf("google: failed to read video from %q: %w", p.Path, err)
+			}
+			if mimeType == "" {
+				mimeType = detectMIMEType(p.Path, data)
+			}
+		}
+
+		if mimeType != "" && !isSupportedVideoMIME(mimeType) {
+			return nil, fmt.Errorf("google: unsupported video MIME type %q: %w", mimeType, llm.ErrUnsupportedMIMEType)
+		}
+		if mimeType == "" {
+			mimeType = "video/mp4"
+		}
+
+		if len(data) > 0 {
+			return genai.NewPartFromBytes(data, mimeType), nil
+		}
+		if p.URL != "" {
+			return genai.NewPartFromURI(p.URL, mimeType), nil
+		}
+		return nil, fmt.Errorf("google: video part must provide Data, URL, or Path: %w", llm.ErrInvalidPart)
+
+	case llm.PartTypeDocument, llm.PartTypeFile:
+		mimeType := p.MIMEType
+		data := p.Data
+		if len(data) == 0 && p.Path != "" {
+			var err error
+			data, err = os.ReadFile(p.Path)
+			if err != nil {
+				return nil, fmt.Errorf("google: failed to read document from %q: %w", p.Path, err)
+			}
+			if mimeType == "" {
+				mimeType = detectMIMEType(p.Path, data)
+			}
+		}
+
+		if mimeType != "" && !isSupportedDocMIME(mimeType) {
+			return nil, fmt.Errorf("google: unsupported document MIME type %q: %w", mimeType, llm.ErrUnsupportedMIMEType)
+		}
+		if mimeType == "" {
+			mimeType = "application/pdf"
+		}
+
+		if len(data) > 0 {
+			return genai.NewPartFromBytes(data, mimeType), nil
+		}
+		if p.URL != "" {
+			return genai.NewPartFromURI(p.URL, mimeType), nil
+		}
+		return nil, fmt.Errorf("google: document part must provide Data, URL, or Path: %w", llm.ErrInvalidPart)
+
+	default:
+		return nil, fmt.Errorf("google: unsupported part type %q: %w", p.Type, llm.ErrUnsupportedPartType)
+	}
+}
+
+// convertToolPartToGemini translates a tool media part to a Google Gen AI FunctionResponsePart.
+func convertToolPartToGemini(p llm.Part) (*genai.FunctionResponsePart, error) {
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+
+	mimeType := p.MIMEType
+	data := p.Data
+	if len(data) == 0 && p.Path != "" {
+		var err error
+		data, err = os.ReadFile(p.Path)
+		if err != nil {
+			return nil, fmt.Errorf("google: failed to read tool artifact from %q: %w", p.Path, err)
+		}
+		if mimeType == "" {
+			mimeType = detectMIMEType(p.Path, data)
+		}
+	}
+
+	if mimeType == "" {
+		switch p.Type {
+		case llm.PartTypeImage:
+			mimeType = "image/png"
+		case llm.PartTypeDocument, llm.PartTypeFile:
+			mimeType = "application/pdf"
+		case llm.PartTypeAudio:
+			mimeType = "audio/wav"
+		case llm.PartTypeVideo:
+			mimeType = "video/mp4"
+		default:
+			mimeType = "application/octet-stream"
+		}
+	}
+
+	if len(data) > 0 {
+		return genai.NewFunctionResponsePartFromBytes(data, mimeType), nil
+	}
+	if p.URL != "" {
+		return genai.NewFunctionResponsePartFromURI(p.URL, mimeType), nil
+	}
+	return nil, fmt.Errorf("google: tool part must provide Data, URL, or Path: %w", llm.ErrInvalidPart)
+}
+
+func isSupportedImageMIME(m string) bool {
+	switch strings.ToLower(strings.TrimSpace(m)) {
+	case "image/png", "image/jpeg", "image/jpg", "image/webp", "image/heic", "image/heif":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSupportedAudioMIME(m string) bool {
+	switch strings.ToLower(strings.TrimSpace(m)) {
+	case "audio/wav", "audio/mp3", "audio/mpeg", "audio/aac", "audio/flac", "audio/ogg", "audio/aiff", "audio/x-m4a":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSupportedVideoMIME(m string) bool {
+	switch strings.ToLower(strings.TrimSpace(m)) {
+	case "video/mp4", "video/mpeg", "video/mov", "video/quicktime", "video/avi", "video/x-flv", "video/webm", "video/wmv", "video/3gpp":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSupportedDocMIME(m string) bool {
+	switch strings.ToLower(strings.TrimSpace(m)) {
+	case "application/pdf", "text/plain", "text/html", "text/css", "text/csv", "text/markdown", "application/rtf", "text/xml", "application/json":
+		return true
+	default:
+		return false
+	}
+}
+
+func detectMIMEType(path string, data []byte) string {
+	ext := filepath.Ext(path)
+	if ext != "" {
+		if m := mime.TypeByExtension(ext); m != "" {
+			return m
+		}
+	}
+	if len(data) > 0 {
+		return http.DetectContentType(data)
+	}
+	return "application/octet-stream"
 }
 
 // convertConfig prepares the genai.GenerateContentConfig from Gojent request parameters.

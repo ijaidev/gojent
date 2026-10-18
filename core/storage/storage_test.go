@@ -159,7 +159,7 @@ func TestMockStorage_MessageLifecycle(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(msgs))
 	}
-	if msgs[0].Content != "Hello agent" || msgs[1].Content != "Hello human!" {
+	if msgs[0].Text() != "Hello agent" || msgs[1].Text() != "Hello human!" {
 		t.Errorf("unexpected message order or content")
 	}
 
@@ -348,7 +348,7 @@ func TestMockStorage_MessageUpdateNoDuplicatesAndTimestampPreservation(t *testin
 
 	// 1. Initial message save
 	saved, err := store.SaveMessages(ctx, []*storage.Message{
-		{ID: "msg-1", ThreadID: th.ID, Role: llm.RoleUser, Content: "Version 1"},
+		{ID: "msg-1", ThreadID: th.ID, Role: llm.RoleUser, Content: []llm.Part{llm.TextPart("Version 1")}},
 	})
 	if err != nil {
 		t.Fatalf("SaveMessages v1 failed: %v", err)
@@ -357,12 +357,12 @@ func TestMockStorage_MessageUpdateNoDuplicatesAndTimestampPreservation(t *testin
 
 	// 2. Update the message by saving with same ID and empty CreatedAt
 	updated, err := store.SaveMessages(ctx, []*storage.Message{
-		{ID: "msg-1", ThreadID: th.ID, Role: llm.RoleUser, Content: "Version 2"},
+		{ID: "msg-1", ThreadID: th.ID, Role: llm.RoleUser, Content: []llm.Part{llm.TextPart("Version 2")}},
 	})
 	if err != nil {
 		t.Fatalf("SaveMessages v2 failed: %v", err)
 	}
-	if updated[0].Content != "Version 2" {
+	if updated[0].Text() != "Version 2" {
 		t.Errorf("expected content 'Version 2', got %q", updated[0].Content)
 	}
 	if !updated[0].CreatedAt.Equal(origCreatedAt) {
@@ -377,7 +377,7 @@ func TestMockStorage_MessageUpdateNoDuplicatesAndTimestampPreservation(t *testin
 	if len(msgs) != 1 {
 		t.Fatalf("expected exactly 1 message after update, got %d", len(msgs))
 	}
-	if msgs[0].Content != "Version 2" {
+	if msgs[0].Text() != "Version 2" {
 		t.Errorf("expected 'Version 2', got %q", msgs[0].Content)
 	}
 }
@@ -404,5 +404,38 @@ func TestMockStorage_UpdateThread_ResourceID(t *testing.T) {
 	}
 	if updated.ResourceID != "tenant-99" {
 		t.Errorf("expected updated resourceID 'tenant-99', got %q", updated.ResourceID)
+	}
+}
+
+func TestStorage_MultipartMessage(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMockStorage()
+	defer func() { _ = store.Close() }()
+
+	th, err := store.SaveThread(ctx, &storage.Thread{Title: "Multimodal Thread"})
+	if err != nil {
+		t.Fatalf("SaveThread failed: %v", err)
+	}
+
+	imgPart := llm.ImageFromBytes([]byte{1, 2, 3}, "image/png")
+	msg := storage.NewMessageWithParts(th.ID, llm.RoleUser, llm.TextPart("Look at this"), imgPart)
+
+	saved, err := store.SaveMessages(ctx, []*storage.Message{msg})
+	if err != nil {
+		t.Fatalf("SaveMessages failed: %v", err)
+	}
+	if len(saved) != 1 || len(saved[0].Content) != 2 {
+		t.Fatalf("unexpected saved message: %+v", saved)
+	}
+
+	msgs, err := store.ListMessages(ctx, storage.MessageFilter{ThreadID: th.ID})
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(msgs) != 1 || len(msgs[0].Content) != 2 {
+		t.Fatalf("expected 1 message with 2 parts, got %d", len(msgs))
+	}
+	if msgs[0].Content[0].Text != "Look at this" || msgs[0].Content[1].Type != llm.PartTypeImage {
+		t.Errorf("unexpected content in loaded message: %+v", msgs[0].Content)
 	}
 }

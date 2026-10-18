@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/tool"
 )
 
@@ -211,5 +212,31 @@ func TestTool_ToDefinition(t *testing.T) {
 	// Empty slice returns nil
 	if tool.ToDefinitions(nil) != nil {
 		t.Error("expected nil for empty tools")
+	}
+}
+
+func TestTool_MultipartResult(t *testing.T) {
+	imgPart := llm.ImageFromBytes([]byte{1, 2, 3}, "image/png")
+	screenshotTool := tool.MustNew(tool.Config[string, tool.Result]{
+		ID:          "screenshot",
+		Description: "Takes screenshot",
+		Execute: func(_ context.Context, _ string) (tool.Result, error) {
+			return tool.NewImageResult("screen captured", imgPart), nil
+		},
+	})
+
+	out, err := screenshotTool.Execute(context.Background(), []byte(`"full"`))
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	res, ok := out.(tool.Result)
+	if !ok {
+		t.Fatalf("expected tool.Result, got %T", out)
+	}
+	if res.Text() != "screen captured" {
+		t.Errorf("expected 'screen captured', got %q", res.Text())
+	}
+	if len(res.Content) != 2 || res.Content[1].Type != llm.PartTypeImage {
+		t.Errorf("unexpected content parts: %+v", res.Content)
 	}
 }
