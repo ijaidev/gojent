@@ -128,8 +128,8 @@ func TestModel_Generate_EndToEndMockServer(t *testing.T) {
 	maxTokens := 100
 	req := llm.GenerateRequest{
 		Messages: []llm.Message{
-			{Role: llm.RoleSystem, Content: "You are a helpful assistant."},
-			{Role: llm.RoleUser, Content: "Hello Gemini!"},
+			llm.SystemMessage("You are a helpful assistant."),
+			llm.UserMessage("Hello Gemini!"),
 		},
 		Temperature: &temp,
 		MaxTokens:   &maxTokens,
@@ -225,7 +225,7 @@ func TestModel_Stream_EndToEndMockServer(t *testing.T) {
 
 	stream, err := m.Stream(ctx, llm.GenerateRequest{
 		Messages: []llm.Message{
-			{Role: llm.RoleUser, Content: "stream this"},
+			llm.UserMessage("stream this"),
 		},
 	})
 	if err != nil {
@@ -469,7 +469,7 @@ func TestModel_Generate_ToolResponseRole(t *testing.T) {
 				Role:       llm.RoleTool,
 				Name:       "get_weather",
 				ToolCallID: "call-1",
-				Content:    `{"temperature":20}`,
+				Content:    []llm.Part{llm.TextPart(`{"temperature":20}`)},
 			},
 		},
 	}
@@ -518,4 +518,60 @@ func TestModel_Generate_ToolResponseRole(t *testing.T) {
 func init() {
 	// Ensure tests do not fail on missing credentials when running in test environments
 	_ = os.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "false")
+}
+
+func TestGoogleProvider_Multipart_ErrorValidations(t *testing.T) {
+	ctx := context.Background()
+	m, err := google.New(ctx, google.Config{
+		Model:  "gemini-2.5-flash",
+		APIKey: "test-key",
+	})
+	if err != nil {
+		t.Fatalf("failed to create model: %v", err)
+	}
+
+	// 1. Unsupported MIME type error
+	badMIMEReq := llm.GenerateRequest{
+		Messages: []llm.Message{
+			llm.UserMessageWithMedia("inspect", llm.Part{
+				Type:     llm.PartTypeImage,
+				Data:     []byte{1, 2, 3},
+				MIMEType: "image/unsupported-xyz",
+			}),
+		},
+	}
+	_, err = m.Generate(ctx, badMIMEReq)
+	if !errors.Is(err, llm.ErrUnsupportedMIMEType) {
+		t.Errorf("expected ErrUnsupportedMIMEType, got: %v", err)
+	}
+
+	// 2. Unsupported direct HTTP URL error
+	badURLReq := llm.GenerateRequest{
+		Messages: []llm.Message{
+			llm.UserMessageWithMedia("inspect", llm.Part{
+				Type: llm.PartTypeImage,
+				URL:  "https://example.com/photo.jpg",
+			}),
+		},
+	}
+	_, err = m.Generate(ctx, badURLReq)
+	if !errors.Is(err, llm.ErrUnsupportedPart) {
+		t.Errorf("expected ErrUnsupportedPart for HTTP URL, got: %v", err)
+	}
+
+	// 3. Unsupported part type in system message
+	badSysReq := llm.GenerateRequest{
+		Messages: []llm.Message{
+			{
+				Role: llm.RoleSystem,
+				Content: []llm.Part{
+					llm.ImageFromBytes([]byte{1, 2}, "image/png"),
+				},
+			},
+		},
+	}
+	_, err = m.Generate(ctx, badSysReq)
+	if !errors.Is(err, llm.ErrUnsupportedPartType) {
+		t.Errorf("expected ErrUnsupportedPartType for non-text system part, got: %v", err)
+	}
 }

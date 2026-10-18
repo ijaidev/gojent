@@ -116,6 +116,41 @@ func scanJSON(dest any) *jsonScanner {
 	return &jsonScanner{dest: dest}
 }
 
+type contentScanner struct {
+	dest *[]llm.Part
+}
+
+func (s *contentScanner) Scan(src any) error {
+	if src == nil {
+		return nil
+	}
+	var str string
+	switch v := src.(type) {
+	case []byte:
+		str = string(v)
+	case string:
+		str = v
+	default:
+		return fmt.Errorf("postgres: cannot scan %T into content", src)
+	}
+	trimmed := strings.TrimSpace(str)
+	if len(trimmed) == 0 || trimmed == "null" {
+		*s.dest = nil
+		return nil
+	}
+	var parts []llm.Part
+	if err := json.Unmarshal([]byte(trimmed), &parts); err == nil {
+		*s.dest = parts
+		return nil
+	}
+	*s.dest = []llm.Part{llm.TextPart(str)}
+	return nil
+}
+
+func scanContent(dest *[]llm.Part) *contentScanner {
+	return &contentScanner{dest: dest}
+}
+
 // Schema contains the DDL statements for initializing Postgres storage tables and indexes.
 const Schema = `
 CREATE TABLE IF NOT EXISTS threads (
@@ -796,12 +831,23 @@ func (s *Store) SaveMessages(ctx context.Context, messages []*storage.Message) (
 			rawBytes = b
 		}
 
+		var contentBytes []byte
+		if mc.Content != nil {
+			b, err := json.Marshal(mc.Content)
+			if err != nil {
+				return nil, fmt.Errorf("%w: failed to marshal content: %w", storage.ErrInvalidInput, err)
+			}
+			contentBytes = b
+		} else {
+			contentBytes = []byte("[]")
+		}
+
 		_, err := tx.ExecContext(ctx, upsertQuery,
 			mc.ID,
 			mc.ThreadID,
 			mc.ResourceID,
 			string(mc.Role),
-			mc.Content,
+			string(contentBytes),
 			mc.Name,
 			string(toolCallsBytes),
 			mc.ToolCallID,
@@ -836,7 +882,7 @@ func scanMessage(scanner interface{ Scan(dest ...any) error }) (*storage.Message
 		&msg.ThreadID,
 		&msg.ResourceID,
 		&roleStr,
-		&msg.Content,
+		scanContent(&msg.Content),
 		&msg.Name,
 		scanJSON(&msg.ToolCalls),
 		&msg.ToolCallID,

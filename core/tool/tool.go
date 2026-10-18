@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/ijaidev/gojent/core/llm"
 )
@@ -17,6 +18,48 @@ var (
 	// ErrExecuteRequired is returned when creating a Tool without an execution function.
 	ErrExecuteRequired = errors.New("tool: execute function is required")
 )
+
+// Result represents the execution output of a tool, supporting both textual and rich multipart components.
+type Result struct {
+	// Content contains the message parts returned by the tool (text, images, audio, video, documents).
+	Content []llm.Part `json:"content"`
+	// Data contains optional structured result data for programmatic consumption.
+	Data any `json:"data,omitempty"`
+}
+
+// Text returns the aggregated textual output of all text parts in the result.
+func (r Result) Text() string {
+	var sb strings.Builder
+	for _, p := range r.Content {
+		if p.Type == llm.PartTypeText && p.Text != "" {
+			if sb.Len() > 0 {
+				sb.WriteString("\n")
+			}
+			sb.WriteString(p.Text)
+		}
+	}
+	return sb.String()
+}
+
+// NewTextResult creates a tool result with text content.
+func NewTextResult(text string) Result {
+	return Result{Content: []llm.Part{llm.TextPart(text)}}
+}
+
+// NewImageResult creates a tool result with text and an image part.
+func NewImageResult(text string, img llm.Part) Result {
+	parts := make([]llm.Part, 0, 2)
+	if text != "" {
+		parts = append(parts, llm.TextPart(text))
+	}
+	parts = append(parts, img)
+	return Result{Content: parts}
+}
+
+// NewResult creates a tool result from multiple parts.
+func NewResult(parts ...llm.Part) Result {
+	return Result{Content: parts}
+}
 
 // Tool represents an executable action that an Agent or LLM can invoke.
 type Tool interface {

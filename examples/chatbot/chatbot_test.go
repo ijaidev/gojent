@@ -89,16 +89,16 @@ func TestRun_MultiTurnMemory(t *testing.T) {
 		t.Fatalf("expected 4 messages persisted in thread, got %d", len(msgs))
 	}
 
-	if msgs[0].Role != llm.RoleUser || msgs[0].Content != "Hello, my name is Alice." {
+	if msgs[0].Role != llm.RoleUser || msgs[0].Text() != "Hello, my name is Alice." {
 		t.Errorf("unexpected message 0: %+v", msgs[0])
 	}
-	if msgs[1].Role != llm.RoleAssistant || msgs[1].Content != "Hello Alice! Nice to meet you." {
+	if msgs[1].Role != llm.RoleAssistant || msgs[1].Text() != "Hello Alice! Nice to meet you." {
 		t.Errorf("unexpected message 1: %+v", msgs[1])
 	}
-	if msgs[2].Role != llm.RoleUser || msgs[2].Content != "What is my name?" {
+	if msgs[2].Role != llm.RoleUser || msgs[2].Text() != "What is my name?" {
 		t.Errorf("unexpected message 2: %+v", msgs[2])
 	}
-	if msgs[3].Role != llm.RoleAssistant || msgs[3].Content != "Your name is Alice." {
+	if msgs[3].Role != llm.RoleAssistant || msgs[3].Text() != "Your name is Alice." {
 		t.Errorf("unexpected message 3: %+v", msgs[3])
 	}
 }

@@ -780,12 +780,23 @@ func (s *Store) SaveMessages(ctx context.Context, messages []*storage.Message) (
 			rawStr = string(b)
 		}
 
+		var contentStr string
+		if mc.Content != nil {
+			b, err := json.Marshal(mc.Content)
+			if err != nil {
+				return nil, fmt.Errorf("%w: failed to marshal content: %w", storage.ErrInvalidInput, err)
+			}
+			contentStr = string(b)
+		} else {
+			contentStr = "[]"
+		}
+
 		_, err := tx.ExecContext(ctx, upsertQuery,
 			mc.ID,
 			mc.ThreadID,
 			mc.ResourceID,
 			string(mc.Role),
-			mc.Content,
+			contentStr,
 			mc.Name,
 			toolCallsStr,
 			mc.ToolCallID,
@@ -813,8 +824,8 @@ func scanMessage(rows interface {
 	Scan(dest ...any) error
 }) (*storage.Message, error) {
 	var (
-		msg                                                                 storage.Message
-		roleStr, toolCallsStr, createdAtStr, rawMetadataStr, rawPayloadText string
+		msg                                                                              storage.Message
+		roleStr, contentText, toolCallsStr, createdAtStr, rawMetadataStr, rawPayloadText string
 	)
 
 	err := rows.Scan(
@@ -822,7 +833,7 @@ func scanMessage(rows interface {
 		&msg.ThreadID,
 		&msg.ResourceID,
 		&roleStr,
-		&msg.Content,
+		&contentText,
 		&msg.Name,
 		&toolCallsStr,
 		&msg.ToolCallID,
@@ -836,6 +847,15 @@ func scanMessage(rows interface {
 
 	msg.Role = llm.Role(roleStr)
 	msg.CreatedAt, _ = parseTime(createdAtStr)
+
+	if contentText != "" && contentText != "null" {
+		var parts []llm.Part
+		if err := json.Unmarshal([]byte(contentText), &parts); err == nil {
+			msg.Content = parts
+		} else {
+			msg.Content = []llm.Part{llm.TextPart(contentText)}
+		}
+	}
 
 	if toolCallsStr != "" && toolCallsStr != "null" {
 		var toolCalls []llm.ToolCall

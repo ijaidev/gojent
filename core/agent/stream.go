@@ -116,7 +116,7 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			if len(s.stepToolCalls) == 0 {
 				finalMsg := llm.Message{
 					Role:    llm.RoleAssistant,
-					Content: s.stepAccumulated.String(),
+					Content: []llm.Part{llm.TextPart(s.stepAccumulated.String())},
 					Raw:     s.stepRaw,
 				}
 				s.messages = append(s.messages, finalMsg)
@@ -136,7 +136,7 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			// Model requested tool calls in this step
 			assistantMsg := llm.Message{
 				Role:      llm.RoleAssistant,
-				Content:   s.stepAccumulated.String(),
+				Content:   []llm.Part{llm.TextPart(s.stepAccumulated.String())},
 				ToolCalls: s.stepToolCalls,
 				Raw:       s.stepRaw,
 			}
@@ -162,12 +162,12 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 
 			// Execute all requested tool calls
 			for _, call := range s.stepToolCalls {
-				output, _ := s.agent.executeToolCall(s.ctx, completedStep, call, s.activeTools, s.hooks)
+				_, toolParts, _ := s.agent.executeToolCall(s.ctx, completedStep, call, s.activeTools, s.hooks)
 				toolMsg := llm.Message{
 					Role:       llm.RoleTool,
 					Name:       call.Name,
 					ToolCallID: call.ID,
-					Content:    output,
+					Content:    toolParts,
 				}
 				s.messages = append(s.messages, toolMsg)
 				if s.genCfg != nil && s.genCfg.Storage != nil && s.genCfg.ThreadID != "" {
@@ -295,6 +295,7 @@ func (s *StreamResponse) Response() (*Response, error) {
 
 	return &Response{
 		Text:         text,
+		Content:      []llm.Part{llm.TextPart(text)},
 		ToolCalls:    toolCalls,
 		Messages:     s.messages,
 		FinishReason: s.finishReason,

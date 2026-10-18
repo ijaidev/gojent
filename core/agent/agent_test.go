@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -58,10 +59,10 @@ func TestAgent_Generate_WithMockLLM(t *testing.T) {
 	if len(lastCall.Messages) != 2 {
 		t.Fatalf("expected 2 messages sent to model, got %d", len(lastCall.Messages))
 	}
-	if lastCall.Messages[0].Role != llm.RoleSystem || lastCall.Messages[0].Content != "You are a professional chef." {
+	if lastCall.Messages[0].Role != llm.RoleSystem || lastCall.Messages[0].Text() != "You are a professional chef." {
 		t.Errorf("expected system instructions, got %+v", lastCall.Messages[0])
 	}
-	if lastCall.Messages[1].Role != llm.RoleUser || lastCall.Messages[1].Content != "What can I cook with tomatoes?" {
+	if lastCall.Messages[1].Role != llm.RoleUser || lastCall.Messages[1].Text() != "What can I cook with tomatoes?" {
 		t.Errorf("expected user message, got %+v", lastCall.Messages[1])
 	}
 
@@ -69,7 +70,7 @@ func TestAgent_Generate_WithMockLLM(t *testing.T) {
 	if len(res.Messages) != 3 {
 		t.Fatalf("expected 3 conversation messages in response, got %d", len(res.Messages))
 	}
-	if res.Messages[2].Role != llm.RoleAssistant || res.Messages[2].Content != "I can help you with recipes!" {
+	if res.Messages[2].Role != llm.RoleAssistant || res.Messages[2].Text() != "I can help you with recipes!" {
 		t.Errorf("expected assistant response in messages, got %+v", res.Messages[2])
 	}
 }
@@ -305,10 +306,10 @@ func TestAgent_Generate_ReActLoop(t *testing.T) {
 	if res.Messages[1].Role != llm.RoleAssistant || len(res.Messages[1].ToolCalls) != 1 {
 		t.Errorf("expected assistant tool call message second, got %+v", res.Messages[1])
 	}
-	if res.Messages[2].Role != llm.RoleTool || res.Messages[2].Content != "4" {
+	if res.Messages[2].Role != llm.RoleTool || res.Messages[2].Text() != "4" {
 		t.Errorf("expected tool result message third with '4', got %+v", res.Messages[2])
 	}
-	if res.Messages[3].Role != llm.RoleAssistant || res.Messages[3].Content != "The answer is 4" {
+	if res.Messages[3].Role != llm.RoleAssistant || res.Messages[3].Text() != "The answer is 4" {
 		t.Errorf("expected final assistant reply fourth, got %+v", res.Messages[3])
 	}
 }
@@ -545,13 +546,13 @@ func TestAgent_WithStorage_ConversationMemory(t *testing.T) {
 	if len(lastCall.Messages) != 4 {
 		t.Fatalf("expected 4 messages sent to LLM in Turn 2, got %d: %+v", len(lastCall.Messages), lastCall.Messages)
 	}
-	if lastCall.Messages[1].Content != "My favorite color is blue." {
+	if lastCall.Messages[1].Text() != "My favorite color is blue." {
 		t.Errorf("expected Turn 1 history in message 1, got: %s", lastCall.Messages[1].Content)
 	}
-	if lastCall.Messages[2].Content != responses[0] {
+	if lastCall.Messages[2].Text() != responses[0] {
 		t.Errorf("expected Turn 1 response in message 2, got: %s", lastCall.Messages[2].Content)
 	}
-	if lastCall.Messages[3].Content != "What is my favorite color?" {
+	if lastCall.Messages[3].Text() != "What is my favorite color?" {
 		t.Errorf("expected Turn 2 user prompt in message 3, got: %s", lastCall.Messages[3].Content)
 	}
 
@@ -626,7 +627,7 @@ func TestAgent_Stream_WithStorage(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages in store (user + assistant), got %d", len(msgs))
 	}
-	if msgs[0].Content != "Hello streaming!" || msgs[1].Content != "Streamed response" {
+	if msgs[0].Text() != "Hello streaming!" || msgs[1].Text() != "Streamed response" {
 		t.Errorf("unexpected saved contents: %+v", msgs)
 	}
 }
@@ -690,5 +691,93 @@ func TestAgent_WithStorage_MaxSteps_NoDuplicateMessages(t *testing.T) {
 	}
 	if msgs[0].Role != llm.RoleUser || msgs[1].Role != llm.RoleAssistant || msgs[2].Role != llm.RoleTool {
 		t.Errorf("unexpected message roles: %v, %v, %v", msgs[0].Role, msgs[1].Role, msgs[2].Role)
+	}
+}
+
+func TestAgent_WithMedia(t *testing.T) {
+	ctx := context.Background()
+	mock := llm.NewMockLLM("I see an image of a red apple.")
+
+	a, err := agent.New(agent.Config{
+		ID:    "vision-agent",
+		Model: mock,
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	imgPart := llm.ImageFromBytes([]byte{1, 2, 3}, "image/png")
+	res, err := a.Generate(ctx, "What is this?", agent.WithMedia(imgPart))
+	if err != nil {
+		t.Fatalf("Generate with media failed: %v", err)
+	}
+	if res.Text != "I see an image of a red apple." {
+		t.Errorf("unexpected response: %s", res.Text)
+	}
+
+	lastCall := mock.LastCall()
+	if lastCall == nil || len(lastCall.Messages) != 1 {
+		t.Fatalf("expected 1 recorded message, got %+v", lastCall)
+	}
+	userMsg := lastCall.Messages[0]
+	if len(userMsg.Content) != 2 {
+		t.Fatalf("expected 2 parts in user message, got %d", len(userMsg.Content))
+	}
+	if userMsg.Content[0].Text != "What is this?" || userMsg.Content[1].Type != llm.PartTypeImage {
+		t.Errorf("unexpected parts in user message: %+v", userMsg.Content)
+	}
+}
+
+func TestAgent_MultipartToolResult(t *testing.T) {
+	ctx := context.Background()
+	imgPart := llm.ImageFromBytes([]byte{10, 20, 30}, "image/png")
+
+	screenshotTool := tool.MustNew(tool.Config[string, tool.Result]{
+		ID:          "take_screenshot",
+		Description: "Captures display",
+		Execute: func(_ context.Context, _ string) (tool.Result, error) {
+			return tool.NewImageResult(`{"status":"captured"}`, imgPart), nil
+		},
+	})
+
+	mock := llm.NewMockLLM().ApplyOptions(
+		llm.WithCustomHandler(func(_ context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error) {
+			if len(req.Messages) == 1 {
+				return &llm.GenerateResponse{
+					FinishReason: llm.FinishReasonTool,
+					ToolCalls: []llm.ToolCall{
+						{ID: "call_snap", Name: "take_screenshot", Arguments: `""`},
+					},
+				}, nil
+			}
+			lastMsg := req.Messages[len(req.Messages)-1]
+			if lastMsg.Role != llm.RoleTool {
+				return nil, fmt.Errorf("expected role tool, got %v", lastMsg.Role)
+			}
+			if len(lastMsg.Content) != 2 || lastMsg.Content[1].Type != llm.PartTypeImage {
+				return nil, fmt.Errorf("expected 2 parts in tool result, got %+v", lastMsg.Content)
+			}
+			return &llm.GenerateResponse{
+				Text:         "The screen shows a blue sky.",
+				FinishReason: llm.FinishReasonStop,
+			}, nil
+		}),
+	)
+
+	a, err := agent.New(agent.Config{
+		ID:    "screenshot-agent",
+		Model: mock,
+		Tools: []tool.Tool{screenshotTool},
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	res, err := a.Generate(ctx, "Take a screenshot and describe it")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	if res.Text != "The screen shows a blue sky." {
+		t.Errorf("unexpected response: %s", res.Text)
 	}
 }
