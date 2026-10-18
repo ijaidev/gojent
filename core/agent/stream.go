@@ -32,6 +32,8 @@ type StreamResponse struct {
 	messages        []llm.Message
 	activeTools     []tool.Tool
 	toolDefs        []llm.ToolDefinition
+	req             llm.GenerateRequest
+	hooks           Hooks
 	maxSteps        int
 	step            int
 	stepAccumulated strings.Builder
@@ -51,11 +53,13 @@ func newStreamResponse(
 	ctx context.Context,
 	agent *Agent,
 	genCfg *GenerateConfig,
+	req llm.GenerateRequest,
 	stream llm.Stream,
 	messages []llm.Message,
 	activeTools []tool.Tool,
 	toolDefs []llm.ToolDefinition,
 	maxSteps int,
+	hooks Hooks,
 ) *StreamResponse {
 	return &StreamResponse{
 		ctx:          ctx,
@@ -65,6 +69,8 @@ func newStreamResponse(
 		messages:     messages,
 		activeTools:  activeTools,
 		toolDefs:     toolDefs,
+		req:          req,
+		hooks:        hooks,
 		maxSteps:     maxSteps,
 		finishReason: llm.FinishReasonStop,
 	}
@@ -97,6 +103,15 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			s.usage.CompletionTokens += s.stepUsage.CompletionTokens
 			s.usage.TotalTokens += s.stepUsage.TotalTokens
 
+			completedStep := s.step
+			s.hooks.afterModel(s.ctx, completedStep, &s.req, &llm.GenerateResponse{
+				Text:         s.stepAccumulated.String(),
+				ToolCalls:    s.stepToolCalls,
+				FinishReason: s.finishReason,
+				Usage:        s.stepUsage,
+				Raw:          s.stepRaw,
+			}, nil)
+
 			// If the model did not request any tools, it has reached its final answer!
 			if len(s.stepToolCalls) == 0 {
 				finalMsg := llm.Message{
@@ -111,7 +126,9 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 					if s.genCfg.ResourceID != "" {
 						stored.ResourceID = s.genCfg.ResourceID
 					}
-					_, _ = s.genCfg.Storage.SaveMessages(s.ctx, []*storage.Message{stored})
+					if _, err := s.genCfg.Storage.SaveMessages(s.ctx, []*storage.Message{stored}); err != nil {
+						s.hooks.storageError(s.ctx, opSaveMessages, err)
+					}
 				}
 				return nil, io.EOF
 			}
@@ -130,11 +147,14 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 				if s.genCfg.ResourceID != "" {
 					stored.ResourceID = s.genCfg.ResourceID
 				}
-				_, _ = s.genCfg.Storage.SaveMessages(s.ctx, []*storage.Message{stored})
+				if _, err := s.genCfg.Storage.SaveMessages(s.ctx, []*storage.Message{stored}); err != nil {
+					s.hooks.storageError(s.ctx, opSaveMessages, err)
+				}
 			}
 
-			s.step++
-			if s.step >= s.maxSteps {
+			nextStep := completedStep + 1
+			if nextStep >= s.maxSteps {
+				s.step = nextStep
 				s.finishReason = llm.FinishReasonLength
 				s.completed = true
 				return nil, io.EOF
@@ -142,7 +162,7 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 
 			// Execute all requested tool calls
 			for _, call := range s.stepToolCalls {
-				output := s.agent.executeToolCall(s.ctx, call, s.activeTools)
+				output, _ := s.agent.executeToolCall(s.ctx, completedStep, call, s.activeTools, s.hooks)
 				toolMsg := llm.Message{
 					Role:       llm.RoleTool,
 					Name:       call.Name,
@@ -155,9 +175,13 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 					if s.genCfg.ResourceID != "" {
 						stored.ResourceID = s.genCfg.ResourceID
 					}
-					_, _ = s.genCfg.Storage.SaveMessages(s.ctx, []*storage.Message{stored})
+					if _, err := s.genCfg.Storage.SaveMessages(s.ctx, []*storage.Message{stored}); err != nil {
+						s.hooks.storageError(s.ctx, opSaveMessages, err)
+					}
 				}
 			}
+
+			s.step = nextStep
 
 			// Reset step buffers
 			s.stepToolCalls = nil
@@ -174,16 +198,29 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 				TopP:        s.genCfg.TopP,
 			}
 
+			if err := s.hooks.beforeModel(s.ctx, s.step, &req); err != nil {
+				s.err = err
+				return nil, err
+			}
+
 			nextStream, streamErr := s.genCfg.Model.Stream(s.ctx, req)
 			if streamErr != nil {
+				s.hooks.afterModel(s.ctx, s.step, &req, nil, streamErr)
 				s.err = streamErr
 				return nil, streamErr
 			}
+			s.req = req
 			s.stream = nextStream
 			continue
 		}
 
 		if err != nil {
+			s.hooks.afterModel(s.ctx, s.step, &s.req, &llm.GenerateResponse{
+				Text:      s.stepAccumulated.String(),
+				ToolCalls: s.stepToolCalls,
+				Usage:     s.stepUsage,
+				Raw:       s.stepRaw,
+			}, err)
 			s.err = err
 			return nil, err
 		}
