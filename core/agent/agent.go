@@ -1,4 +1,5 @@
-// Package agent provides autonomous agent abstractions, configuration, and execution loops.
+// Package agent provides autonomous agent abstractions, configuration, execution loops,
+// and lifecycle hooks for observing and customizing runs.
 package agent
 
 import (
@@ -42,6 +43,8 @@ type Config struct {
 	Tools []tool.Tool
 	// MaxSteps sets the default maximum number of ReAct loop iterations (defaults to 5).
 	MaxSteps int
+	// Hooks defines optional lifecycle callbacks for observing and customizing runs.
+	Hooks Hooks
 }
 
 // Agent represents an autonomous AI agent that leverages a Large Language Model.
@@ -55,6 +58,7 @@ type Agent struct {
 	model        llm.LLM
 	storage      storage.Storage
 	tools        map[string]tool.Tool
+	hooks        Hooks
 	maxSteps     int
 }
 
@@ -91,6 +95,7 @@ func New(cfg Config) (*Agent, error) {
 		model:        cfg.Model,
 		storage:      cfg.Storage,
 		tools:        toolsMap,
+		hooks:        cfg.Hooks,
 		maxSteps:     maxSteps,
 	}, nil
 }
@@ -184,6 +189,21 @@ func (a *Agent) SetMaxSteps(n int) {
 	a.maxSteps = n
 }
 
+// Hooks returns the lifecycle hooks configured on this agent.
+func (a *Agent) Hooks() Hooks {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.hooks
+}
+
+// SetHooks replaces the lifecycle hooks configured on this agent at runtime.
+// Per-call hooks supplied via WithHooks override matching callbacks per field.
+func (a *Agent) SetHooks(h Hooks) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.hooks = h
+}
+
 // SetModel swaps the LLM implementation for this agent at runtime.
 func (a *Agent) SetModel(m llm.LLM) error {
 	if m == nil {
@@ -244,6 +264,7 @@ type GenerateConfig struct {
 	Messages    []llm.Message
 	Tools       []tool.Tool
 	MaxSteps    *int
+	Hooks       Hooks
 }
 
 // GenerateOption allows customizing an individual Generate call.
@@ -312,6 +333,15 @@ func WithMaxSteps(n int) GenerateOption {
 	}
 }
 
+// WithHooks supplies per-call lifecycle hooks for this generation.
+// Non-nil callbacks override matching agent-level hooks for the duration of the
+// run. Repeated WithHooks options layer on top of each other.
+func WithHooks(h Hooks) GenerateOption {
+	return func(cfg *GenerateConfig) {
+		cfg.Hooks = mergeHooks(cfg.Hooks, h)
+	}
+}
+
 // Generate runs the agent with a string prompt, returning the model's response.
 func (a *Agent) Generate(ctx context.Context, prompt string, opts ...GenerateOption) (*Response, error) {
 	var userMsg []llm.Message
@@ -331,6 +361,7 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 	activeStorage := a.storage
 	instructions := a.instructions
 	defaultSteps := a.maxSteps
+	agentHooks := a.hooks
 	a.mu.RUnlock()
 
 	genCfg := &GenerateConfig{
@@ -340,6 +371,8 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 	for _, opt := range opts {
 		opt(genCfg)
 	}
+
+	hooks := mergeHooks(agentHooks, genCfg.Hooks)
 
 	if genCfg.Model == nil {
 		return nil, ErrModelRequired
@@ -353,16 +386,22 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 	// If storage and thread ID are configured, load past messages and persist current turn
 	if genCfg.Storage != nil && genCfg.ThreadID != "" {
 		if _, err := genCfg.Storage.GetThreadByID(ctx, genCfg.ThreadID); errors.Is(err, storage.ErrThreadNotFound) {
-			_, _ = genCfg.Storage.SaveThread(ctx, &storage.Thread{
+			if _, err := genCfg.Storage.SaveThread(ctx, &storage.Thread{
 				ID:         genCfg.ThreadID,
 				ResourceID: genCfg.ResourceID,
-			})
+			}); err != nil {
+				hooks.storageError(ctx, opSaveThread, err)
+			}
+		} else if err != nil {
+			hooks.storageError(ctx, opGetThread, err)
 		}
 		history, err := genCfg.Storage.ListMessages(ctx, storage.MessageFilter{
 			ThreadID:  genCfg.ThreadID,
 			SortOrder: storage.SortAsc,
 		})
-		if err == nil && len(history) > 0 {
+		if err != nil {
+			hooks.storageError(ctx, opListMessages, err)
+		} else if len(history) > 0 {
 			genCfg.Messages = append(storage.ToLLMMessages(history), genCfg.Messages...)
 		}
 		if len(messages) > 0 {
@@ -373,7 +412,9 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 					toSave[i].ResourceID = genCfg.ResourceID
 				}
 			}
-			_, _ = genCfg.Storage.SaveMessages(ctx, toSave)
+			if _, err := genCfg.Storage.SaveMessages(ctx, toSave); err != nil {
+				hooks.storageError(ctx, opSaveMessages, err)
+			}
 		}
 	}
 
@@ -393,7 +434,12 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 			TopP:        genCfg.TopP,
 		}
 
+		if err := hooks.beforeModel(ctx, step, &req); err != nil {
+			return nil, err
+		}
+
 		resp, err := genCfg.Model.Generate(ctx, req)
+		hooks.afterModel(ctx, step, &req, resp, err)
 		if err != nil {
 			return nil, err
 		}
@@ -419,7 +465,9 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 				if genCfg.ResourceID != "" {
 					assistantStored.ResourceID = genCfg.ResourceID
 				}
-				_, _ = genCfg.Storage.SaveMessages(ctx, []*storage.Message{assistantStored})
+				if _, err := genCfg.Storage.SaveMessages(ctx, []*storage.Message{assistantStored}); err != nil {
+					hooks.storageError(ctx, opSaveMessages, err)
+				}
 			}
 			return &Response{
 				Text:         resp.Text,
@@ -436,12 +484,14 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 			if genCfg.ResourceID != "" {
 				assistantStored.ResourceID = genCfg.ResourceID
 			}
-			_, _ = genCfg.Storage.SaveMessages(ctx, []*storage.Message{assistantStored})
+			if _, err := genCfg.Storage.SaveMessages(ctx, []*storage.Message{assistantStored}); err != nil {
+				hooks.storageError(ctx, opSaveMessages, err)
+			}
 		}
 
 		// Execute tool calls
 		for _, call := range resp.ToolCalls {
-			toolOutput := a.executeToolCall(ctx, call, activeTools)
+			toolOutput, _ := a.executeToolCall(ctx, step, call, activeTools, hooks)
 			toolLLMMsg := llm.Message{
 				Role:       llm.RoleTool,
 				Name:       call.Name,
@@ -454,7 +504,9 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 				if genCfg.ResourceID != "" {
 					toolStored.ResourceID = genCfg.ResourceID
 				}
-				_, _ = genCfg.Storage.SaveMessages(ctx, []*storage.Message{toolStored})
+				if _, err := genCfg.Storage.SaveMessages(ctx, []*storage.Message{toolStored}); err != nil {
+					hooks.storageError(ctx, opSaveMessages, err)
+				}
 			}
 		}
 	}
@@ -490,6 +542,7 @@ func (a *Agent) StreamMessages(ctx context.Context, messages []llm.Message, opts
 	activeStorage := a.storage
 	instructions := a.instructions
 	defaultSteps := a.maxSteps
+	agentHooks := a.hooks
 	a.mu.RUnlock()
 
 	genCfg := &GenerateConfig{
@@ -499,6 +552,8 @@ func (a *Agent) StreamMessages(ctx context.Context, messages []llm.Message, opts
 	for _, opt := range opts {
 		opt(genCfg)
 	}
+
+	hooks := mergeHooks(agentHooks, genCfg.Hooks)
 
 	if genCfg.Model == nil {
 		return nil, ErrModelRequired
@@ -511,16 +566,22 @@ func (a *Agent) StreamMessages(ctx context.Context, messages []llm.Message, opts
 
 	if genCfg.Storage != nil && genCfg.ThreadID != "" {
 		if _, err := genCfg.Storage.GetThreadByID(ctx, genCfg.ThreadID); errors.Is(err, storage.ErrThreadNotFound) {
-			_, _ = genCfg.Storage.SaveThread(ctx, &storage.Thread{
+			if _, err := genCfg.Storage.SaveThread(ctx, &storage.Thread{
 				ID:         genCfg.ThreadID,
 				ResourceID: genCfg.ResourceID,
-			})
+			}); err != nil {
+				hooks.storageError(ctx, opSaveThread, err)
+			}
+		} else if err != nil {
+			hooks.storageError(ctx, opGetThread, err)
 		}
 		history, err := genCfg.Storage.ListMessages(ctx, storage.MessageFilter{
 			ThreadID:  genCfg.ThreadID,
 			SortOrder: storage.SortAsc,
 		})
-		if err == nil && len(history) > 0 {
+		if err != nil {
+			hooks.storageError(ctx, opListMessages, err)
+		} else if len(history) > 0 {
 			genCfg.Messages = append(storage.ToLLMMessages(history), genCfg.Messages...)
 		}
 		if len(messages) > 0 {
@@ -531,7 +592,9 @@ func (a *Agent) StreamMessages(ctx context.Context, messages []llm.Message, opts
 					toSave[i].ResourceID = genCfg.ResourceID
 				}
 			}
-			_, _ = genCfg.Storage.SaveMessages(ctx, toSave)
+			if _, err := genCfg.Storage.SaveMessages(ctx, toSave); err != nil {
+				hooks.storageError(ctx, opSaveMessages, err)
+			}
 		}
 	}
 
@@ -547,16 +610,34 @@ func (a *Agent) StreamMessages(ctx context.Context, messages []llm.Message, opts
 		TopP:        genCfg.TopP,
 	}
 
-	rawStream, err := genCfg.Model.Stream(ctx, req)
-	if err != nil {
+	if err := hooks.beforeModel(ctx, 0, &req); err != nil {
 		return nil, err
 	}
 
-	return newStreamResponse(ctx, a, genCfg, rawStream, callMessages, activeTools, toolDefs, maxSteps), nil
+	rawStream, err := genCfg.Model.Stream(ctx, req)
+	if err != nil {
+		hooks.afterModel(ctx, 0, &req, nil, err)
+		return nil, err
+	}
+
+	return newStreamResponse(ctx, a, genCfg, req, rawStream, callMessages, activeTools, toolDefs, maxSteps, hooks), nil
 }
 
-// executeToolCall executes a single tool call against registered tools and returns its string output.
-func (a *Agent) executeToolCall(ctx context.Context, call llm.ToolCall, activeTools []tool.Tool) string {
+// executeToolCall executes a single tool call against the given tools, firing
+// BeforeTool and AfterTool hooks, and returns the string output delivered to the model.
+func (a *Agent) executeToolCall(ctx context.Context, step int, call llm.ToolCall, activeTools []tool.Tool, hooks Hooks) (string, error) {
+	ev := &ToolEvent{Step: step, Call: &call}
+
+	if hooks.BeforeTool != nil {
+		if err := hooks.BeforeTool(ctx, ev); err != nil {
+			ev.Output = fmt.Sprintf(`{"error":%q}`, err.Error())
+			ev.Err = err
+			ev.Skipped = true
+			hooks.afterTool(ctx, ev)
+			return ev.Output, err
+		}
+	}
+
 	var target tool.Tool
 	for _, t := range activeTools {
 		if t != nil && t.ID() == call.Name {
@@ -565,26 +646,36 @@ func (a *Agent) executeToolCall(ctx context.Context, call llm.ToolCall, activeTo
 		}
 	}
 	if target == nil {
-		return fmt.Sprintf(`{"error":"tool '%s' not found"}`, call.Name)
+		ev.Output = fmt.Sprintf(`{"error":"tool '%s' not found"}`, call.Name)
+		ev.Err = fmt.Errorf("agent: tool %q not found", call.Name)
+		hooks.afterTool(ctx, ev)
+		return ev.Output, ev.Err
 	}
 
 	out, err := target.Execute(ctx, []byte(call.Arguments))
 	if err != nil {
-		return fmt.Sprintf(`{"error":%q}`, err.Error())
+		ev.Output = fmt.Sprintf(`{"error":%q}`, err.Error())
+		ev.Err = err
+		hooks.afterTool(ctx, ev)
+		return ev.Output, err
 	}
 
 	switch v := out.(type) {
 	case string:
-		return v
+		ev.Output = v
 	case []byte:
-		return string(v)
+		ev.Output = string(v)
 	default:
 		b, marshalErr := json.Marshal(v)
 		if marshalErr != nil {
-			return fmt.Sprintf("%v", v)
+			ev.Output = fmt.Sprintf("%v", v)
+		} else {
+			ev.Output = string(b)
 		}
-		return string(b)
 	}
+
+	hooks.afterTool(ctx, ev)
+	return ev.Output, nil
 }
 
 // collectTools merges agent-level tools with any per-call extra tools.
