@@ -171,7 +171,7 @@ CREATE TABLE IF NOT EXISTS messages (
     thread_id TEXT NOT NULL,
     resource_id TEXT NOT NULL DEFAULT '',
     role TEXT NOT NULL,
-    content TEXT NOT NULL DEFAULT '',
+    content JSONB NOT NULL DEFAULT '[]'::jsonb,
     name TEXT NOT NULL DEFAULT '',
     tool_calls JSONB NOT NULL DEFAULT '[]'::jsonb,
     tool_call_id TEXT NOT NULL DEFAULT '',
@@ -756,7 +756,7 @@ func (s *Store) SaveMessages(ctx context.Context, messages []*storage.Message) (
 
 	upsertQuery := `
 		INSERT INTO messages (id, thread_id, resource_id, role, content, name, tool_calls, tool_call_id, created_at, metadata, raw)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb, $11::jsonb)
+		VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, $8, $9, $10::jsonb, $11::jsonb)
 		ON CONFLICT(id) DO UPDATE SET
 			thread_id = EXCLUDED.thread_id,
 			resource_id = EXCLUDED.resource_id,
