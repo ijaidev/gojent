@@ -951,3 +951,22 @@ func TestAgent_ToolDefinitionsAreDeterministicallyOrdered(t *testing.T) {
 		t.Errorf("expected deterministically ordered tools\n got: %s\nwant: %s", got, want)
 	}
 }
+
+func TestAgent_WithMediaDoesNotMutateInputMessages(t *testing.T) {
+	mock := llm.NewMockLLM("seen")
+	a, err := agent.New(agent.Config{ID: "media-agent", Model: mock})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	msgs := []llm.Message{llm.UserMessage("What is this?")}
+	img := llm.ImageFromBytes([]byte{1, 2, 3}, "image/png")
+
+	if _, err := a.GenerateMessages(context.Background(), msgs, agent.WithMedia(img)); err != nil {
+		t.Fatalf("GenerateMessages failed: %v", err)
+	}
+
+	if len(msgs[0].Content) != 1 {
+		t.Errorf("WithMedia mutated the caller's message: got %d parts, want 1", len(msgs[0].Content))
+	}
+}

@@ -157,7 +157,8 @@ func (r *run) loadHistory(ctx context.Context) []llm.Message {
 }
 
 // mergeMedia attaches media parts to the trailing user message, or appends a
-// new user message when the conversation does not end with one.
+// new user message when the conversation does not end with one. The caller's
+// messages are never mutated.
 func mergeMedia(messages []llm.Message, media []llm.Part) []llm.Message {
 	if len(media) == 0 {
 		return messages
@@ -166,11 +167,16 @@ func mergeMedia(messages []llm.Message, media []llm.Part) []llm.Message {
 		return []llm.Message{llm.UserMessageWithParts(media...)}
 	}
 	last := len(messages) - 1
-	if messages[last].Role == llm.RoleUser {
-		messages[last].Content = append(messages[last].Content, media...)
-		return messages
+	if messages[last].Role != llm.RoleUser {
+		merged := make([]llm.Message, 0, len(messages)+1)
+		merged = append(merged, messages...)
+		return append(merged, llm.UserMessageWithParts(media...))
 	}
-	return append(messages, llm.UserMessageWithParts(media...))
+
+	merged := make([]llm.Message, len(messages))
+	copy(merged, messages)
+	merged[last].Content = append(slices.Clone(merged[last].Content), media...)
+	return merged
 }
 
 // prepareMessages constructs the initial messages slice consisting of system
