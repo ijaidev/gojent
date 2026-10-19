@@ -12,6 +12,7 @@ import (
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/storage"
 	"github.com/ijaidev/gojent/core/tool"
+	"github.com/ijaidev/gojent/stores/inmemory"
 )
 
 // newEchoTool returns a tool that echoes its raw input, prefixed with "echoed:".
@@ -386,7 +387,7 @@ func TestHooks_StorageError(t *testing.T) {
 	saveErr := errors.New("disk full")
 	listErr := errors.New("connection reset")
 	failing := &failingStorage{
-		Storage: storage.NewMockStorage(),
+		Storage: inmemory.New(),
 		saveErr: saveErr,
 		listErr: listErr,
 	}

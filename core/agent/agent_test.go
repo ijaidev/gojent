@@ -12,6 +12,7 @@ import (
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/storage"
 	"github.com/ijaidev/gojent/core/tool"
+	"github.com/ijaidev/gojent/stores/inmemory"
 )
 
 func TestAgent_Validation(t *testing.T) {
@@ -480,7 +481,7 @@ func TestAgent_PerCallToolsOverride(t *testing.T) {
 
 func TestAgent_WithStorage_ConversationMemory(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMockStorage()
+	store := inmemory.New()
 	defer func() { _ = store.Close() }()
 
 	responses := []string{
@@ -568,8 +569,8 @@ func TestAgent_WithStorage_ConversationMemory(t *testing.T) {
 
 func TestAgent_StorageGetterAndSetter(t *testing.T) {
 	mock := llm.NewMockLLM("hello")
-	store1 := storage.NewMockStorage()
-	store2 := storage.NewMockStorage()
+	store1 := inmemory.New()
+	store2 := inmemory.New()
 
 	a, err := agent.New(agent.Config{
 		ID:      "test-agent",
@@ -592,7 +593,7 @@ func TestAgent_StorageGetterAndSetter(t *testing.T) {
 
 func TestAgent_Stream_WithStorage(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMockStorage()
+	store := inmemory.New()
 	defer func() { _ = store.Close() }()
 
 	mock := llm.NewMockLLM("Streamed response")
@@ -634,7 +635,7 @@ func TestAgent_Stream_WithStorage(t *testing.T) {
 
 func TestAgent_WithStorage_MaxSteps_NoDuplicateMessages(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMockStorage()
+	store := inmemory.New()
 	defer func() { _ = store.Close() }()
 
 	toolCalled := false

@@ -15,6 +15,7 @@ import (
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/storage"
 	"github.com/ijaidev/gojent/core/tool"
+	"github.com/ijaidev/gojent/stores/inmemory"
 )
 
 // DefaultInstructions is the default system prompt guiding the chatbot.
@@ -173,7 +174,7 @@ func Run(ctx context.Context, model llm.LLM, opts ...Option) error {
 	}
 
 	if cfg.Storage == nil {
-		cfg.Storage = storage.NewMockStorage()
+		cfg.Storage = inmemory.New()
 	}
 
 	bot, err := agent.New(agent.Config{

@@ -494,3 +494,54 @@ func TestStore_UpdateThread_ResourceID(t *testing.T) {
 		t.Errorf("expected updated resourceID 'tenant-99', got %q", updated.ResourceID)
 	}
 }
+
+func TestStore_MultipartMessage(t *testing.T) {
+	ctx := context.Background()
+	store := inmemory.New()
+	defer func() { _ = store.Close() }()
+
+	th, err := store.SaveThread(ctx, &storage.Thread{Title: "Multimodal Thread"})
+	if err != nil {
+		t.Fatalf("SaveThread failed: %v", err)
+	}
+
+	imgPart := llm.ImageFromBytes([]byte{1, 2, 3}, "image/png")
+	msg := storage.NewMessageWithParts(th.ID, llm.RoleUser, llm.TextPart("Look at this"), imgPart)
+
+	saved, err := store.SaveMessages(ctx, []*storage.Message{msg})
+	if err != nil {
+		t.Fatalf("SaveMessages failed: %v", err)
+	}
+	if len(saved) != 1 || len(saved[0].Content) != 2 {
+		t.Fatalf("unexpected saved message: %+v", saved)
+	}
+
+	msgs, err := store.ListMessages(ctx, storage.MessageFilter{ThreadID: th.ID})
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(msgs) != 1 || len(msgs[0].Content) != 2 {
+		t.Fatalf("expected 1 message with 2 parts, got %d", len(msgs))
+	}
+	if msgs[0].Content[0].Text != "Look at this" || msgs[0].Content[1].Type != llm.PartTypeImage {
+		t.Errorf("unexpected content in loaded message: %+v", msgs[0].Content)
+	}
+}
+
+func TestStore_ContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	store := inmemory.New()
+	defer func() { _ = store.Close() }()
+
+	if _, err := store.SaveThread(ctx, &storage.Thread{Title: "Cancelled"}); !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled from SaveThread, got %v", err)
+	}
+	if _, err := store.ListMessages(ctx, storage.MessageFilter{}); !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled from ListMessages, got %v", err)
+	}
+	if _, err := store.GetThreadState(ctx, "th", "type"); !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled from GetThreadState, got %v", err)
+	}
+}

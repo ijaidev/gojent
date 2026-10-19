@@ -11,6 +11,7 @@ import (
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/storage"
 	"github.com/ijaidev/gojent/examples/chatbot"
+	"github.com/ijaidev/gojent/stores/inmemory"
 )
 
 func TestRun_NilModel(t *testing.T) {
@@ -50,7 +51,7 @@ func TestRun_MultiTurnMemory(t *testing.T) {
 
 	input := strings.NewReader("Hello, my name is Alice.\nWhat is my name?\nquit\n")
 	output := &bytes.Buffer{}
-	store := storage.NewMockStorage()
+	store := inmemory.New()
 	threadID := "alice-chat-123"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
