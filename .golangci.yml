@@ -17,34 +17,33 @@ linters:
     - staticcheck
     - unconvert
     - unused
-
-linters-settings:
-  govet:
-    enable-all: true
-    disable:
-      - fieldalignment
-      - shadow
-  revive:
-    rules:
-      - name: exported
-        disabled: false
-      - name: blank-imports
-        disabled: false
-      - name: error-naming
-        disabled: false
-      - name: error-strings
-        disabled: false
-      - name: receiver-naming
-        disabled: false
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-      - performance
-    disabled-checks:
-      - hugeParam
-  misspell:
-    locale: US
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+        - name: blank-imports
+          disabled: false
+        - name: error-naming
+          disabled: false
+        - name: error-strings
+          disabled: false
+        - name: receiver-naming
+          disabled: false
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        - hugeParam
+    misspell:
+      locale: US
 
 issues:
   max-issues-per-linter: 50
