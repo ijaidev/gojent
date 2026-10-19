@@ -10,7 +10,6 @@ import (
 	"os"
 
 	"github.com/ijaidev/gojent/core/agent"
-	"github.com/ijaidev/gojent/gojent"
 	"github.com/ijaidev/gojent/providers/google"
 )
 
@@ -49,22 +48,12 @@ func run() error {
 		return fmt.Errorf("failed to create agent: %w", err)
 	}
 
-	// 3. Register with root Gojent container
-	app := gojent.New(
-		gojent.WithAgent(geminiAgent),
-	)
-
-	bot, err := app.GetAgent("gemini-assistant")
-	if err != nil {
-		return fmt.Errorf("failed to retrieve agent: %w", err)
-	}
-
-	// 4. Non-streaming Generation
+	// 3. Non-streaming Generation
 	fmt.Println("=== 1. Non-streaming Generation ===")
 	prompt := "In one short sentence, what makes Go great for systems programming?"
 	fmt.Printf("User: %s\n", prompt)
 
-	res, err := bot.Generate(ctx, prompt)
+	res, err := geminiAgent.Generate(ctx, prompt)
 	if err != nil {
 		return fmt.Errorf("generation failed: %w", err)
 	}
@@ -72,12 +61,12 @@ func run() error {
 	fmt.Printf("[Usage] Prompt: %d | Completion: %d | Total: %d\n\n",
 		res.Usage.PromptTokens, res.Usage.CompletionTokens, res.Usage.TotalTokens)
 
-	// 5. Real-time Streaming Generation
+	// 4. Real-time Streaming Generation
 	fmt.Println("=== 2. Real-time Streaming Generation ===")
 	streamPrompt := "List three key features of the Go language with a brief note on each."
 	fmt.Printf("User: %s\nAgent: ", streamPrompt)
 
-	stream, err := bot.Stream(ctx, streamPrompt)
+	stream, err := geminiAgent.Stream(ctx, streamPrompt)
 	if err != nil {
 		return fmt.Errorf("stream failed: %w", err)
 	}

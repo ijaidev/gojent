@@ -14,7 +14,6 @@ import (
 	"github.com/ijaidev/gojent/core/agent"
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/tool"
-	"github.com/ijaidev/gojent/gojent"
 )
 
 // CalculatorInput specifies arguments for arithmetic operations.
@@ -139,16 +138,10 @@ func run() error {
 		return fmt.Errorf("failed to create calc agent: %w", err)
 	}
 
-	app := gojent.New(gojent.WithAgent(calcBot))
-	agent1, err := app.GetAgent("math-assistant")
-	if err != nil {
-		return fmt.Errorf("failed to get agent: %w", err)
-	}
-
 	prompt1 := "What is 42 multiplied by 7?"
 	fmt.Printf("User: %s\n", prompt1)
 
-	res1, err := agent1.Generate(ctx, prompt1)
+	res1, err := calcBot.Generate(ctx, prompt1)
 	if err != nil {
 		return fmt.Errorf("agent.Generate failed: %w", err)
 	}

@@ -15,7 +15,6 @@ import (
 	"github.com/ijaidev/gojent/core/agent"
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/tool"
-	"github.com/ijaidev/gojent/gojent"
 	"github.com/ijaidev/gojent/providers/google"
 )
 
@@ -132,16 +131,6 @@ func run() error {
 		return fmt.Errorf("failed to create agent: %w", err)
 	}
 
-	// 4. Register with root Gojent container
-	app := gojent.New(
-		gojent.WithAgent(toolAgent),
-	)
-
-	bot, err := app.GetAgent("gemini-tool-assistant")
-	if err != nil {
-		return fmt.Errorf("failed to retrieve agent: %w", err)
-	}
-
 	// =========================================================================
 	// Demo 1: Autonomous ReAct Tool Execution (Non-streaming)
 	// =========================================================================
@@ -149,7 +138,7 @@ func run() error {
 	prompt1 := "What is the current weather in Tokyo right now in Celsius?"
 	fmt.Printf("User: %s\n", prompt1)
 
-	res1, err := bot.Generate(ctx, prompt1)
+	res1, err := toolAgent.Generate(ctx, prompt1)
 	if err != nil {
 		return fmt.Errorf("generation failed: %w", err)
 	}
@@ -185,7 +174,7 @@ func run() error {
 	prompt2 := "What is the exchange rate from USD to EUR?"
 	fmt.Printf("User: %s\nAgent: ", prompt2)
 
-	stream, err := bot.Stream(ctx, prompt2)
+	stream, err := toolAgent.Stream(ctx, prompt2)
 	if err != nil {
 		return fmt.Errorf("stream failed: %w", err)
 	}

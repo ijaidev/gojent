@@ -11,7 +11,6 @@ import (
 
 	"github.com/ijaidev/gojent/core/agent"
 	"github.com/ijaidev/gojent/core/llm"
-	"github.com/ijaidev/gojent/gojent"
 )
 
 func run() error {
@@ -32,23 +31,13 @@ func run() error {
 		return fmt.Errorf("failed to create agent: %w", err)
 	}
 
-	// 3. Register with root container
-	app := gojent.New(
-		gojent.WithAgent(bot),
-	)
-
-	retrievedBot, err := app.GetAgent("stream-bot")
-	if err != nil {
-		return fmt.Errorf("failed to get agent: %w", err)
-	}
-
 	ctx := context.Background()
 
-	// 4. Stream response using standard Recv() loop
+	// 3. Stream response using standard Recv() loop
 	fmt.Println("--- Demo 1: Real-time token streaming with Recv() ---")
 	fmt.Print("User: Why is streaming important in agent frameworks?\nAgent: ")
 
-	stream1, err := retrievedBot.Stream(ctx, "Why is streaming important in agent frameworks?")
+	stream1, err := bot.Stream(ctx, "Why is streaming important in agent frameworks?")
 	if err != nil {
 		return fmt.Errorf("failed to start stream: %w", err)
 	}
@@ -70,7 +59,7 @@ func run() error {
 	}
 	fmt.Println()
 
-	// 5. Inspect final accumulated response and token usage
+	// 4. Inspect final accumulated response and token usage
 	res1, err := stream1.Response()
 	if err != nil {
 		return fmt.Errorf("failed to retrieve finalized response: %w", err)
@@ -82,11 +71,11 @@ func run() error {
 		res1.Usage.TotalTokens,
 	)
 
-	// 6. Stream response using range-over-func iterator (Go 1.23+)
+	// 5. Stream response using range-over-func iterator (Go 1.23+)
 	fmt.Println("--- Demo 2: Streaming with range-over-func stream.All() ---")
 	fmt.Print("User: Tell me about Go concurrency.\nAgent: ")
 
-	stream2, err := retrievedBot.Stream(ctx, "Tell me about Go concurrency.")
+	stream2, err := bot.Stream(ctx, "Tell me about Go concurrency.")
 	if err != nil {
 		return fmt.Errorf("failed to start stream: %w", err)
 	}

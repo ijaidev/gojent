@@ -8,7 +8,6 @@ import (
 
 	"github.com/ijaidev/gojent/core/agent"
 	"github.com/ijaidev/gojent/core/llm"
-	"github.com/ijaidev/gojent/gojent"
 )
 
 func main() {
@@ -29,39 +28,28 @@ func main() {
 		log.Fatalf("failed to create agent: %v", err)
 	}
 
-	// 3. Register agent in root Gojent container
-	app := gojent.New(
-		gojent.WithAgent(bot),
-	)
-
-	// 4. Retrieve agent and execute generation
-	myAgent, err := app.GetAgent("assistant")
-	if err != nil {
-		log.Fatalf("failed to get agent: %v", err)
-	}
-
 	ctx := context.Background()
 
-	// First prompt
-	res1, err := myAgent.Generate(ctx, "Who are you?")
+	// 3. Execute generation
+	res1, err := bot.Generate(ctx, "Who are you?")
 	if err != nil {
 		log.Fatalf("generate failed: %v", err)
 	}
 	fmt.Printf("User: Who are you?\nAgent: %s\n\n", res1.Text)
 
 	// Second prompt
-	res2, err := myAgent.Generate(ctx, "What can you do?")
+	res2, err := bot.Generate(ctx, "What can you do?")
 	if err != nil {
 		log.Fatalf("generate failed: %v", err)
 	}
 	fmt.Printf("User: What can you do?\nAgent: %s\n\n", res2.Text)
 
-	// 5. Demonstrate runtime model swapping!
+	// 4. Demonstrate runtime model swapping!
 	specializedMock := llm.NewMockLLM("Here is the recipe: Dice tomatoes, add olive oil and fresh basil.")
 	fmt.Println("--- Swapping Model dynamically at runtime ---")
-	_ = myAgent.SetModel(specializedMock)
+	_ = bot.SetModel(specializedMock)
 
-	res3, err := myAgent.Generate(ctx, "Give me a recipe with tomatoes.")
+	res3, err := bot.Generate(ctx, "Give me a recipe with tomatoes.")
 	if err != nil {
 		log.Fatalf("generate failed: %v", err)
 	}

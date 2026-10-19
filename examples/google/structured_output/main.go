@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"github.com/ijaidev/gojent/core/agent"
-	"github.com/ijaidev/gojent/gojent"
 	"github.com/ijaidev/gojent/providers/google"
 )
 
@@ -56,20 +55,10 @@ func run() error {
 		return fmt.Errorf("failed to create agent: %w", err)
 	}
 
-	// 3. Register with root Gojent container
-	app := gojent.New(
-		gojent.WithAgent(charAgent),
-	)
-
-	bot, err := app.GetAgent("character-creator")
-	if err != nil {
-		return fmt.Errorf("failed to retrieve agent: %w", err)
-	}
-
 	fmt.Println("=== Generating Typed Character Sheet via GenerateStructured ===")
 	prompt := "Create a cunning level 4 shadow rogue who specializes in stealth and daggers."
 
-	res, err := agent.GenerateStructured[CharacterSheet](ctx, bot, prompt)
+	res, err := agent.GenerateStructured[CharacterSheet](ctx, charAgent, prompt)
 	if err != nil {
 		return fmt.Errorf("GenerateStructured failed: %w", err)
 	}
