@@ -12,6 +12,7 @@ import (
 
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/storage"
+	"github.com/ijaidev/gojent/core/storage/storagetest"
 	"github.com/ijaidev/gojent/stores/sqlite"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -1125,4 +1126,16 @@ func TestStore_PragmasApplyToEveryConnection(t *testing.T) {
 			t.Errorf("connection %d: busy_timeout = %d, want 1234", i+1, busyTimeout)
 		}
 	}
+}
+
+// TestStore_Conformance runs the shared storage contract against SQLite.
+func TestStore_Conformance(t *testing.T) {
+	storagetest.Run(t, func(t *testing.T) storage.Storage {
+		store, err := sqlite.New(":memory:")
+		if err != nil {
+			t.Fatalf("sqlite.New failed: %v", err)
+		}
+		t.Cleanup(func() { _ = store.Close() })
+		return store
+	})
 }
