@@ -158,12 +158,6 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			}
 
 			nextStep := completedStep + 1
-			if nextStep >= s.maxSteps {
-				s.step = nextStep
-				s.finishReason = llm.FinishReasonLength
-				s.completed = true
-				return nil, io.EOF
-			}
 
 			// Execute all requested tool calls
 			for _, call := range s.stepToolCalls {
@@ -187,6 +181,16 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			}
 
 			s.step = nextStep
+
+			// The ReAct budget is exhausted: stop here. The tool calls above
+			// were still executed so the transcript never ends with an
+			// unanswered tool_calls message, which strict providers reject on
+			// the next turn.
+			if nextStep >= s.maxSteps {
+				s.finishReason = llm.FinishReasonLength
+				s.completed = true
+				return nil, io.EOF
+			}
 
 			// Reset step buffers
 			s.stepToolCalls = nil

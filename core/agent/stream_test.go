@@ -9,6 +9,7 @@ import (
 
 	"github.com/ijaidev/gojent/core/agent"
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/core/tool"
 )
 
 func TestAgent_Stream_WithMockLLM(t *testing.T) {
@@ -232,5 +233,88 @@ func TestAgent_Stream_PerCallModelOverride(t *testing.T) {
 	}
 	if overrideMock.CallCount() != 1 {
 		t.Errorf("expected override mock called once, got %d", overrideMock.CallCount())
+	}
+}
+
+func TestAgent_Stream_MaxStepsDoesNotLeaveDanglingToolCalls(t *testing.T) {
+	ctx := context.Background()
+
+	invocations := 0
+	countTool := tool.MustNew(tool.Config[struct{}, string]{
+		ID:          "count",
+		Description: "Counts how many times it was invoked.",
+		Execute: func(context.Context, struct{}) (string, error) {
+			invocations++
+			return "counted", nil
+		},
+	})
+
+	// The model always asks for the tool, so only the ReAct budget stops it.
+	mock := llm.NewMockLLM().ApplyOptions(llm.WithCustomStreamHandler(
+		func(ctx context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
+			return llm.NewSliceStream(ctx, []*llm.StreamChunk{
+				{
+					ToolCalls: []llm.ToolCall{
+						{ID: "call_1", Name: "count", Arguments: "{}"},
+					},
+					FinishReason: llm.FinishReasonTool,
+				},
+			}), nil
+		},
+	))
+
+	bot, err := agent.New(agent.Config{
+		ID:    "max-steps-agent",
+		Model: mock,
+		Tools: []tool.Tool{countTool},
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	stream, err := bot.Stream(ctx, "loop forever", agent.WithMaxSteps(2))
+	if err != nil {
+		t.Fatalf("agent.Stream returned error: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	res, err := stream.Drain()
+	if err != nil {
+		t.Fatalf("drain returned error: %v", err)
+	}
+
+	if res.FinishReason != llm.FinishReasonLength {
+		t.Errorf("expected finish reason length, got %s", res.FinishReason)
+	}
+	if invocations != 2 {
+		t.Errorf("expected the tool to run once per allowed step (2), got %d", invocations)
+	}
+	if last := res.Messages[len(res.Messages)-1]; last.Role != llm.RoleTool {
+		t.Errorf("expected transcript to end with a tool result, got role %q", last.Role)
+	}
+	assertNoDanglingToolCalls(t, res.Messages)
+}
+
+// assertNoDanglingToolCalls verifies that every assistant tool call has a
+// matching tool result message, i.e. the transcript is safe to replay to a
+// strict provider API.
+func assertNoDanglingToolCalls(t *testing.T, messages []llm.Message) {
+	t.Helper()
+
+	answered := make(map[string]bool)
+	for _, msg := range messages {
+		if msg.Role == llm.RoleTool && msg.ToolCallID != "" {
+			answered[msg.ToolCallID] = true
+		}
+	}
+	for i, msg := range messages {
+		if msg.Role != llm.RoleAssistant {
+			continue
+		}
+		for _, call := range msg.ToolCalls {
+			if !answered[call.ID] {
+				t.Errorf("message %d: tool call %q (%s) has no tool result", i, call.ID, call.Name)
+			}
+		}
 	}
 }
