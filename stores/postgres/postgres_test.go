@@ -775,3 +775,69 @@ func TestStore_BatchChunking(t *testing.T) {
 		t.Fatalf("unfulfilled mock expectations: %v", err)
 	}
 }
+
+func TestStore_MultipartMessage_Postgres(t *testing.T) {
+	ctx := context.Background()
+	store, mock := newMockStore(t)
+	defer func() { _ = store.Close() }()
+
+	imgBytes := []byte{10, 20, 30}
+	imgPart := llm.ImageFromBytes(imgBytes, "image/png")
+	msg := storage.NewMessageWithParts("th-multi", llm.RoleUser, llm.TextPart("Inspect this photo"), imgPart)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT resource_id FROM threads WHERE id = $1")).
+		WithArgs("th-multi").
+		WillReturnRows(sqlmock.NewRows([]string{"resource_id"}).AddRow("res-multi"))
+	mock.ExpectExec("INSERT INTO messages").
+		WithArgs(
+			sqlmock.AnyArg(),
+			"th-multi",
+			"res-multi",
+			string(llm.RoleUser),
+			sqlmock.AnyArg(),
+			"",
+			"[]",
+			"",
+			sqlmock.AnyArg(),
+			"{}",
+			"null",
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE threads SET updated_at = $1 WHERE id = $2")).
+		WithArgs(sqlmock.AnyArg(), "th-multi").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	saved, err := store.SaveMessages(ctx, []*storage.Message{msg})
+	if err != nil {
+		t.Fatalf("SaveMessages failed: %v", err)
+	}
+	if len(saved) != 1 || len(saved[0].Content) != 2 {
+		t.Fatalf("unexpected saved message: %+v", saved)
+	}
+
+	jsonbContent := `[{"type":"text","text":"Inspect this photo"},{"type":"image","mime_type":"image/png","data":"ChQe"}]`
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, thread_id, resource_id, role, content, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages WHERE thread_id = $1 ORDER BY created_at ASC, id ASC")).
+		WithArgs("th-multi").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "thread_id", "resource_id", "role", "content", "name", "tool_calls", "tool_call_id", "created_at", "metadata", "raw"}).
+			AddRow("msg-multi", "th-multi", "res-multi", "user", []byte(jsonbContent), "", "[]", "", time.Now(), "{}", "null"))
+
+	msgs, err := store.ListMessages(ctx, storage.MessageFilter{ThreadID: "th-multi"})
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(msgs) != 1 || len(msgs[0].Content) != 2 {
+		t.Fatalf("expected 1 message with 2 parts, got %d", len(msgs))
+	}
+	if msgs[0].Content[0].Text != "Inspect this photo" || msgs[0].Content[1].Type != llm.PartTypeImage {
+		t.Errorf("unexpected content parts in retrieved message: %+v", msgs[0].Content)
+	}
+	if string(msgs[0].Content[1].Data) != string(imgBytes) {
+		t.Errorf("expected decoded image bytes %v, got %v", imgBytes, msgs[0].Content[1].Data)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unfulfilled mock expectations: %v", err)
+	}
+}
