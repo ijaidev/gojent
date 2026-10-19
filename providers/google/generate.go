@@ -26,6 +26,10 @@ func (m *Model) Generate(ctx context.Context, req llm.GenerateRequest) (*llm.Gen
 		return nil, err
 	}
 
+	if err := blockedResponseError(resp); err != nil {
+		return nil, err
+	}
+
 	text, thinking := extractCandidateTextAndThinking(resp.Candidates)
 	finishReason := llm.FinishReasonStop
 	if len(resp.Candidates) > 0 && resp.Candidates[0].FinishReason != "" {
@@ -93,6 +97,14 @@ func (m *Model) Stream(ctx context.Context, req llm.GenerateRequest) (llm.Stream
 		iterSeq := m.client.Models.GenerateContentStream(streamCtx, m.modelID, contents, config)
 		for resp, err := range iterSeq {
 			if err != nil {
+				select {
+				case errCh <- err:
+				case <-streamCtx.Done():
+				}
+				return
+			}
+
+			if err := blockedResponseError(resp); err != nil {
 				select {
 				case errCh <- err:
 				case <-streamCtx.Done():

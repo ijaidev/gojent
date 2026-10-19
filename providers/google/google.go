@@ -16,6 +16,10 @@ var (
 
 	// ErrModelNotSet is returned when no model identifier is provided in Config.
 	ErrModelNotSet = errors.New("google: model is not set/provided")
+
+	// ErrResponseBlocked is returned when Gemini blocks the prompt for safety or
+	// policy reasons and produces no candidates, rather than a normal response.
+	ErrResponseBlocked = errors.New("google: prompt blocked by safety or policy filters")
 )
 
 // ThinkingLevel represents the reasoning effort level for Google Gen AI models.

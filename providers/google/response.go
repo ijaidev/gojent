@@ -1,10 +1,30 @@
 package google
 
 import (
+	"fmt"
 	"strings"
 
 	"google.golang.org/genai"
 )
+
+// blockedResponseError returns ErrResponseBlocked when Gemini produced no
+// candidates because the prompt was blocked for safety or policy reasons.
+// A response with candidates is never treated as blocked here; candidate-level
+// finish reasons (e.g. safety) are surfaced through FinishReason instead.
+func blockedResponseError(resp *genai.GenerateContentResponse) error {
+	if len(resp.Candidates) > 0 {
+		return nil
+	}
+	pf := resp.PromptFeedback
+	if pf == nil || pf.BlockReason == "" {
+		return nil
+	}
+	reason := pf.BlockReasonMessage
+	if reason == "" {
+		reason = string(pf.BlockReason)
+	}
+	return fmt.Errorf("%w: %s", ErrResponseBlocked, reason)
+}
 
 // extractCandidateTextAndThinking retrieves output text and thought process across candidates separately.
 func extractCandidateTextAndThinking(candidates []*genai.Candidate) (text string, thinking string) {

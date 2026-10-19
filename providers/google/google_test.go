@@ -879,3 +879,89 @@ func TestModel_DoesNotMutateCallerClientConfig(t *testing.T) {
 		t.Errorf("New mutated the caller's ClientConfig: APIKey = %q, want empty", clientCfg.APIKey)
 	}
 }
+
+func TestModel_Generate_BlockedPrompt(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{
+			"promptFeedback": map[string]any{
+				"blockReason": "SAFETY",
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	m, err := google.New(context.Background(), google.Config{
+		Model:  "gemini-2.5-flash",
+		APIKey: "test-key",
+		ClientConfig: &genai.ClientConfig{
+			HTTPOptions: genai.HTTPOptions{
+				BaseURL: ts.URL,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create model: %v", err)
+	}
+
+	_, err = m.Generate(context.Background(), llm.GenerateRequest{
+		Messages: []llm.Message{llm.UserMessage("blocked prompt")},
+	})
+	if !errors.Is(err, google.ErrResponseBlocked) {
+		t.Fatalf("expected ErrResponseBlocked, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "SAFETY") {
+		t.Errorf("expected block reason in error, got %q", err.Error())
+	}
+}
+
+func TestModel_Stream_BlockedPrompt(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		blocked := map[string]any{
+			"promptFeedback": map[string]any{
+				"blockReason": "SAFETY",
+			},
+		}
+		b, _ := json.Marshal(blocked)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+		flusher.Flush()
+	}))
+	defer ts.Close()
+
+	m, err := google.New(context.Background(), google.Config{
+		Model:  "gemini-2.5-flash",
+		APIKey: "test-key",
+		ClientConfig: &genai.ClientConfig{
+			HTTPOptions: genai.HTTPOptions{
+				BaseURL: ts.URL,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create model: %v", err)
+	}
+
+	stream, err := m.Stream(context.Background(), llm.GenerateRequest{
+		Messages: []llm.Message{llm.UserMessage("blocked prompt")},
+	})
+	if err != nil {
+		t.Fatalf("Stream failed: %v", err)
+	}
+	defer func() {
+		_ = stream.Close()
+	}()
+
+	_, err = stream.Recv()
+	if !errors.Is(err, google.ErrResponseBlocked) {
+		t.Fatalf("expected ErrResponseBlocked from stream, got %v", err)
+	}
+}
