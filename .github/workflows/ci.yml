@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Format, vet, test, and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Vet and test all modules
+        run: |
+          for dir in . providers/google examples/google stores/sqlite stores/postgres; do
+            echo "== $dir =="
+            (cd "$dir" && go vet ./... && go test -race ./...)
+          done
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.8.0
+          args: ./... ./providers/google/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/...
+
+  postgres-integration:
+    name: PostgreSQL integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gojent_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+
+      - name: Run the storage conformance suite against PostgreSQL
+        env:
+          GOJENT_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/gojent_test?sslmode=disable
+        run: go test -race ./stores/postgres/...
