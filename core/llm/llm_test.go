@@ -198,6 +198,43 @@ func TestThinkingConfig_CloneAndMessage(t *testing.T) {
 	}
 }
 
+func TestResponseFormat_CloneAndMock(t *testing.T) {
+	strict := true
+	rf := &llm.ResponseFormat{
+		Type:        llm.ResponseFormatJSONSchema,
+		Name:        "TestSchema",
+		Description: "A test schema",
+		Schema:      map[string]any{"type": "object"},
+		Strict:      &strict,
+	}
+
+	cloned := rf.Clone()
+	if cloned.Type != llm.ResponseFormatJSONSchema || cloned.Name != "TestSchema" || *cloned.Strict != true {
+		t.Fatalf("unexpected cloned format: %+v", cloned)
+	}
+
+	*rf.Strict = false
+	if *cloned.Strict != true {
+		t.Errorf("expected clone strict to remain true, got %v", *cloned.Strict)
+	}
+
+	mock := llm.NewMockLLM(`{"name":"Gojent"}`)
+	req := llm.GenerateRequest{
+		Messages:       []llm.Message{llm.UserMessage("Send JSON")},
+		ResponseFormat: rf,
+	}
+	res, err := mock.Generate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	if res.Text != `{"name":"Gojent"}` {
+		t.Errorf("unexpected response text: %s", res.Text)
+	}
+	if mock.LastCall().ResponseFormat == nil || mock.LastCall().ResponseFormat.Name != "TestSchema" {
+		t.Errorf("expected mock to record response format, got %+v", mock.LastCall().ResponseFormat)
+	}
+}
+
 func TestToolCall_UnmarshalArgs(t *testing.T) {
 	tc := llm.ToolCall{
 		ID:        "call-abc",

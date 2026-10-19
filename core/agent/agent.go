@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -275,21 +276,49 @@ type Response struct {
 	Raw any `json:"raw,omitempty"`
 }
 
+// Unmarshal parses the JSON-encoded response text and stores the result in the value pointed to by target.
+// Any markdown code fence blocks (```json ... ```) are cleanly stripped prior to deserialization.
+func (r *Response) Unmarshal(target any) error {
+	if r == nil {
+		return errors.New("agent: response is nil")
+	}
+	cleaned := cleanJSONText(r.Text)
+	if cleaned == "" {
+		return errors.New("agent: response text is empty")
+	}
+	return json.Unmarshal([]byte(cleaned), target)
+}
+
+// cleanJSONText removes potential markdown code block wrappers (e.g. ```json ... ```) from model output.
+func cleanJSONText(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if strings.HasPrefix(trimmed, "```") {
+		if idx := strings.Index(trimmed, "\n"); idx != -1 {
+			trimmed = strings.TrimSpace(trimmed[idx+1:])
+		}
+		if strings.HasSuffix(trimmed, "```") {
+			trimmed = strings.TrimSpace(trimmed[:len(trimmed)-3])
+		}
+	}
+	return trimmed
+}
+
 // GenerateConfig holds runtime options for a Generate execution.
 type GenerateConfig struct {
-	Model       llm.LLM
-	Storage     storage.Storage
-	ThreadID    string
-	ResourceID  string
-	Thinking    *llm.ThinkingConfig
-	Temperature *float64
-	MaxTokens   *int
-	TopP        *float64
-	Messages    []llm.Message
-	Media       []llm.Part
-	Tools       []tool.Tool
-	MaxSteps    *int
-	Hooks       Hooks
+	Model          llm.LLM
+	Storage        storage.Storage
+	ThreadID       string
+	ResourceID     string
+	Thinking       *llm.ThinkingConfig
+	ResponseFormat *llm.ResponseFormat
+	Temperature    *float64
+	MaxTokens      *int
+	TopP           *float64
+	Messages       []llm.Message
+	Media          []llm.Part
+	Tools          []tool.Tool
+	MaxSteps       *int
+	Hooks          Hooks
 }
 
 // GenerateOption allows customizing an individual Generate call.
@@ -350,6 +379,45 @@ func WithThinkingBudget(tokens int) GenerateOption {
 	}
 }
 
+// WithResponseFormat configures structured output constraints directly using an llm.ResponseFormat.
+func WithResponseFormat(rf *llm.ResponseFormat) GenerateOption {
+	return func(cfg *GenerateConfig) {
+		cfg.ResponseFormat = rf.Clone()
+	}
+}
+
+// WithJSONOutput instructs the agent to return valid JSON output without a constrained schema.
+func WithJSONOutput() GenerateOption {
+	return func(cfg *GenerateConfig) {
+		cfg.ResponseFormat = &llm.ResponseFormat{
+			Type: llm.ResponseFormatJSON,
+		}
+	}
+}
+
+// WithOutputSchema configures the agent to return structured output strictly conforming to the Go type T.
+func WithOutputSchema[T any](opts ...tool.SchemaOption) GenerateOption {
+	return func(cfg *GenerateConfig) {
+		schema := tool.GenerateSchemaWithOptions[T](opts...)
+		var zero T
+		t := reflect.TypeOf(zero)
+		for t != nil && t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		name := "StructuredOutput"
+		if t != nil && t.Name() != "" {
+			name = t.Name()
+		}
+		strict := true
+		cfg.ResponseFormat = &llm.ResponseFormat{
+			Type:   llm.ResponseFormatJSONSchema,
+			Name:   name,
+			Schema: schema,
+			Strict: &strict,
+		}
+	}
+}
+
 // WithTemperature overrides the temperature parameter for a generation.
 func WithTemperature(t float64) GenerateOption {
 	return func(cfg *GenerateConfig) {
@@ -399,6 +467,64 @@ func WithHooks(h Hooks) GenerateOption {
 	return func(cfg *GenerateConfig) {
 		cfg.Hooks = mergeHooks(cfg.Hooks, h)
 	}
+}
+
+// StructuredResponse encapsulates an Agent response accompanied by the typed, unmarshaled data payload.
+type StructuredResponse[T any] struct {
+	Data     T
+	Response *Response
+}
+
+// GenerateStructured executes an agent generation with structured output conforming to Go type T,
+// unmarshaling the result directly into T.
+func GenerateStructured[T any](ctx context.Context, a *Agent, prompt string, opts ...GenerateOption) (*StructuredResponse[T], error) {
+	allOpts := append([]GenerateOption{WithOutputSchema[T]()}, opts...)
+	res, err := a.Generate(ctx, prompt, allOpts...)
+	if err != nil {
+		return nil, err
+	}
+	var data T
+	if err := res.Unmarshal(&data); err != nil {
+		return &StructuredResponse[T]{Response: res}, fmt.Errorf("agent: failed to unmarshal response into %T: %w (raw response: %s)", data, err, res.Text)
+	}
+	return &StructuredResponse[T]{
+		Data:     data,
+		Response: res,
+	}, nil
+}
+
+// GeneratePartsStructured executes an agent generation with multimodal parts and structured output conforming to Go type T.
+func GeneratePartsStructured[T any](ctx context.Context, a *Agent, parts []llm.Part, opts ...GenerateOption) (*StructuredResponse[T], error) {
+	allOpts := append([]GenerateOption{WithOutputSchema[T]()}, opts...)
+	res, err := a.GenerateParts(ctx, parts, allOpts...)
+	if err != nil {
+		return nil, err
+	}
+	var data T
+	if err := res.Unmarshal(&data); err != nil {
+		return &StructuredResponse[T]{Response: res}, fmt.Errorf("agent: failed to unmarshal response into %T: %w (raw response: %s)", data, err, res.Text)
+	}
+	return &StructuredResponse[T]{
+		Data:     data,
+		Response: res,
+	}, nil
+}
+
+// GenerateMessagesStructured executes an agent generation with chat messages and structured output conforming to Go type T.
+func GenerateMessagesStructured[T any](ctx context.Context, a *Agent, messages []llm.Message, opts ...GenerateOption) (*StructuredResponse[T], error) {
+	allOpts := append([]GenerateOption{WithOutputSchema[T]()}, opts...)
+	res, err := a.GenerateMessages(ctx, messages, allOpts...)
+	if err != nil {
+		return nil, err
+	}
+	var data T
+	if err := res.Unmarshal(&data); err != nil {
+		return &StructuredResponse[T]{Response: res}, fmt.Errorf("agent: failed to unmarshal response into %T: %w (raw response: %s)", data, err, res.Text)
+	}
+	return &StructuredResponse[T]{
+		Data:     data,
+		Response: res,
+	}, nil
 }
 
 // Generate runs the agent with a string prompt, returning the model's response.
@@ -512,12 +638,13 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 
 	for step := 0; step < maxSteps; step++ {
 		req := llm.GenerateRequest{
-			Messages:    callMessages,
-			Tools:       toolDefs,
-			Thinking:    effectiveThinking,
-			Temperature: genCfg.Temperature,
-			MaxTokens:   genCfg.MaxTokens,
-			TopP:        genCfg.TopP,
+			Messages:       callMessages,
+			Tools:          toolDefs,
+			Thinking:       effectiveThinking,
+			ResponseFormat: genCfg.ResponseFormat,
+			Temperature:    genCfg.Temperature,
+			MaxTokens:      genCfg.MaxTokens,
+			TopP:           genCfg.TopP,
 		}
 
 		if err := hooks.beforeModel(ctx, step, &req); err != nil {
@@ -721,12 +848,13 @@ func (a *Agent) StreamMessages(ctx context.Context, messages []llm.Message, opts
 	toolDefs := tool.ToDefinitions(activeTools)
 
 	req := llm.GenerateRequest{
-		Messages:    callMessages,
-		Tools:       toolDefs,
-		Thinking:    effectiveThinking,
-		Temperature: genCfg.Temperature,
-		MaxTokens:   genCfg.MaxTokens,
-		TopP:        genCfg.TopP,
+		Messages:       callMessages,
+		Tools:          toolDefs,
+		Thinking:       effectiveThinking,
+		ResponseFormat: genCfg.ResponseFormat,
+		Temperature:    genCfg.Temperature,
+		MaxTokens:      genCfg.MaxTokens,
+		TopP:           genCfg.TopP,
 	}
 
 	if err := hooks.beforeModel(ctx, 0, &req); err != nil {

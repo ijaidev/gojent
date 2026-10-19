@@ -202,12 +202,13 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 
 			// Prepare request for next ReAct iteration
 			req := llm.GenerateRequest{
-				Messages:    s.messages,
-				Tools:       s.toolDefs,
-				Thinking:    effectiveThinking,
-				Temperature: s.genCfg.Temperature,
-				MaxTokens:   s.genCfg.MaxTokens,
-				TopP:        s.genCfg.TopP,
+				Messages:       s.messages,
+				Tools:          s.toolDefs,
+				Thinking:       effectiveThinking,
+				ResponseFormat: s.genCfg.ResponseFormat,
+				Temperature:    s.genCfg.Temperature,
+				MaxTokens:      s.genCfg.MaxTokens,
+				TopP:           s.genCfg.TopP,
 			}
 
 			if err := s.hooks.beforeModel(s.ctx, s.step, &req); err != nil {

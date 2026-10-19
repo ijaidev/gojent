@@ -7,23 +7,70 @@ import (
 	"strings"
 )
 
+// SchemaOption configures schema generation options.
+type SchemaOption func(*SchemaConfig)
+
+// SchemaConfig controls schema generation parameters.
+type SchemaConfig struct {
+	Strict bool
+}
+
+// WithStrictSchema configures the generator to disallow additional properties on object schemas.
+func WithStrictSchema(strict bool) SchemaOption {
+	return func(cfg *SchemaConfig) {
+		cfg.Strict = strict
+	}
+}
+
 // GenerateSchema generates a JSON Schema map for a given Go type T.
 func GenerateSchema[T any]() map[string]any {
 	var zero T
 	return GenerateSchemaFromType(reflect.TypeOf(zero))
 }
 
+// GenerateSchemaWithOptions generates a JSON Schema map for a given Go type T with custom options.
+func GenerateSchemaWithOptions[T any](opts ...SchemaOption) map[string]any {
+	var zero T
+	return GenerateSchemaFromTypeWithOptions(reflect.TypeOf(zero), opts...)
+}
+
 // GenerateSchemaFromType generates a JSON Schema map for a given reflect.Type.
 func GenerateSchemaFromType(t reflect.Type) map[string]any {
+	return GenerateSchemaFromTypeWithOptions(t)
+}
+
+// GenerateSchemaFromTypeWithOptions generates a JSON Schema map for a given reflect.Type with custom options.
+func GenerateSchemaFromTypeWithOptions(t reflect.Type, opts ...SchemaOption) map[string]any {
+	cfg := &SchemaConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	visited := make(map[reflect.Type]bool)
+	return generateSchemaFromTypeWithVisited(t, visited, cfg.Strict)
+}
+
+func generateSchemaFromTypeWithVisited(t reflect.Type, visited map[reflect.Type]bool, strict bool) map[string]any {
 	if t == nil {
-		return map[string]any{
+		s := map[string]any{
 			"type":       "object",
 			"properties": map[string]any{},
 		}
+		if strict {
+			s["additionalProperties"] = false
+		}
+		return s
 	}
 
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
+	}
+
+	// Handle time.Time
+	if t.PkgPath() == "time" && t.Name() == "Time" {
+		return map[string]any{
+			"type":   "string",
+			"format": "date-time",
+		}
 	}
 
 	if t.Kind() != reflect.Struct {
@@ -31,6 +78,14 @@ func GenerateSchemaFromType(t reflect.Type) map[string]any {
 			"type": mapKindToJSONType(t.Kind()),
 		}
 	}
+
+	if visited[t] {
+		return map[string]any{
+			"type": "object",
+		}
+	}
+	visited[t] = true
+	defer delete(visited, t)
 
 	properties := make(map[string]any)
 	var required []string
@@ -62,22 +117,48 @@ func GenerateSchemaFromType(t reflect.Type) map[string]any {
 			}
 		}
 
-		fieldProp := make(map[string]any)
 		fieldType := field.Type
 		for fieldType.Kind() == reflect.Pointer {
 			fieldType = fieldType.Elem()
 			isOptional = true
 		}
 
-		fieldProp["type"] = mapKindToJSONType(fieldType.Kind())
+		var fieldProp map[string]any
 
-		if fieldType.Kind() == reflect.Slice || fieldType.Kind() == reflect.Array {
+		switch {
+		case fieldType.PkgPath() == "time" && fieldType.Name() == "Time":
+			fieldProp = map[string]any{
+				"type":   "string",
+				"format": "date-time",
+			}
+		case fieldType.Kind() == reflect.Struct:
+			fieldProp = generateSchemaFromTypeWithVisited(fieldType, visited, strict)
+		case fieldType.Kind() == reflect.Slice || fieldType.Kind() == reflect.Array:
 			elemType := fieldType.Elem()
 			for elemType.Kind() == reflect.Pointer {
 				elemType = elemType.Elem()
 			}
-			fieldProp["items"] = map[string]any{
-				"type": mapKindToJSONType(elemType.Kind()),
+			var itemsSchema map[string]any
+			switch {
+			case elemType.PkgPath() == "time" && elemType.Name() == "Time":
+				itemsSchema = map[string]any{
+					"type":   "string",
+					"format": "date-time",
+				}
+			case elemType.Kind() == reflect.Struct:
+				itemsSchema = generateSchemaFromTypeWithVisited(elemType, visited, strict)
+			default:
+				itemsSchema = map[string]any{
+					"type": mapKindToJSONType(elemType.Kind()),
+				}
+			}
+			fieldProp = map[string]any{
+				"type":  "array",
+				"items": itemsSchema,
+			}
+		default:
+			fieldProp = map[string]any{
+				"type": mapKindToJSONType(fieldType.Kind()),
 			}
 		}
 
@@ -87,6 +168,16 @@ func GenerateSchemaFromType(t reflect.Type) map[string]any {
 		}
 		if desc != "" {
 			fieldProp["description"] = desc
+		}
+
+		enumTag := field.Tag.Get("enum")
+		if enumTag != "" {
+			parts := strings.Split(enumTag, ",")
+			var enumVals []any
+			for _, p := range parts {
+				enumVals = append(enumVals, strings.TrimSpace(p))
+			}
+			fieldProp["enum"] = enumVals
 		}
 
 		properties[fieldName] = fieldProp
@@ -101,6 +192,9 @@ func GenerateSchemaFromType(t reflect.Type) map[string]any {
 	}
 	if len(required) > 0 {
 		schema["required"] = required
+	}
+	if strict {
+		schema["additionalProperties"] = false
 	}
 
 	return schema

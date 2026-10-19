@@ -750,6 +750,20 @@ func (m *Model) convertConfig(req llm.GenerateRequest, systemInstruction *genai.
 		}
 	}
 
+	if req.ResponseFormat != nil {
+		switch req.ResponseFormat.Type {
+		case llm.ResponseFormatJSON:
+			cfg.ResponseMIMEType = "application/json"
+		case llm.ResponseFormatJSONSchema:
+			cfg.ResponseMIMEType = "application/json"
+			if req.ResponseFormat.Schema != nil {
+				cfg.ResponseJsonSchema = req.ResponseFormat.Schema
+			}
+		case llm.ResponseFormatText:
+			cfg.ResponseMIMEType = "text/plain"
+		}
+	}
+
 	if req.Temperature != nil {
 		t := float32(*req.Temperature)
 		cfg.Temperature = &t
@@ -817,12 +831,6 @@ func extractCandidateTextAndThinking(candidates []*genai.Candidate) (text string
 		}
 	}
 	return textSb.String(), thinkSb.String()
-}
-
-// extractCandidateText retrieves non-thought text parts across candidates.
-func extractCandidateText(candidates []*genai.Candidate) string {
-	text, _ := extractCandidateTextAndThinking(candidates)
-	return text
 }
 
 // extractRawGeminiContent attempts to retrieve the original *genai.Content from a raw response payload,

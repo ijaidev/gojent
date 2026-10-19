@@ -70,6 +70,45 @@ func (c *ThinkingConfig) Clone() *ThinkingConfig {
 	return &cp
 }
 
+// ResponseFormatType defines the expected format of the model output.
+type ResponseFormatType string
+
+const (
+	// ResponseFormatText produces standard unconstrained natural language text.
+	ResponseFormatText ResponseFormatType = "text"
+	// ResponseFormatJSON requests raw valid JSON output without a constrained schema.
+	ResponseFormatJSON ResponseFormatType = "json"
+	// ResponseFormatJSONSchema requests structured output strictly conforming to a given JSON Schema.
+	ResponseFormatJSONSchema ResponseFormatType = "json_schema"
+)
+
+// ResponseFormat defines constraints for structured model output.
+type ResponseFormat struct {
+	// Type specifies whether output should be text, arbitrary JSON, or JSON conforming to a schema.
+	Type ResponseFormatType `json:"type"`
+	// Name optionally specifies the schema identifier (required by some providers like OpenAI).
+	Name string `json:"name,omitempty"`
+	// Description optionally explains the purpose of the output schema.
+	Description string `json:"description,omitempty"`
+	// Schema is the JSON Schema definition (typically a map[string]any or a struct).
+	Schema any `json:"schema,omitempty"`
+	// Strict indicates whether the provider should enforce strict schema adherence.
+	Strict *bool `json:"strict,omitempty"`
+}
+
+// Clone returns a deep copy of ResponseFormat.
+func (rf *ResponseFormat) Clone() *ResponseFormat {
+	if rf == nil {
+		return nil
+	}
+	cp := *rf
+	if rf.Strict != nil {
+		s := *rf.Strict
+		cp.Strict = &s
+	}
+	return &cp
+}
+
 // PartType defines the category of content within a message part.
 type PartType string
 
@@ -426,13 +465,14 @@ type Usage struct {
 
 // GenerateRequest contains the input parameters for a model generation.
 type GenerateRequest struct {
-	Messages    []Message        `json:"messages"`
-	Tools       []ToolDefinition `json:"tools,omitempty"`
-	Thinking    *ThinkingConfig  `json:"thinking,omitempty"`
-	Temperature *float64         `json:"temperature,omitempty"`
-	MaxTokens   *int             `json:"max_tokens,omitempty"`
-	TopP        *float64         `json:"top_p,omitempty"`
-	StopWords   []string         `json:"stop_words,omitempty"`
+	Messages       []Message        `json:"messages"`
+	Tools          []ToolDefinition `json:"tools,omitempty"`
+	Thinking       *ThinkingConfig  `json:"thinking,omitempty"`
+	ResponseFormat *ResponseFormat  `json:"response_format,omitempty"`
+	Temperature    *float64         `json:"temperature,omitempty"`
+	MaxTokens      *int             `json:"max_tokens,omitempty"`
+	TopP           *float64         `json:"top_p,omitempty"`
+	StopWords      []string         `json:"stop_words,omitempty"`
 }
 
 // GenerateResponse represents the output from a model generation.

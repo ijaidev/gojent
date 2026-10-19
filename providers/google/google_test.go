@@ -777,3 +777,88 @@ func TestGoogleProvider_StreamThinking(t *testing.T) {
 		t.Errorf("expected chunk 2 ThinkingDelta empty, got %q", chunk2.ThinkingDelta)
 	}
 }
+
+func TestGoogleProvider_ResponseFormat(t *testing.T) {
+	var capturedConfig map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var reqMap map[string]any
+		_ = json.Unmarshal(body, &reqMap)
+		if genConfig, ok := reqMap["generationConfig"].(map[string]any); ok {
+			capturedConfig = genConfig
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{
+			"candidates": []map[string]any{
+				{
+					"content": map[string]any{
+						"role": "model",
+						"parts": []map[string]any{
+							{"text": `{"answer":42}`},
+						},
+					},
+					"finishReason": "STOP",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	ctx := context.Background()
+	m, err := google.New(ctx, google.Config{
+		Model:  "gemini-2.5-flash",
+		APIKey: "test-key",
+		ClientConfig: &genai.ClientConfig{
+			HTTPOptions: genai.HTTPOptions{
+				BaseURL: ts.URL,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create model: %v", err)
+	}
+
+	// 1. Test ResponseFormatJSON
+	_, err = m.Generate(ctx, llm.GenerateRequest{
+		Messages: []llm.Message{llm.UserMessage("give json")},
+		ResponseFormat: &llm.ResponseFormat{
+			Type: llm.ResponseFormatJSON,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate with ResponseFormatJSON failed: %v", err)
+	}
+	if capturedConfig["responseMimeType"] != "application/json" {
+		t.Errorf("expected responseMimeType 'application/json', got %v", capturedConfig["responseMimeType"])
+	}
+
+	// 2. Test ResponseFormatJSONSchema
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"answer": map[string]any{"type": "integer"},
+		},
+		"required": []string{"answer"},
+	}
+	res, err := m.Generate(ctx, llm.GenerateRequest{
+		Messages: []llm.Message{llm.UserMessage("give schema")},
+		ResponseFormat: &llm.ResponseFormat{
+			Type:   llm.ResponseFormatJSONSchema,
+			Schema: schema,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate with ResponseFormatJSONSchema failed: %v", err)
+	}
+	if res.Text != `{"answer":42}` {
+		t.Errorf("expected response text, got %q", res.Text)
+	}
+	if capturedConfig["responseMimeType"] != "application/json" {
+		t.Errorf("expected responseMimeType 'application/json', got %v", capturedConfig["responseMimeType"])
+	}
+	if capturedConfig["responseJsonSchema"] == nil {
+		t.Errorf("expected responseJsonSchema in request, got %v", capturedConfig)
+	}
+}
