@@ -184,14 +184,26 @@ func New(dsn string, opts ...Option) (*Store, error) {
 		opt(cfg)
 	}
 
+	// For in-memory databases, restrict connection pool to 1 by default so that
+	// separate queries share the exact same in-memory state.
+	isMemory := dsn == ":memory:" || strings.Contains(dsn, "mode=memory")
+
+	busyTimeoutMs := int(cfg.busyTimeout.Milliseconds())
+	if busyTimeoutMs <= 0 {
+		busyTimeoutMs = 5000
+	}
+
+	// database/sql pools connections, so PRAGMAs executed once after opening
+	// only configure whichever connection the pool happened to hand out.
+	// Encode them in the DSN so every connection is configured identically.
+	if cfg.driverName == DefaultDriverName {
+		dsn = dsnWithPragmas(dsn, busyTimeoutMs, !isMemory)
+	}
+
 	db, err := sql.Open(cfg.driverName, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: failed to open database: %w", err)
 	}
-
-	// For in-memory databases, restrict connection pool to 1 by default so that
-	// separate queries share the exact same in-memory state.
-	isMemory := dsn == ":memory:" || strings.Contains(dsn, "mode=memory")
 	if isMemory && cfg.maxOpenConns == 0 {
 		db.SetMaxOpenConns(1)
 	} else if cfg.maxOpenConns > 0 {
@@ -210,22 +222,21 @@ func New(dsn string, opts ...Option) (*Store, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Configure PRAGMAs
-	busyTimeoutMs := int(cfg.busyTimeout.Milliseconds())
-	if busyTimeoutMs <= 0 {
-		busyTimeoutMs = 5000
-	}
-	pragmaSQL := fmt.Sprintf(`
-		PRAGMA busy_timeout = %d;
-		PRAGMA foreign_keys = ON;
-		PRAGMA synchronous = NORMAL;
-	`, busyTimeoutMs)
-	if !isMemory {
-		pragmaSQL += "PRAGMA journal_mode = WAL;\n"
-	}
-	if _, err := db.ExecContext(ctx, pragmaSQL); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("sqlite: failed to set pragmas: %w", err)
+	// Custom drivers may not understand the DSN pragma parameters above;
+	// configure the pooled connection as a best-effort fallback.
+	if cfg.driverName != DefaultDriverName {
+		pragmaSQL := fmt.Sprintf(`
+			PRAGMA busy_timeout = %d;
+			PRAGMA foreign_keys = ON;
+			PRAGMA synchronous = NORMAL;
+		`, busyTimeoutMs)
+		if !isMemory {
+			pragmaSQL += "PRAGMA journal_mode = WAL;\n"
+		}
+		if _, err := db.ExecContext(ctx, pragmaSQL); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("sqlite: failed to set pragmas: %w", err)
+		}
 	}
 
 	store := &Store{db: db}
@@ -238,6 +249,20 @@ func New(dsn string, opts ...Option) (*Store, error) {
 	}
 
 	return store, nil
+}
+
+// dsnWithPragmas appends go-sqlite3 DSN parameters so that database/sql opens
+// every pooled connection with the pragmas already applied.
+func dsnWithPragmas(dsn string, busyTimeoutMs int, wal bool) string {
+	params := fmt.Sprintf("_busy_timeout=%d&_foreign_keys=on&_synchronous=NORMAL", busyTimeoutMs)
+	if wal {
+		params += "&_journal_mode=WAL"
+	}
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	return dsn + separator + params
 }
 
 // NewWithDB creates a Store wrapping an existing *sql.DB instance.

@@ -1080,3 +1080,49 @@ func TestStore_MigrateAddsThinkingColumn(t *testing.T) {
 		t.Fatalf("expected thinking after migration, got %+v", listed)
 	}
 }
+
+func TestStore_PragmasApplyToEveryConnection(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "pragmas.db")
+
+	store, err := sqlite.New(dbPath,
+		sqlite.WithMaxOpenConns(2),
+		sqlite.WithBusyTimeout(1234*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("sqlite.New failed: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	// Hold both connections at once so the pool must open a second physical
+	// connection; the PRAGMAs were previously applied only to the first one.
+	conn1, err := store.DB().Conn(ctx)
+	if err != nil {
+		t.Fatalf("failed to acquire first connection: %v", err)
+	}
+	defer func() { _ = conn1.Close() }()
+
+	conn2, err := store.DB().Conn(ctx)
+	if err != nil {
+		t.Fatalf("failed to acquire second connection: %v", err)
+	}
+	defer func() { _ = conn2.Close() }()
+
+	for i, conn := range []*sql.Conn{conn1, conn2} {
+		var foreignKeys int
+		if err := conn.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+			t.Fatalf("connection %d: foreign_keys query failed: %v", i+1, err)
+		}
+		if foreignKeys != 1 {
+			t.Errorf("connection %d: foreign_keys = %d, want 1", i+1, foreignKeys)
+		}
+
+		var busyTimeout int
+		if err := conn.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+			t.Fatalf("connection %d: busy_timeout query failed: %v", i+1, err)
+		}
+		if busyTimeout != 1234 {
+			t.Errorf("connection %d: busy_timeout = %d, want 1234", i+1, busyTimeout)
+		}
+	}
+}
