@@ -219,3 +219,41 @@ func TestChannelStream_Error(t *testing.T) {
 		t.Errorf("expected network failure error, got %v", err)
 	}
 }
+
+func TestChannelStream_TerminalErrorSurvivesConcurrentClose(t *testing.T) {
+	testErr := errors.New("provider stream failed")
+
+	// The producer buffers its terminal error, then closes both channels.
+	// Recv must surface the error even when the select observes the closed
+	// chunk channel first; iterating many times covers both select branches.
+	for i := 0; i < 500; i++ {
+		ch := make(chan *llm.StreamChunk)
+		errCh := make(chan error, 1)
+		errCh <- testErr
+		close(errCh)
+		close(ch)
+
+		stream := llm.NewChannelStream(context.Background(), nil, ch, errCh)
+		_, err := stream.Recv()
+		_ = stream.Close()
+		if !errors.Is(err, testErr) {
+			t.Fatalf("iteration %d: expected terminal error, got %v", i, err)
+		}
+	}
+}
+
+func TestChannelStream_CleanCloseReturnsEOF(t *testing.T) {
+	ch := make(chan *llm.StreamChunk)
+	errCh := make(chan error, 1)
+	close(errCh)
+	close(ch)
+
+	stream := llm.NewChannelStream(context.Background(), nil, ch, errCh)
+	defer func() { _ = stream.Close() }()
+
+	for i := 0; i < 50; i++ {
+		if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
+			t.Fatalf("iteration %d: expected io.EOF, got %v", i, err)
+		}
+	}
+}

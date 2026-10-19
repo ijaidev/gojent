@@ -120,6 +120,11 @@ type channelStream struct {
 }
 
 // NewChannelStream creates a Stream backed by a channel of StreamChunks.
+//
+// Producers must send any terminal error to errCh before closing ch. When both
+// channels become ready, a pending errCh value takes precedence over the clean
+// io.EOF signalled by a closed ch, so terminal errors are never lost.
+//
 // Closing the stream invokes the optional cancel function to terminate background producers.
 func NewChannelStream(ctx context.Context, cancel context.CancelFunc, ch <-chan *StreamChunk, errCh <-chan error) Stream {
 	if ctx == nil {
@@ -151,7 +156,7 @@ func (s *channelStream) Recv() (*StreamChunk, error) {
 		return s.recvChunk()
 	case chunk, ok := <-s.ch:
 		if !ok {
-			return nil, io.EOF
+			return nil, s.terminalErr()
 		}
 		return chunk, nil
 	}
@@ -163,10 +168,25 @@ func (s *channelStream) recvChunk() (*StreamChunk, error) {
 		return nil, s.ctx.Err()
 	case chunk, ok := <-s.ch:
 		if !ok {
-			return nil, io.EOF
+			return nil, s.terminalErr()
 		}
 		return chunk, nil
 	}
+}
+
+// terminalErr reports a terminal error pending on errCh, preferring it over
+// the clean io.EOF signalled by a closed chunk channel. Producers close both
+// channels when they finish, so a buffered error must not be lost just because
+// the select observed the closed chunk channel first.
+func (s *channelStream) terminalErr() error {
+	select {
+	case err, ok := <-s.errCh:
+		if ok && err != nil {
+			return err
+		}
+	default:
+	}
+	return io.EOF
 }
 
 func (s *channelStream) Close() error {
