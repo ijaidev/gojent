@@ -3,6 +3,7 @@ package exec_test
 import (
 	"context"
 	"encoding/json"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -79,5 +80,38 @@ func TestExecuteCommand_Timeout(t *testing.T) {
 	res := resAny.(exec.CommandOutput)
 	if !res.TimedOut {
 		t.Errorf("expected TimedOut to be true, got false (duration: %v)", duration)
+	}
+}
+
+func TestExecuteCommand_TimeoutKillsChildProcesses(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test relies on POSIX shell background jobs")
+	}
+
+	cmdTool, err := exec.NewExecuteCommandTool()
+	if err != nil {
+		t.Fatalf("failed to create execute tool: %v", err)
+	}
+
+	// The background sleep inherits the output pipes. Killing only the shell
+	// leaves it running and blocks Wait until WaitDelay expires.
+	inputBytes, _ := json.Marshal(exec.CommandInput{
+		Command:        "sleep 10 & sleep 10",
+		TimeoutSeconds: 1,
+	})
+
+	start := time.Now()
+	resAny, err := cmdTool.Execute(context.Background(), inputBytes)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("expected timed out CommandOutput, got error: %v", err)
+	}
+
+	res := resAny.(exec.CommandOutput)
+	if !res.TimedOut {
+		t.Errorf("expected TimedOut to be true after %v", elapsed)
+	}
+	if elapsed > 4*time.Second {
+		t.Errorf("timeout took %v; child processes kept the output pipes open", elapsed)
 	}
 }

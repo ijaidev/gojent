@@ -18,6 +18,12 @@ const (
 	defaultTimeout        = 30 * time.Second
 	maxAllowedTimeout     = 300 * time.Second
 	defaultMaxOutputBytes = 1024 * 1024 // 1MB
+
+	// waitDelay bounds how long Wait blocks for the output pipes to close
+	// after the process exits or is canceled. Without it, orphaned
+	// descendants that inherited the pipes can hang the tool far past its
+	// timeout.
+	waitDelay = 5 * time.Second
 )
 
 // Config configures the command execution tool.
@@ -103,6 +109,12 @@ func NewExecuteCommandTool(cfg ...Config) (tool.Tool, error) {
 			} else {
 				cmd = exec.CommandContext(execCtx, "sh", "-c", in.Command)
 			}
+
+			// Kill the whole process group on cancellation so orphaned
+			// children cannot keep the output pipes open; WaitDelay caps the
+			// wait for any descendant that still escapes.
+			configureProcessGroup(cmd)
+			cmd.WaitDelay = waitDelay
 
 			workDir := c.BaseDir
 			if in.WorkingDir != "" {
