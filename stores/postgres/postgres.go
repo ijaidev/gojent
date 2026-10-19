@@ -172,6 +172,7 @@ CREATE TABLE IF NOT EXISTS messages (
     resource_id TEXT NOT NULL DEFAULT '',
     role TEXT NOT NULL,
     content JSONB NOT NULL DEFAULT '[]'::jsonb,
+    thinking TEXT NOT NULL DEFAULT '',
     name TEXT NOT NULL DEFAULT '',
     tool_calls JSONB NOT NULL DEFAULT '[]'::jsonb,
     tool_call_id TEXT NOT NULL DEFAULT '',
@@ -352,7 +353,13 @@ func (s *Store) Migrate(ctx context.Context) error {
 		return storage.ErrClosed
 	}
 
-	_, err := s.db.ExecContext(ctx, Schema)
+	if _, err := s.db.ExecContext(ctx, Schema); err != nil {
+		return err
+	}
+
+	// CREATE TABLE IF NOT EXISTS cannot evolve existing tables, so add
+	// columns introduced after the initial schema.
+	_, err := s.db.ExecContext(ctx, "ALTER TABLE messages ADD COLUMN IF NOT EXISTS thinking TEXT NOT NULL DEFAULT ''")
 	return err
 }
 
@@ -755,13 +762,14 @@ func (s *Store) SaveMessages(ctx context.Context, messages []*storage.Message) (
 	now := time.Now().UTC()
 
 	upsertQuery := `
-		INSERT INTO messages (id, thread_id, resource_id, role, content, name, tool_calls, tool_call_id, created_at, metadata, raw)
-		VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, $8, $9, $10::jsonb, $11::jsonb)
+		INSERT INTO messages (id, thread_id, resource_id, role, content, thinking, name, tool_calls, tool_call_id, created_at, metadata, raw)
+		VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::jsonb, $9, $10, $11::jsonb, $12::jsonb)
 		ON CONFLICT(id) DO UPDATE SET
 			thread_id = EXCLUDED.thread_id,
 			resource_id = EXCLUDED.resource_id,
 			role = EXCLUDED.role,
 			content = EXCLUDED.content,
+			thinking = EXCLUDED.thinking,
 			name = EXCLUDED.name,
 			tool_calls = EXCLUDED.tool_calls,
 			tool_call_id = EXCLUDED.tool_call_id,
@@ -848,6 +856,7 @@ func (s *Store) SaveMessages(ctx context.Context, messages []*storage.Message) (
 			mc.ResourceID,
 			string(mc.Role),
 			string(contentBytes),
+			mc.Thinking,
 			mc.Name,
 			string(toolCallsBytes),
 			mc.ToolCallID,
@@ -883,6 +892,7 @@ func scanMessage(scanner interface{ Scan(dest ...any) error }) (*storage.Message
 		&msg.ResourceID,
 		&roleStr,
 		scanContent(&msg.Content),
+		&msg.Thinking,
 		&msg.Name,
 		scanJSON(&msg.ToolCalls),
 		&msg.ToolCallID,
@@ -907,7 +917,7 @@ func (s *Store) ListMessages(ctx context.Context, filter storage.MessageFilter) 
 		return nil, storage.ErrClosed
 	}
 
-	query := "SELECT id, thread_id, resource_id, role, content, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages"
+	query := "SELECT id, thread_id, resource_id, role, content, thinking, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages"
 	var whereClauses []string
 	var args []any
 	argIndex := 1
@@ -1012,7 +1022,7 @@ func (s *Store) GetMessagesByID(ctx context.Context, ids []string) ([]*storage.M
 			args[j] = id
 		}
 
-		query := fmt.Sprintf("SELECT id, thread_id, resource_id, role, content, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages WHERE id IN (%s)", strings.Join(placeholders, ", "))
+		query := fmt.Sprintf("SELECT id, thread_id, resource_id, role, content, thinking, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages WHERE id IN (%s)", strings.Join(placeholders, ", "))
 
 		rows, err := s.db.QueryContext(ctx, query, args...)
 		if err != nil {

@@ -284,6 +284,7 @@ func TestStore_MessageOperations(t *testing.T) {
 			string(llm.RoleUser),
 			`[{"type":"text","text":"Hello agent"}]`,
 			"",
+			"",
 			"[]",
 			"",
 			sqlmock.AnyArg(),
@@ -323,6 +324,7 @@ func TestStore_MessageOperations(t *testing.T) {
 			"res-explicit",
 			string(llm.RoleAssistant),
 			`[{"type":"text","text":"Response"}]`,
+			"plan: be helpful",
 			"",
 			"[]",
 			"",
@@ -343,6 +345,7 @@ func TestStore_MessageOperations(t *testing.T) {
 			ResourceID: "res-explicit",
 			Role:       llm.RoleAssistant,
 			Content:    []llm.Part{llm.TextPart("Response")},
+			Thinking:   "plan: be helpful",
 		},
 	})
 	if err != nil {
@@ -351,16 +354,19 @@ func TestStore_MessageOperations(t *testing.T) {
 	if !updatedMsgs[0].CreatedAt.Equal(now) {
 		t.Errorf("expected preserved created_at %v, got %v", now, updatedMsgs[0].CreatedAt)
 	}
+	if updatedMsgs[0].Thinking != "plan: be helpful" {
+		t.Errorf("expected thinking preserved on save, got %q", updatedMsgs[0].Thinking)
+	}
 
 	// 5. ListMessages with all filters
 	since := now.Add(-1 * time.Hour)
 	until := now.Add(1 * time.Hour)
-	expectedListMsgQuery := `SELECT id, thread_id, resource_id, role, content, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages WHERE thread_id = $1 AND resource_id = $2 AND role = $3 AND created_at >= $4 AND created_at <= $5 ORDER BY created_at DESC, id DESC LIMIT $6 OFFSET $7`
+	expectedListMsgQuery := `SELECT id, thread_id, resource_id, role, content, thinking, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages WHERE thread_id = $1 AND resource_id = $2 AND role = $3 AND created_at >= $4 AND created_at <= $5 ORDER BY created_at DESC, id DESC LIMIT $6 OFFSET $7`
 
 	mock.ExpectQuery(regexp.QuoteMeta(expectedListMsgQuery)).
 		WithArgs("th-1", "res-1", string(llm.RoleTool), since, until, 50, 10).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "thread_id", "resource_id", "role", "content", "name", "tool_calls", "tool_call_id", "created_at", "metadata", "raw"}).
-			AddRow("msg-tool", "th-1", "res-1", "tool", "result", "calc", `[{"id":"tc-1","type":"function","function":{"name":"calc","arguments":"{}"}}]`, "tc-1", now, `{"meta":"ok"}`, `{"thought":"done"}`))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "thread_id", "resource_id", "role", "content", "thinking", "name", "tool_calls", "tool_call_id", "created_at", "metadata", "raw"}).
+			AddRow("msg-tool", "th-1", "res-1", "tool", "result", "step-by-step", "calc", `[{"id":"tc-1","type":"function","function":{"name":"calc","arguments":"{}"}}]`, "tc-1", now, `{"meta":"ok"}`, `{"thought":"done"}`))
 
 	listed, err := store.ListMessages(ctx, storage.MessageFilter{
 		ThreadID:   "th-1",
@@ -378,6 +384,9 @@ func TestStore_MessageOperations(t *testing.T) {
 	if len(listed) != 1 || listed[0].Role != llm.RoleTool || len(listed[0].ToolCalls) != 1 || listed[0].Raw == nil {
 		t.Errorf("unexpected listed message: %+v", listed[0])
 	}
+	if listed[0].Thinking != "step-by-step" {
+		t.Errorf("expected thinking to round-trip, got %q", listed[0].Thinking)
+	}
 
 	// 6. GetMessagesByID (empty slice)
 	byIDEmpty, err := store.GetMessagesByID(ctx, []string{})
@@ -389,11 +398,11 @@ func TestStore_MessageOperations(t *testing.T) {
 	}
 
 	// 7. GetMessagesByID (preserves ID order)
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, thread_id, resource_id, role, content, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages WHERE id IN ($1, $2)")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, thread_id, resource_id, role, content, thinking, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages WHERE id IN ($1, $2)")).
 		WithArgs("msg-2", "msg-1").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "thread_id", "resource_id", "role", "content", "name", "tool_calls", "tool_call_id", "created_at", "metadata", "raw"}).
-			AddRow("msg-1", "th-1", "res-1", "user", "one", "", "[]", "", now, "{}", "null").
-			AddRow("msg-2", "th-1", "res-1", "assistant", "two", "", "[]", "", now, "{}", "null"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "thread_id", "resource_id", "role", "content", "thinking", "name", "tool_calls", "tool_call_id", "created_at", "metadata", "raw"}).
+			AddRow("msg-1", "th-1", "res-1", "user", "one", "first thought", "", "[]", "", now, "{}", "null").
+			AddRow("msg-2", "th-1", "res-1", "assistant", "two", "second thought", "", "[]", "", now, "{}", "null"))
 
 	byIDs, err := store.GetMessagesByID(ctx, []string{"msg-2", "msg-1"})
 	if err != nil {
@@ -401,6 +410,9 @@ func TestStore_MessageOperations(t *testing.T) {
 	}
 	if len(byIDs) != 2 || byIDs[0].ID != "msg-2" || byIDs[1].ID != "msg-1" {
 		t.Errorf("expected order [msg-2, msg-1], got [%s, %s]", byIDs[0].ID, byIDs[1].ID)
+	}
+	if byIDs[0].Thinking != "second thought" || byIDs[1].Thinking != "first thought" {
+		t.Errorf("expected thinking [second thought, first thought], got [%q, %q]", byIDs[0].Thinking, byIDs[1].Thinking)
 	}
 
 	// 8. DeleteMessages (empty slice)
@@ -551,6 +563,7 @@ func TestStore_Migrate(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	mock.ExpectExec(regexp.QuoteMeta(postgres.Schema)).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(regexp.QuoteMeta("ALTER TABLE messages ADD COLUMN IF NOT EXISTS thinking TEXT NOT NULL DEFAULT ''")).WillReturnResult(sqlmock.NewResult(0, 0))
 
 	if err := store.Migrate(ctx); err != nil {
 		t.Fatalf("Migrate failed: %v", err)
@@ -748,10 +761,10 @@ func TestStore_BatchChunking(t *testing.T) {
 	}
 
 	// GetMessagesByID chunk 1 (500) and chunk 2 (100)
-	mock.ExpectQuery(`SELECT id, thread_id, resource_id, role, content, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages WHERE id IN \(\$1`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "thread_id", "resource_id", "role", "content", "name", "tool_calls", "tool_call_id", "created_at", "metadata", "raw"}))
-	mock.ExpectQuery(`SELECT id, thread_id, resource_id, role, content, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages WHERE id IN \(\$1`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "thread_id", "resource_id", "role", "content", "name", "tool_calls", "tool_call_id", "created_at", "metadata", "raw"}))
+	mock.ExpectQuery(`SELECT id, thread_id, resource_id, role, content, thinking, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages WHERE id IN \(\$1`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "thread_id", "resource_id", "role", "content", "thinking", "name", "tool_calls", "tool_call_id", "created_at", "metadata", "raw"}))
+	mock.ExpectQuery(`SELECT id, thread_id, resource_id, role, content, thinking, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages WHERE id IN \(\$1`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "thread_id", "resource_id", "role", "content", "thinking", "name", "tool_calls", "tool_call_id", "created_at", "metadata", "raw"}))
 
 	res, err := store.GetMessagesByID(ctx, ids)
 	if err != nil {
@@ -797,6 +810,7 @@ func TestStore_MultipartMessage_Postgres(t *testing.T) {
 			string(llm.RoleUser),
 			sqlmock.AnyArg(),
 			"",
+			"",
 			"[]",
 			"",
 			sqlmock.AnyArg(),
@@ -818,10 +832,10 @@ func TestStore_MultipartMessage_Postgres(t *testing.T) {
 	}
 
 	jsonbContent := `[{"type":"text","text":"Inspect this photo"},{"type":"image","mime_type":"image/png","data":"ChQe"}]`
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, thread_id, resource_id, role, content, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages WHERE thread_id = $1 ORDER BY created_at ASC, id ASC")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, thread_id, resource_id, role, content, thinking, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages WHERE thread_id = $1 ORDER BY created_at ASC, id ASC")).
 		WithArgs("th-multi").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "thread_id", "resource_id", "role", "content", "name", "tool_calls", "tool_call_id", "created_at", "metadata", "raw"}).
-			AddRow("msg-multi", "th-multi", "res-multi", "user", []byte(jsonbContent), "", "[]", "", time.Now(), "{}", "null"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "thread_id", "resource_id", "role", "content", "thinking", "name", "tool_calls", "tool_call_id", "created_at", "metadata", "raw"}).
+			AddRow("msg-multi", "th-multi", "res-multi", "user", []byte(jsonbContent), "", "", "[]", "", time.Now(), "{}", "null"))
 
 	msgs, err := store.ListMessages(ctx, storage.MessageFilter{ThreadID: "th-multi"})
 	if err != nil {

@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS messages (
     resource_id TEXT NOT NULL DEFAULT '',
     role TEXT NOT NULL,
     content TEXT NOT NULL DEFAULT '',
+    thinking TEXT NOT NULL DEFAULT '',
     name TEXT NOT NULL DEFAULT '',
     tool_calls TEXT NOT NULL DEFAULT '',
     tool_call_id TEXT NOT NULL DEFAULT '',
@@ -279,7 +280,26 @@ func (s *Store) Migrate(ctx context.Context) error {
 		return storage.ErrClosed
 	}
 
-	_, err := s.db.ExecContext(ctx, schema)
+	if _, err := s.db.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+
+	return s.ensureThinkingColumn(ctx)
+}
+
+// ensureThinkingColumn adds messages.thinking to databases created before the
+// column existed; CREATE TABLE IF NOT EXISTS cannot evolve old tables.
+func (s *Store) ensureThinkingColumn(ctx context.Context) error {
+	var count int
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'thinking'",
+	).Scan(&count); err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, "ALTER TABLE messages ADD COLUMN thinking TEXT NOT NULL DEFAULT ''")
 	return err
 }
 
@@ -705,13 +725,14 @@ func (s *Store) SaveMessages(ctx context.Context, messages []*storage.Message) (
 	now := time.Now().UTC()
 
 	upsertQuery := `
-		INSERT INTO messages (id, thread_id, resource_id, role, content, name, tool_calls, tool_call_id, created_at, metadata, raw)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (id, thread_id, resource_id, role, content, thinking, name, tool_calls, tool_call_id, created_at, metadata, raw)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			thread_id = excluded.thread_id,
 			resource_id = excluded.resource_id,
 			role = excluded.role,
 			content = excluded.content,
+			thinking = excluded.thinking,
 			name = excluded.name,
 			tool_calls = excluded.tool_calls,
 			tool_call_id = excluded.tool_call_id,
@@ -797,6 +818,7 @@ func (s *Store) SaveMessages(ctx context.Context, messages []*storage.Message) (
 			mc.ResourceID,
 			string(mc.Role),
 			contentStr,
+			mc.Thinking,
 			mc.Name,
 			toolCallsStr,
 			mc.ToolCallID,
@@ -834,6 +856,7 @@ func scanMessage(rows interface {
 		&msg.ResourceID,
 		&roleStr,
 		&contentText,
+		&msg.Thinking,
 		&msg.Name,
 		&toolCallsStr,
 		&msg.ToolCallID,
@@ -888,7 +911,7 @@ func (s *Store) ListMessages(ctx context.Context, filter storage.MessageFilter) 
 		return nil, storage.ErrClosed
 	}
 
-	query := "SELECT id, thread_id, resource_id, role, content, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages"
+	query := "SELECT id, thread_id, resource_id, role, content, thinking, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages"
 	var whereClauses []string
 	var args []any
 
@@ -980,7 +1003,7 @@ func (s *Store) GetMessagesByID(ctx context.Context, ids []string) ([]*storage.M
 		chunk := ids[i:end]
 
 		placeholders := strings.Repeat("?,", len(chunk)-1) + "?"
-		query := fmt.Sprintf("SELECT id, thread_id, resource_id, role, content, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages WHERE id IN (%s)", placeholders)
+		query := fmt.Sprintf("SELECT id, thread_id, resource_id, role, content, thinking, name, tool_calls, tool_call_id, created_at, metadata, raw FROM messages WHERE id IN (%s)", placeholders)
 		args := make([]any, len(chunk))
 		for j, id := range chunk {
 			args[j] = id

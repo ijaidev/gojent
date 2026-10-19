@@ -1007,3 +1007,76 @@ func TestStore_MultipartMessage_SQLite(t *testing.T) {
 		t.Errorf("unexpected content parts in retrieved message: %+v", msgs[0].Content)
 	}
 }
+
+func TestStore_MessageThinkingPersistence(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.New(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.New failed: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	th, err := store.SaveThread(ctx, &storage.Thread{Title: "thinking"})
+	if err != nil {
+		t.Fatalf("SaveThread failed: %v", err)
+	}
+
+	msg := storage.NewMessage(th.ID, llm.RoleAssistant, "final answer")
+	msg.Thinking = "step-by-step reasoning"
+	saved, err := store.SaveMessages(ctx, []*storage.Message{msg})
+	if err != nil {
+		t.Fatalf("SaveMessages failed: %v", err)
+	}
+
+	listed, err := store.ListMessages(ctx, storage.MessageFilter{ThreadID: th.ID})
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(listed) != 1 || listed[0].Thinking != "step-by-step reasoning" {
+		t.Fatalf("expected thinking to round-trip, got %+v", listed)
+	}
+
+	byID, err := store.GetMessagesByID(ctx, []string{saved[0].ID})
+	if err != nil {
+		t.Fatalf("GetMessagesByID failed: %v", err)
+	}
+	if len(byID) != 1 || byID[0].Thinking != "step-by-step reasoning" {
+		t.Errorf("expected thinking from GetMessagesByID, got %+v", byID)
+	}
+}
+
+func TestStore_MigrateAddsThinkingColumn(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.New(":memory:")
+	if err != nil {
+		t.Fatalf("sqlite.New failed: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	// Simulate a database created before the thinking column existed.
+	if _, err := store.DB().ExecContext(ctx, "ALTER TABLE messages DROP COLUMN thinking"); err != nil {
+		t.Fatalf("failed to drop thinking column: %v", err)
+	}
+
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate failed: %v", err)
+	}
+
+	th, err := store.SaveThread(ctx, &storage.Thread{Title: "upgraded"})
+	if err != nil {
+		t.Fatalf("SaveThread failed: %v", err)
+	}
+	msg := storage.NewMessage(th.ID, llm.RoleAssistant, "answer")
+	msg.Thinking = "migrated reasoning"
+	if _, err := store.SaveMessages(ctx, []*storage.Message{msg}); err != nil {
+		t.Fatalf("SaveMessages failed after migration: %v", err)
+	}
+
+	listed, err := store.ListMessages(ctx, storage.MessageFilter{ThreadID: th.ID})
+	if err != nil {
+		t.Fatalf("ListMessages failed: %v", err)
+	}
+	if len(listed) != 1 || listed[0].Thinking != "migrated reasoning" {
+		t.Fatalf("expected thinking after migration, got %+v", listed)
+	}
+}
