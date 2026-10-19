@@ -862,3 +862,20 @@ func TestGoogleProvider_ResponseFormat(t *testing.T) {
 		t.Errorf("expected responseJsonSchema in request, got %v", capturedConfig)
 	}
 }
+
+func TestModel_DoesNotMutateCallerClientConfig(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "env-gemini-key")
+
+	clientCfg := &genai.ClientConfig{}
+	_, err := google.New(context.Background(), google.Config{
+		Model:        "gemini-2.5-flash",
+		ClientConfig: clientCfg,
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	if clientCfg.APIKey != "" {
+		t.Errorf("New mutated the caller's ClientConfig: APIKey = %q, want empty", clientCfg.APIKey)
+	}
+}

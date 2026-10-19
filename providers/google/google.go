@@ -48,13 +48,17 @@ func AvailableThinkingLevels() []ThinkingLevel {
 type Config struct {
 	// Model is the Gemini model identifier (e.g. "gemini-2.5-flash", "gemini-1.5-pro"). Required.
 	Model string
-	// APIKey is the Google Gen AI or Gemini API key.
-	// If empty, the client resolves it from the GEMINI_API_KEY or GOOGLE_API_KEY environment variables.
+	// APIKey is the Google Gen AI or Gemini API key. It takes precedence over
+	// ClientConfig.APIKey and the GEMINI_API_KEY / GOOGLE_API_KEY environment
+	// variables. When all are empty, the client resolves the key from the
+	// environment itself.
 	APIKey string
 	// Client is an optional pre-configured genai.Client instance.
 	// When provided, APIKey and ClientConfig are ignored.
 	Client *genai.Client
 	// ClientConfig allows custom client options (e.g., custom HTTP options or Vertex AI backend).
+	// It is copied before use, and its APIKey takes precedence over the
+	// GEMINI_API_KEY / GOOGLE_API_KEY environment variables.
 	ClientConfig *genai.ClientConfig
 	// Thinking optionally configures provider-level default thinking settings.
 	Thinking *llm.ThinkingConfig
@@ -81,24 +85,17 @@ func New(ctx context.Context, cfg Config) (*Model, error) {
 
 	client := cfg.Client
 	if client == nil {
-		clientCfg := cfg.ClientConfig
-		if clientCfg == nil {
-			clientCfg = &genai.ClientConfig{}
+		clientCfg := genai.ClientConfig{}
+		if cfg.ClientConfig != nil {
+			// Copy the caller's config: provider defaults must not mutate it.
+			clientCfg = *cfg.ClientConfig
 		}
-
-		apiKey := cfg.APIKey
-		if apiKey == "" {
-			apiKey = os.Getenv("GEMINI_API_KEY")
-			if apiKey == "" {
-				apiKey = os.Getenv("GOOGLE_API_KEY")
-			}
-		}
-		if apiKey != "" {
+		if apiKey := resolveAPIKey(cfg); apiKey != "" {
 			clientCfg.APIKey = apiKey
 		}
 
 		var err error
-		client, err = genai.NewClient(ctx, clientCfg)
+		client, err = genai.NewClient(ctx, &clientCfg)
 		if err != nil {
 			return nil, err
 		}
@@ -123,6 +120,22 @@ func New(ctx context.Context, cfg Config) (*Model, error) {
 // NewModel is an alias for New.
 func NewModel(ctx context.Context, cfg Config) (*Model, error) {
 	return New(ctx, cfg)
+}
+
+// resolveAPIKey returns the API key used for a new client. Explicit
+// configuration always beats the environment: the provider's APIKey field
+// first, then ClientConfig.APIKey, then GEMINI_API_KEY, then GOOGLE_API_KEY.
+func resolveAPIKey(cfg Config) string {
+	if cfg.APIKey != "" {
+		return cfg.APIKey
+	}
+	if cfg.ClientConfig != nil && cfg.ClientConfig.APIKey != "" {
+		return cfg.ClientConfig.APIKey
+	}
+	if key := os.Getenv("GEMINI_API_KEY"); key != "" {
+		return key
+	}
+	return os.Getenv("GOOGLE_API_KEY")
 }
 
 // ModelID returns the identifier of the configured Gemini model.
