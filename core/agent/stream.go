@@ -9,8 +9,6 @@ import (
 	"sync"
 
 	"github.com/ijaidev/gojent/core/llm"
-	"github.com/ijaidev/gojent/core/storage"
-	"github.com/ijaidev/gojent/core/tool"
 )
 
 var (
@@ -20,21 +18,55 @@ var (
 	ErrStreamClosed = errors.New("agent: stream is closed")
 )
 
+// Stream runs the agent with a string prompt and returns an active StreamResponse.
+func (a *Agent) Stream(ctx context.Context, prompt string, opts ...GenerateOption) (*StreamResponse, error) {
+	var userMsg []llm.Message
+	if prompt != "" {
+		userMsg = []llm.Message{llm.UserMessage(prompt)}
+	}
+	return a.StreamMessages(ctx, userMsg, opts...)
+}
+
+// StreamParts initiates streaming with multimodal content parts directly.
+func (a *Agent) StreamParts(ctx context.Context, parts []llm.Part, opts ...GenerateOption) (*StreamResponse, error) {
+	var userMsg []llm.Message
+	if len(parts) > 0 {
+		userMsg = []llm.Message{llm.UserMessageWithParts(parts...)}
+	}
+	return a.StreamMessages(ctx, userMsg, opts...)
+}
+
+// StreamMessages executes the agent with a slice of chat messages and returns an active StreamResponse.
+func (a *Agent) StreamMessages(ctx context.Context, messages []llm.Message, opts ...GenerateOption) (*StreamResponse, error) {
+	r, err := a.newRun(ctx, messages, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	req := r.request(r.messages)
+	if err := r.hooks.beforeModel(ctx, 0, &req); err != nil {
+		return nil, err
+	}
+
+	rawStream, err := r.model.Stream(ctx, req)
+	if err != nil {
+		r.hooks.afterModel(ctx, 0, &req, nil, err)
+		return nil, err
+	}
+
+	return newStreamResponse(ctx, r, req, rawStream), nil
+}
+
 // StreamResponse manages the streaming lifecycle of an agent response,
 // executing tools across ReAct iterations and accumulating tokens, deltas,
 // and messages in real time.
 type StreamResponse struct {
 	mu              sync.Mutex
 	ctx             context.Context
-	agent           *Agent
-	genCfg          *GenerateConfig
+	run             *run
 	stream          llm.Stream
 	messages        []llm.Message
-	activeTools     []tool.Tool
-	toolDefs        []llm.ToolDefinition
 	req             llm.GenerateRequest
-	hooks           Hooks
-	maxSteps        int
 	step            int
 	stepAccumulated strings.Builder
 	stepThinking    strings.Builder
@@ -50,29 +82,13 @@ type StreamResponse struct {
 }
 
 // newStreamResponse initializes a new StreamResponse managing multi-step ReAct streaming.
-func newStreamResponse(
-	ctx context.Context,
-	agent *Agent,
-	genCfg *GenerateConfig,
-	req llm.GenerateRequest,
-	stream llm.Stream,
-	messages []llm.Message,
-	activeTools []tool.Tool,
-	toolDefs []llm.ToolDefinition,
-	maxSteps int,
-	hooks Hooks,
-) *StreamResponse {
+func newStreamResponse(ctx context.Context, r *run, req llm.GenerateRequest, stream llm.Stream) *StreamResponse {
 	return &StreamResponse{
 		ctx:          ctx,
-		agent:        agent,
-		genCfg:       genCfg,
+		run:          r,
 		stream:       stream,
-		messages:     messages,
-		activeTools:  activeTools,
-		toolDefs:     toolDefs,
+		messages:     r.messages,
 		req:          req,
-		hooks:        hooks,
-		maxSteps:     maxSteps,
 		finishReason: llm.FinishReasonStop,
 	}
 }
@@ -106,7 +122,7 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			s.usage.ReasoningTokens += s.stepUsage.ReasoningTokens
 
 			completedStep := s.step
-			s.hooks.afterModel(s.ctx, completedStep, &s.req, &llm.GenerateResponse{
+			s.run.hooks.afterModel(s.ctx, completedStep, &s.req, &llm.GenerateResponse{
 				Text:         s.stepAccumulated.String(),
 				Thinking:     s.stepThinking.String(),
 				ToolCalls:    s.stepToolCalls,
@@ -125,15 +141,7 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 				}
 				s.messages = append(s.messages, finalMsg)
 				s.completed = true
-				if s.genCfg != nil && s.genCfg.Storage != nil && s.genCfg.ThreadID != "" {
-					stored := storage.NewMessageFromLLM(s.genCfg.ThreadID, finalMsg)
-					if s.genCfg.ResourceID != "" {
-						stored.ResourceID = s.genCfg.ResourceID
-					}
-					if _, err := s.genCfg.Storage.SaveMessages(s.ctx, []*storage.Message{stored}); err != nil {
-						s.hooks.storageError(s.ctx, opSaveMessages, err)
-					}
-				}
+				s.run.saveMessages(s.ctx, finalMsg)
 				return nil, io.EOF
 			}
 
@@ -147,21 +155,13 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			}
 			s.messages = append(s.messages, assistantMsg)
 			s.allToolCalls = append(s.allToolCalls, s.stepToolCalls...)
-			if s.genCfg != nil && s.genCfg.Storage != nil && s.genCfg.ThreadID != "" {
-				stored := storage.NewMessageFromLLM(s.genCfg.ThreadID, assistantMsg)
-				if s.genCfg.ResourceID != "" {
-					stored.ResourceID = s.genCfg.ResourceID
-				}
-				if _, err := s.genCfg.Storage.SaveMessages(s.ctx, []*storage.Message{stored}); err != nil {
-					s.hooks.storageError(s.ctx, opSaveMessages, err)
-				}
-			}
+			s.run.saveMessages(s.ctx, assistantMsg)
 
 			nextStep := completedStep + 1
 
 			// Execute all requested tool calls
 			for _, call := range s.stepToolCalls {
-				_, toolParts, _ := s.agent.executeToolCall(s.ctx, completedStep, call, s.activeTools, s.hooks)
+				_, toolParts, _ := s.run.agent.executeToolCall(s.ctx, completedStep, call, s.run.tools, s.run.hooks)
 				toolMsg := llm.Message{
 					Role:       llm.RoleTool,
 					Name:       call.Name,
@@ -169,15 +169,7 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 					Content:    toolParts,
 				}
 				s.messages = append(s.messages, toolMsg)
-				if s.genCfg != nil && s.genCfg.Storage != nil && s.genCfg.ThreadID != "" {
-					stored := storage.NewMessageFromLLM(s.genCfg.ThreadID, toolMsg)
-					if s.genCfg.ResourceID != "" {
-						stored.ResourceID = s.genCfg.ResourceID
-					}
-					if _, err := s.genCfg.Storage.SaveMessages(s.ctx, []*storage.Message{stored}); err != nil {
-						s.hooks.storageError(s.ctx, opSaveMessages, err)
-					}
-				}
+				s.run.saveMessages(s.ctx, toolMsg)
 			}
 
 			s.step = nextStep
@@ -186,7 +178,7 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			// were still executed so the transcript never ends with an
 			// unanswered tool_calls message, which strict providers reject on
 			// the next turn.
-			if nextStep >= s.maxSteps {
+			if nextStep >= s.run.maxSteps {
 				s.finishReason = llm.FinishReasonLength
 				s.completed = true
 				return nil, io.EOF
@@ -199,30 +191,16 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			s.stepUsage = llm.Usage{}
 			s.stepRaw = nil
 
-			effectiveThinking := s.genCfg.Thinking
-			if effectiveThinking == nil {
-				effectiveThinking = s.agent.thinking
-			}
-
-			// Prepare request for next ReAct iteration
-			req := llm.GenerateRequest{
-				Messages:       s.messages,
-				Tools:          s.toolDefs,
-				Thinking:       effectiveThinking,
-				ResponseFormat: s.genCfg.ResponseFormat,
-				Temperature:    s.genCfg.Temperature,
-				MaxTokens:      s.genCfg.MaxTokens,
-				TopP:           s.genCfg.TopP,
-			}
-
-			if err := s.hooks.beforeModel(s.ctx, s.step, &req); err != nil {
+			// Prepare request for the next ReAct iteration
+			req := s.run.request(s.messages)
+			if err := s.run.hooks.beforeModel(s.ctx, s.step, &req); err != nil {
 				s.err = err
 				return nil, err
 			}
 
-			nextStream, streamErr := s.genCfg.Model.Stream(s.ctx, req)
+			nextStream, streamErr := s.run.model.Stream(s.ctx, req)
 			if streamErr != nil {
-				s.hooks.afterModel(s.ctx, s.step, &req, nil, streamErr)
+				s.run.hooks.afterModel(s.ctx, s.step, &req, nil, streamErr)
 				s.err = streamErr
 				return nil, streamErr
 			}
@@ -232,7 +210,7 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 		}
 
 		if err != nil {
-			s.hooks.afterModel(s.ctx, s.step, &s.req, &llm.GenerateResponse{
+			s.run.hooks.afterModel(s.ctx, s.step, &s.req, &llm.GenerateResponse{
 				Text:      s.stepAccumulated.String(),
 				Thinking:  s.stepThinking.String(),
 				ToolCalls: s.stepToolCalls,
