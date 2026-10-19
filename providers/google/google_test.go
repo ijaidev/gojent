@@ -965,3 +965,95 @@ func TestModel_Stream_BlockedPrompt(t *testing.T) {
 		t.Fatalf("expected ErrResponseBlocked from stream, got %v", err)
 	}
 }
+
+func TestModel_Stream_RawAccumulatesParts(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		chunks := []map[string]any{
+			{
+				"candidates": []map[string]any{
+					{
+						"content": map[string]any{
+							"role":  "model",
+							"parts": []map[string]any{{"text": "Hello "}},
+						},
+					},
+				},
+			},
+			{
+				"candidates": []map[string]any{
+					{
+						"content": map[string]any{
+							"role": "model",
+							"parts": []map[string]any{
+								{"text": "world"},
+								{"functionCall": map[string]any{"name": "greet", "args": map[string]any{}}},
+							},
+						},
+						"finishReason": "STOP",
+					},
+				},
+			},
+		}
+		for _, c := range chunks {
+			b, _ := json.Marshal(c)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+			flusher.Flush()
+		}
+	}))
+	defer ts.Close()
+
+	m, err := google.New(context.Background(), google.Config{
+		Model:  "gemini-2.5-flash",
+		APIKey: "test-key",
+		ClientConfig: &genai.ClientConfig{
+			HTTPOptions: genai.HTTPOptions{
+				BaseURL: ts.URL,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create model: %v", err)
+	}
+
+	stream, err := m.Stream(context.Background(), llm.GenerateRequest{
+		Messages: []llm.Message{llm.UserMessage("say hello")},
+	})
+	if err != nil {
+		t.Fatalf("Stream failed: %v", err)
+	}
+	defer func() {
+		_ = stream.Close()
+	}()
+
+	first, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("first Recv failed: %v", err)
+	}
+	firstRaw, ok := first.Raw.(*genai.Content)
+	if !ok || firstRaw == nil || len(firstRaw.Parts) != 1 {
+		t.Fatalf("expected first chunk Raw to contain 1 part, got %+v", first.Raw)
+	}
+
+	second, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("second Recv failed: %v", err)
+	}
+	secondRaw, ok := second.Raw.(*genai.Content)
+	if !ok || secondRaw == nil || len(secondRaw.Parts) != 3 {
+		t.Fatalf("expected second chunk Raw to accumulate 3 parts, got %+v", second.Raw)
+	}
+
+	// Chunks emitted earlier must stay a snapshot of the parts received so
+	// far, even though later chunks share the underlying storage.
+	if got := len(firstRaw.Parts); got != 1 {
+		t.Errorf("first chunk Raw mutated by later chunks: got %d parts, want 1", got)
+	}
+}

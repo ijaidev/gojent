@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/ijaidev/gojent/core/llm"
 	"google.golang.org/genai"
@@ -112,8 +113,8 @@ func (m *Model) Stream(ctx context.Context, req llm.GenerateRequest) (llm.Stream
 				return
 			}
 
-			var deltaText string
-			var deltaThinking string
+			var deltaText strings.Builder
+			var deltaThinking strings.Builder
 			var finishReason llm.FinishReason
 			var usage *llm.Usage
 
@@ -125,9 +126,9 @@ func (m *Model) Stream(ctx context.Context, req llm.GenerateRequest) (llm.Stream
 							accumulatedParts = append(accumulatedParts, p)
 						}
 						if p.Thought {
-							deltaThinking += p.Text
+							deltaThinking.WriteString(p.Text)
 						} else if p.Text != "" {
-							deltaText += p.Text
+							deltaText.WriteString(p.Text)
 						}
 					}
 				}
@@ -164,15 +165,19 @@ func (m *Model) Stream(ctx context.Context, req llm.GenerateRequest) (llm.Stream
 
 			var rawContent *genai.Content
 			if len(accumulatedParts) > 0 {
+				// Share the accumulated parts with the emitted chunk instead of
+				// copying them on every chunk: parts are only ever appended, so
+				// previously emitted chunks keep their snapshot (old backing
+				// array) and never observe later parts.
 				rawContent = &genai.Content{
 					Role:  genai.RoleModel,
-					Parts: append([]*genai.Part(nil), accumulatedParts...),
+					Parts: accumulatedParts,
 				}
 			}
 
 			chunk := &llm.StreamChunk{
-				Delta:         deltaText,
-				ThinkingDelta: deltaThinking,
+				Delta:         deltaText.String(),
+				ThinkingDelta: deltaThinking.String(),
 				ToolCalls:     toolCalls,
 				FinishReason:  finishReason,
 				Usage:         usage,
