@@ -35,6 +35,15 @@ func genID(prefix string) string {
 	return fmt.Sprintf("%s_%s", prefix, hex.EncodeToString(b))
 }
 
+// normalizeTime truncates t to microsecond precision, the resolution of
+// PostgreSQL's timestamptz. Timestamps are normalized before they are written
+// so the values returned to callers always equal the values the database
+// persists, regardless of whether the timestamp came from time.Now() or from
+// the caller.
+func normalizeTime(t time.Time) time.Time {
+	return t.Truncate(time.Microsecond)
+}
+
 type timeScanner struct {
 	dest *time.Time
 }

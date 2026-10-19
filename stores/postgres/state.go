@@ -60,7 +60,7 @@ func (s *Store) SetThreadState(ctx context.Context, threadID, stateType string, 
 			value = EXCLUDED.value,
 			updated_at = EXCLUDED.updated_at
 	`
-	now := time.Now().UTC()
+	now := normalizeTime(time.Now().UTC())
 	_, err = s.db.ExecContext(ctx, query, threadID, stateType, string(b), now)
 	if err != nil {
 		return fmt.Errorf("postgres: failed to set thread state: %w", err)

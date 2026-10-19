@@ -35,7 +35,7 @@ func TestStore_ThreadLifecycle(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 
 	// 1. SaveThread (new thread with generated ID)
 	mock.ExpectExec("INSERT INTO threads").
@@ -189,7 +189,7 @@ func TestStore_ListThreads(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 
 	// 1. ListThreads without filter
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT id, title, resource_id, created_at, updated_at, metadata FROM threads ORDER BY created_at ASC, id ASC")).
@@ -250,7 +250,7 @@ func TestStore_MessageOperations(t *testing.T) {
 	store, mock := newMockStore(t)
 	defer func() { _ = store.Close() }()
 
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Microsecond)
 
 	// 1. SaveMessages (empty slice)
 	res, err := store.SaveMessages(ctx, []*storage.Message{})

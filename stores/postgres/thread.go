@@ -46,6 +46,8 @@ func (s *Store) SaveThread(ctx context.Context, thread *storage.Thread) (*storag
 		}
 	}
 	th.UpdatedAt = now
+	th.CreatedAt = normalizeTime(th.CreatedAt)
+	th.UpdatedAt = normalizeTime(th.UpdatedAt)
 
 	metadataBytes := []byte("{}")
 	if th.Metadata != nil {
@@ -160,7 +162,7 @@ func (s *Store) UpdateThread(ctx context.Context, id string, input storage.Updat
 		}
 		maps.Copy(th.Metadata, input.Metadata)
 	}
-	th.UpdatedAt = time.Now().UTC()
+	th.UpdatedAt = normalizeTime(time.Now().UTC())
 
 	metadataBytes := []byte("{}")
 	if th.Metadata != nil {

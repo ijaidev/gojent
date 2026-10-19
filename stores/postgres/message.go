@@ -79,6 +79,7 @@ func (s *Store) SaveMessages(ctx context.Context, messages []*storage.Message) (
 				mc.CreatedAt = now
 			}
 		}
+		mc.CreatedAt = normalizeTime(mc.CreatedAt)
 
 		if mc.ResourceID == "" {
 			if resID, ok := parentResIDs[mc.ThreadID]; ok {
