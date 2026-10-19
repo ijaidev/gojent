@@ -19,6 +19,11 @@ type Config struct {
 	BaseDir string
 }
 
+// maxScanLineBytes caps a single line read by read_file. bufio.Scanner's 64KB
+// default rejects legitimate files with long lines (minified JSON, logs), so
+// raise the limit while keeping a bound on memory use.
+const maxScanLineBytes = 10 * 1024 * 1024
+
 func resolvePath(baseDir, path string) (string, error) {
 	cleanPath := filepath.Clean(path)
 	if baseDir == "" {
@@ -28,11 +33,46 @@ func resolvePath(baseDir, path string) (string, error) {
 	if !filepath.IsAbs(cleanPath) {
 		cleanPath = filepath.Join(cleanBase, cleanPath)
 	}
-	rel, err := filepath.Rel(cleanBase, cleanPath)
-	if err != nil || strings.HasPrefix(rel, "..") {
+
+	// Compare fully resolved paths so a symlink inside the base cannot smuggle
+	// reads and writes outside it. Components that do not exist yet are
+	// allowed because write_file creates them.
+	resolvedBase, err := evalSymlinksAllowMissing(cleanBase)
+	if err != nil {
+		return "", fmt.Errorf("fs: cannot resolve base directory %q: %w", baseDir, err)
+	}
+	resolvedPath, err := evalSymlinksAllowMissing(cleanPath)
+	if err != nil {
+		return "", fmt.Errorf("fs: cannot resolve path %q: %w", path, err)
+	}
+
+	rel, err := filepath.Rel(resolvedBase, resolvedPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("fs: path %q escapes base directory %q", path, baseDir)
 	}
 	return cleanPath, nil
+}
+
+// evalSymlinksAllowMissing resolves symlinks for the deepest existing ancestor
+// of path and re-attaches the components that do not exist yet.
+func evalSymlinksAllowMissing(path string) (string, error) {
+	current := path
+	remainder := ""
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			return filepath.Join(resolved, remainder), nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+		remainder = filepath.Join(filepath.Base(current), remainder)
+		current = parent
+	}
 }
 
 // ReadFileInput defines the parameters for reading a file.
@@ -74,6 +114,7 @@ func NewReadFileTool(cfg ...Config) (tool.Tool, error) {
 			}()
 
 			scanner := bufio.NewScanner(file)
+			scanner.Buffer(make([]byte, 64*1024), maxScanLineBytes)
 			var lines []string
 			currentLine := 0
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ijaidev/gojent/tools/fs"
@@ -127,5 +128,57 @@ func TestFSTools_DirectoryEscapePrevention(t *testing.T) {
 	_, err := readTool.Execute(ctx, escapeInput)
 	if err == nil {
 		t.Error("expected error for escaping base directory, got nil")
+	}
+}
+
+func TestFSTools_SymlinkEscapePrevention(t *testing.T) {
+	baseDir := t.TempDir()
+	outsideDir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(outsideDir, "secret.txt"), []byte("secret"), 0o644); err != nil {
+		t.Fatalf("failed to write outside file: %v", err)
+	}
+
+	if err := os.Symlink(outsideDir, filepath.Join(baseDir, "link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	readTool, err := fs.NewReadFileTool(fs.Config{BaseDir: baseDir})
+	if err != nil {
+		t.Fatalf("failed to create read_file tool: %v", err)
+	}
+
+	input, _ := json.Marshal(fs.ReadFileInput{Path: "link/secret.txt"})
+	if _, err := readTool.Execute(context.Background(), input); err == nil {
+		t.Error("expected error reading through a symlink outside the base directory, got nil")
+	}
+}
+
+func TestFSTools_ReadFileLongLines(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	longLine := strings.Repeat("x", 128*1024)
+	path := filepath.Join(tmpDir, "long.txt")
+	if err := os.WriteFile(path, []byte(longLine+"\nshort\n"), 0o644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	readTool, err := fs.NewReadFileTool(fs.Config{BaseDir: tmpDir})
+	if err != nil {
+		t.Fatalf("failed to create read_file tool: %v", err)
+	}
+
+	input, _ := json.Marshal(fs.ReadFileInput{Path: "long.txt"})
+	resAny, err := readTool.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("read_file failed on a long line: %v", err)
+	}
+
+	res := resAny.(fs.ReadFileOutput)
+	if res.TotalLines != 2 {
+		t.Errorf("expected 2 lines, got %d", res.TotalLines)
+	}
+	if res.Content != longLine+"\nshort" {
+		t.Errorf("unexpected content; got %d bytes", len(res.Content))
 	}
 }
