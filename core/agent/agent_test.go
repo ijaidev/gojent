@@ -913,3 +913,41 @@ func TestAgent_StreamThinking(t *testing.T) {
 		t.Errorf("expected reasoning tokens 20, got %d", res.Usage.ReasoningTokens)
 	}
 }
+
+func TestAgent_ToolDefinitionsAreDeterministicallyOrdered(t *testing.T) {
+	var names []string
+	mock := llm.NewMockLLM().ApplyOptions(
+		llm.WithCustomHandler(func(_ context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error) {
+			names = names[:0]
+			for _, def := range req.Tools {
+				names = append(names, def.Name)
+			}
+			return &llm.GenerateResponse{Text: "ok", FinishReason: llm.FinishReasonStop}, nil
+		}),
+	)
+
+	// Registered deliberately out of order; map iteration randomizes further.
+	ids := []string{"zulu", "alpha", "mike", "delta", "echo", "bravo", "yankee", "charlie"}
+	regs := make([]tool.Tool, 0, len(ids))
+	for _, id := range ids {
+		regs = append(regs, tool.MustNew(tool.Config[string, string]{
+			ID:          id,
+			Description: "test tool",
+			Execute:     func(_ context.Context, in string) (string, error) { return in, nil },
+		}))
+	}
+
+	a, err := agent.New(agent.Config{ID: "ordering-agent", Model: mock, Tools: regs})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	if _, err := a.Generate(context.Background(), "hi"); err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	const want = "alpha,bravo,charlie,delta,echo,mike,yankee,zulu"
+	if got := strings.Join(names, ","); got != want {
+		t.Errorf("expected deterministically ordered tools\n got: %s\nwant: %s", got, want)
+	}
+}

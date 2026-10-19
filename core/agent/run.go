@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/storage"
@@ -211,5 +213,11 @@ func (a *Agent) collectTools(extraTools []tool.Tool) []tool.Tool {
 	for _, t := range merged {
 		result = append(result, t)
 	}
+	// Sort by ID so tool definitions are stable across runs. Map iteration
+	// order would otherwise leak into the request and vary between runs,
+	// breaking prompt caching and reproducible transcripts.
+	slices.SortFunc(result, func(a, b tool.Tool) int {
+		return cmp.Compare(a.ID(), b.ID())
+	})
 	return result
 }
