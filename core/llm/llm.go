@@ -25,6 +25,51 @@ var (
 	ErrInvalidPart = errors.New("llm: invalid part")
 )
 
+// ThinkingLevel represents the normalized reasoning effort levels across providers.
+type ThinkingLevel string
+
+const (
+	// ThinkingLevelUnspecified indicates no preference; provider default is used.
+	ThinkingLevelUnspecified ThinkingLevel = ""
+	// ThinkingLevelNone explicitly disables internal model reasoning/thinking.
+	ThinkingLevelNone ThinkingLevel = "none"
+	// ThinkingLevelMinimal requests minimal reasoning steps for lower latency and cost.
+	ThinkingLevelMinimal ThinkingLevel = "minimal"
+	// ThinkingLevelLow requests low reasoning depth.
+	ThinkingLevelLow ThinkingLevel = "low"
+	// ThinkingLevelMedium requests balanced reasoning depth (typical default on reasoning models).
+	ThinkingLevelMedium ThinkingLevel = "medium"
+	// ThinkingLevelHigh requests maximum reasoning depth for complex math, coding, and multi-step tasks.
+	ThinkingLevelHigh ThinkingLevel = "high"
+)
+
+// ThinkingConfig defines parameters for model reasoning/thinking.
+type ThinkingConfig struct {
+	// Level specifies the qualitative reasoning effort (e.g. "minimal", "low", "medium", "high").
+	Level ThinkingLevel `json:"level,omitempty"`
+	// BudgetTokens optionally specifies an explicit token budget limit (0 to disable, or a positive token count).
+	BudgetTokens *int `json:"budget_tokens,omitempty"`
+	// IncludeThoughts indicates whether thoughts should be returned in responses if supported.
+	IncludeThoughts *bool `json:"include_thoughts,omitempty"`
+}
+
+// Clone returns a deep copy of ThinkingConfig.
+func (c *ThinkingConfig) Clone() *ThinkingConfig {
+	if c == nil {
+		return nil
+	}
+	cp := *c
+	if c.BudgetTokens != nil {
+		b := *c.BudgetTokens
+		cp.BudgetTokens = &b
+	}
+	if c.IncludeThoughts != nil {
+		it := *c.IncludeThoughts
+		cp.IncludeThoughts = &it
+	}
+	return &cp
+}
+
 // PartType defines the category of content within a message part.
 type PartType string
 
@@ -230,6 +275,7 @@ type ToolDefinition struct {
 type Message struct {
 	Role       Role       `json:"role"`
 	Content    []Part     `json:"content"`
+	Thinking   string     `json:"thinking,omitempty"`
 	Name       string     `json:"name,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
@@ -251,11 +297,18 @@ func (m Message) Text() string {
 	return sb.String()
 }
 
+// WithThinking returns a copy of the message with the given reasoning/thinking trace.
+func (m Message) WithThinking(thinking string) Message {
+	m.Thinking = thinking
+	return m
+}
+
 // UnmarshalJSON customizes JSON unmarshaling to accept either a string or an array of parts for Content.
 func (m *Message) UnmarshalJSON(data []byte) error {
 	type rawMessage struct {
 		Role       Role            `json:"role"`
 		Content    json.RawMessage `json:"content"`
+		Thinking   string          `json:"thinking,omitempty"`
 		Name       string          `json:"name,omitempty"`
 		ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
 		ToolCallID string          `json:"tool_call_id,omitempty"`
@@ -266,6 +319,7 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	m.Role = raw.Role
+	m.Thinking = raw.Thinking
 	m.Name = raw.Name
 	m.ToolCalls = raw.ToolCalls
 	m.ToolCallID = raw.ToolCallID
@@ -367,12 +421,14 @@ type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
 }
 
 // GenerateRequest contains the input parameters for a model generation.
 type GenerateRequest struct {
 	Messages    []Message        `json:"messages"`
 	Tools       []ToolDefinition `json:"tools,omitempty"`
+	Thinking    *ThinkingConfig  `json:"thinking,omitempty"`
 	Temperature *float64         `json:"temperature,omitempty"`
 	MaxTokens   *int             `json:"max_tokens,omitempty"`
 	TopP        *float64         `json:"top_p,omitempty"`
@@ -382,6 +438,7 @@ type GenerateRequest struct {
 // GenerateResponse represents the output from a model generation.
 type GenerateResponse struct {
 	Text         string       `json:"text"`
+	Thinking     string       `json:"thinking,omitempty"`
 	ToolCalls    []ToolCall   `json:"tool_calls,omitempty"`
 	FinishReason FinishReason `json:"finish_reason"`
 	Usage        Usage        `json:"usage"`
@@ -396,7 +453,7 @@ type LLM interface {
 	Generate(ctx context.Context, req GenerateRequest) (*GenerateResponse, error)
 	// Stream generates a streaming response for the given request.
 	Stream(ctx context.Context, req GenerateRequest) (Stream, error)
-	// ModelID returns the identifier of the model (e.g. \"gpt-4o\", \"claude-3-5-sonnet\", \"mock-llm\").
+	// ModelID returns the identifier of the model (e.g. "gpt-4o", "claude-3-5-sonnet", "mock-llm").
 	ModelID() string
 }
 

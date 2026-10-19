@@ -10,34 +10,7 @@ import (
 	"github.com/ijaidev/gojent/core/llm"
 )
 
-func TestMockLLM_SingleResponse(t *testing.T) {
-	mock := llm.NewMockLLM("test response")
-	if mock.ModelID() != "mock-llm" {
-		t.Errorf("expected modelID mock-llm, got %s", mock.ModelID())
-	}
-
-	req := llm.GenerateRequest{
-		Messages: []llm.Message{
-			llm.UserMessage("hi"),
-		},
-	}
-
-	res, err := mock.Generate(context.Background(), req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if res.Text != "test response" {
-		t.Errorf("expected 'test response', got '%s'", res.Text)
-	}
-	if mock.CallCount() != 1 {
-		t.Errorf("expected 1 call, got %d", mock.CallCount())
-	}
-	if mock.LastCall() == nil || len(mock.LastCall().Messages) != 1 {
-		t.Errorf("expected last call to have 1 message")
-	}
-}
-
-func TestMockLLM_SequentialResponses(t *testing.T) {
+func TestMockLLM_BasicResponses(t *testing.T) {
 	mock := llm.NewMockLLM("first", "second")
 
 	res1, _ := mock.Generate(context.Background(), llm.GenerateRequest{})
@@ -173,14 +146,17 @@ func TestPart_Validate(t *testing.T) {
 }
 
 func TestMessage_JSONUnmarshal(t *testing.T) {
-	// String content JSON
-	jsonStr := `{"role":"user","content":"hello world"}`
+	// String content JSON with thinking
+	jsonStr := `{"role":"user","content":"hello world","thinking":"internal CoT"}`
 	var msg1 llm.Message
 	if err := json.Unmarshal([]byte(jsonStr), &msg1); err != nil {
 		t.Fatalf("failed to unmarshal string content JSON: %v", err)
 	}
 	if msg1.Text() != "hello world" || len(msg1.Content) != 1 {
-		t.Errorf("unexpected msg1: %+v", msg1)
+		t.Errorf("unexpected msg1 content: %+v", msg1)
+	}
+	if msg1.Thinking != "internal CoT" {
+		t.Errorf("expected thinking 'internal CoT', got %q", msg1.Thinking)
 	}
 
 	// Array content JSON
@@ -191,6 +167,34 @@ func TestMessage_JSONUnmarshal(t *testing.T) {
 	}
 	if len(msg2.Content) != 2 || msg2.Content[0].Text != "part 1" || msg2.Content[1].URL != "https://example.com/img.png" {
 		t.Errorf("unexpected msg2: %+v", msg2)
+	}
+}
+
+func TestThinkingConfig_CloneAndMessage(t *testing.T) {
+	budget := 4096
+	includeThoughts := true
+	cfg := llm.ThinkingConfig{
+		Level:           llm.ThinkingLevelMedium,
+		BudgetTokens:    &budget,
+		IncludeThoughts: &includeThoughts,
+	}
+
+	cloned := cfg.Clone()
+	if cloned.Level != llm.ThinkingLevelMedium || *cloned.BudgetTokens != 4096 || *cloned.IncludeThoughts != true {
+		t.Fatalf("unexpected cloned config: %+v", cloned)
+	}
+
+	// Mutating original should not affect clone
+	*cfg.BudgetTokens = 2048
+	if *cloned.BudgetTokens != 4096 {
+		t.Errorf("expected clone to be independent, got budget %d", *cloned.BudgetTokens)
+	}
+
+	msg := llm.UserMessage("Analyze this").
+		WithThinking("Pre-thought")
+
+	if msg.Thinking != "Pre-thought" {
+		t.Errorf("expected thinking 'Pre-thought', got %q", msg.Thinking)
 	}
 }
 

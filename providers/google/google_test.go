@@ -575,3 +575,205 @@ func TestGoogleProvider_Multipart_ErrorValidations(t *testing.T) {
 		t.Errorf("expected ErrUnsupportedPartType for non-text system part, got: %v", err)
 	}
 }
+
+func TestGoogleProvider_AvailableThinkingLevels(t *testing.T) {
+	levels := google.AvailableThinkingLevels()
+	if len(levels) != 4 {
+		t.Fatalf("expected 4 thinking levels, got %d", len(levels))
+	}
+	expected := []google.ThinkingLevel{
+		google.ThinkingLevelMinimal,
+		google.ThinkingLevelLow,
+		google.ThinkingLevelMedium,
+		google.ThinkingLevelHigh,
+	}
+	for i, l := range levels {
+		if l != expected[i] {
+			t.Errorf("level[%d]: expected %s, got %s", i, expected[i], l)
+		}
+	}
+}
+
+func TestGoogleProvider_ThinkingConfigurationAndOverride(t *testing.T) {
+	var capturedConfig map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var reqMap map[string]any
+		_ = json.Unmarshal(body, &reqMap)
+		if genConfig, ok := reqMap["generationConfig"].(map[string]any); ok {
+			capturedConfig = genConfig
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{
+			"candidates": []map[string]any{
+				{
+					"content": map[string]any{
+						"role": "model",
+						"parts": []map[string]any{
+							{"text": "Analyzing problem logically...", "thought": true},
+							{"text": "The solution is 42."},
+						},
+					},
+					"finishReason": "STOP",
+				},
+			},
+			"usageMetadata": map[string]any{
+				"promptTokenCount":     12,
+				"candidatesTokenCount": 20,
+				"totalTokenCount":      32,
+				"thoughtsTokenCount":   15,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	ctx := context.Background()
+
+	// 1. Provider-level default thinking
+	m, err := google.New(ctx, google.Config{
+		Model:         "gemini-2.5-flash",
+		APIKey:        "test-key",
+		ThinkingLevel: google.ThinkingLevelHigh,
+		ClientConfig: &genai.ClientConfig{
+			HTTPOptions: genai.HTTPOptions{
+				BaseURL: ts.URL,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create model: %v", err)
+	}
+
+	res, err := m.Generate(ctx, llm.GenerateRequest{
+		Messages: []llm.Message{llm.UserMessage("Calculate meaning")},
+	})
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	// Verify thought and answer separation!
+	if res.Text != "The solution is 42." {
+		t.Errorf("expected clean text 'The solution is 42.', got %q", res.Text)
+	}
+	if res.Thinking != "Analyzing problem logically..." {
+		t.Errorf("expected thinking 'Analyzing problem logically...', got %q", res.Thinking)
+	}
+	if res.Usage.ReasoningTokens != 15 {
+		t.Errorf("expected reasoning tokens 15, got %d", res.Usage.ReasoningTokens)
+	}
+
+	// Verify captured request had thinkingLevel HIGH
+	if capturedConfig == nil || capturedConfig["thinkingConfig"] == nil {
+		t.Fatalf("expected thinkingConfig in request, got %v", capturedConfig)
+	}
+	tConfig := capturedConfig["thinkingConfig"].(map[string]any)
+	if tConfig["thinkingLevel"] != "HIGH" {
+		t.Errorf("expected thinkingLevel HIGH, got %v", tConfig["thinkingLevel"])
+	}
+
+	// 2. Per-request override overrides provider default
+	_, err = m.Generate(ctx, llm.GenerateRequest{
+		Messages: []llm.Message{llm.UserMessage("Fast query")},
+		Thinking: &llm.ThinkingConfig{Level: llm.ThinkingLevelMinimal},
+	})
+	if err != nil {
+		t.Fatalf("Generate with per-request override failed: %v", err)
+	}
+
+	tConfigOverride := capturedConfig["thinkingConfig"].(map[string]any)
+	if tConfigOverride["thinkingLevel"] != "MINIMAL" {
+		t.Errorf("expected per-request override thinkingLevel MINIMAL, got %v", tConfigOverride["thinkingLevel"])
+	}
+}
+
+func TestGoogleProvider_StreamThinking(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		// Chunk 1: Thought delta
+		chunk1 := map[string]any{
+			"candidates": []map[string]any{
+				{
+					"content": map[string]any{
+						"parts": []map[string]any{
+							{"text": "Pondering the query...", "thought": true},
+						},
+					},
+				},
+			},
+		}
+		c1Bytes, _ := json.Marshal(chunk1)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", c1Bytes)
+		flusher.Flush()
+
+		// Chunk 2: Answer delta
+		chunk2 := map[string]any{
+			"candidates": []map[string]any{
+				{
+					"content": map[string]any{
+						"parts": []map[string]any{
+							{"text": "42."},
+						},
+					},
+					"finishReason": "STOP",
+				},
+			},
+		}
+		c2Bytes, _ := json.Marshal(chunk2)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", c2Bytes)
+		flusher.Flush()
+	}))
+	defer ts.Close()
+
+	ctx := context.Background()
+	m, err := google.New(ctx, google.Config{
+		Model:  "gemini-2.5-flash",
+		APIKey: "test-key",
+		ClientConfig: &genai.ClientConfig{
+			HTTPOptions: genai.HTTPOptions{
+				BaseURL: ts.URL,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create model: %v", err)
+	}
+
+	stream, err := m.Stream(ctx, llm.GenerateRequest{
+		Messages: []llm.Message{llm.UserMessage("Calculate meaning")},
+	})
+	if err != nil {
+		t.Fatalf("Stream failed: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	chunk1, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv chunk 1 failed: %v", err)
+	}
+	if chunk1.ThinkingDelta != "Pondering the query..." {
+		t.Errorf("expected chunk 1 ThinkingDelta, got %q", chunk1.ThinkingDelta)
+	}
+	if chunk1.Delta != "" {
+		t.Errorf("expected chunk 1 Delta empty, got %q", chunk1.Delta)
+	}
+
+	chunk2, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("recv chunk 2 failed: %v", err)
+	}
+	if chunk2.Delta != "42." {
+		t.Errorf("expected chunk 2 Delta '42.', got %q", chunk2.Delta)
+	}
+	if chunk2.ThinkingDelta != "" {
+		t.Errorf("expected chunk 2 ThinkingDelta empty, got %q", chunk2.ThinkingDelta)
+	}
+}

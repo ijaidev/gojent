@@ -37,6 +37,7 @@ type StreamResponse struct {
 	maxSteps        int
 	step            int
 	stepAccumulated strings.Builder
+	stepThinking    strings.Builder
 	stepToolCalls   []llm.ToolCall
 	stepUsage       llm.Usage
 	stepRaw         any
@@ -102,10 +103,12 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			s.usage.PromptTokens += s.stepUsage.PromptTokens
 			s.usage.CompletionTokens += s.stepUsage.CompletionTokens
 			s.usage.TotalTokens += s.stepUsage.TotalTokens
+			s.usage.ReasoningTokens += s.stepUsage.ReasoningTokens
 
 			completedStep := s.step
 			s.hooks.afterModel(s.ctx, completedStep, &s.req, &llm.GenerateResponse{
 				Text:         s.stepAccumulated.String(),
+				Thinking:     s.stepThinking.String(),
 				ToolCalls:    s.stepToolCalls,
 				FinishReason: s.finishReason,
 				Usage:        s.stepUsage,
@@ -115,9 +118,10 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			// If the model did not request any tools, it has reached its final answer!
 			if len(s.stepToolCalls) == 0 {
 				finalMsg := llm.Message{
-					Role:    llm.RoleAssistant,
-					Content: []llm.Part{llm.TextPart(s.stepAccumulated.String())},
-					Raw:     s.stepRaw,
+					Role:     llm.RoleAssistant,
+					Content:  []llm.Part{llm.TextPart(s.stepAccumulated.String())},
+					Thinking: s.stepThinking.String(),
+					Raw:      s.stepRaw,
 				}
 				s.messages = append(s.messages, finalMsg)
 				s.completed = true
@@ -137,6 +141,7 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			assistantMsg := llm.Message{
 				Role:      llm.RoleAssistant,
 				Content:   []llm.Part{llm.TextPart(s.stepAccumulated.String())},
+				Thinking:  s.stepThinking.String(),
 				ToolCalls: s.stepToolCalls,
 				Raw:       s.stepRaw,
 			}
@@ -186,13 +191,20 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			// Reset step buffers
 			s.stepToolCalls = nil
 			s.stepAccumulated.Reset()
+			s.stepThinking.Reset()
 			s.stepUsage = llm.Usage{}
 			s.stepRaw = nil
+
+			effectiveThinking := s.genCfg.Thinking
+			if effectiveThinking == nil {
+				effectiveThinking = s.agent.thinking
+			}
 
 			// Prepare request for next ReAct iteration
 			req := llm.GenerateRequest{
 				Messages:    s.messages,
 				Tools:       s.toolDefs,
+				Thinking:    effectiveThinking,
 				Temperature: s.genCfg.Temperature,
 				MaxTokens:   s.genCfg.MaxTokens,
 				TopP:        s.genCfg.TopP,
@@ -217,6 +229,7 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 		if err != nil {
 			s.hooks.afterModel(s.ctx, s.step, &s.req, &llm.GenerateResponse{
 				Text:      s.stepAccumulated.String(),
+				Thinking:  s.stepThinking.String(),
 				ToolCalls: s.stepToolCalls,
 				Usage:     s.stepUsage,
 				Raw:       s.stepRaw,
@@ -225,7 +238,12 @@ func (s *StreamResponse) Recv() (*llm.StreamChunk, error) {
 			return nil, err
 		}
 
-		s.stepAccumulated.WriteString(chunk.Delta)
+		if chunk.Delta != "" {
+			s.stepAccumulated.WriteString(chunk.Delta)
+		}
+		if chunk.ThinkingDelta != "" {
+			s.stepThinking.WriteString(chunk.ThinkingDelta)
+		}
 		if len(chunk.ToolCalls) > 0 {
 			s.stepToolCalls = accumulateToolCalls(s.stepToolCalls, chunk.ToolCalls)
 		}
@@ -265,6 +283,13 @@ func (s *StreamResponse) Text() string {
 	return s.stepAccumulated.String()
 }
 
+// Thinking returns the thinking/reasoning text accumulated from stream deltas for the final generation turn.
+func (s *StreamResponse) Thinking() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stepThinking.String()
+}
+
 // ToolCalls returns a copy of all tool calls received across all ReAct steps.
 func (s *StreamResponse) ToolCalls() []llm.ToolCall {
 	s.mu.Lock()
@@ -295,6 +320,7 @@ func (s *StreamResponse) Response() (*Response, error) {
 
 	return &Response{
 		Text:         text,
+		Thinking:     s.stepThinking.String(),
 		Content:      []llm.Part{llm.TextPart(text)},
 		ToolCalls:    toolCalls,
 		Messages:     s.messages,

@@ -781,3 +781,134 @@ func TestAgent_MultipartToolResult(t *testing.T) {
 		t.Errorf("unexpected response: %s", res.Text)
 	}
 }
+
+func TestAgent_ThinkingConfigurationAndOverride(t *testing.T) {
+	ctx := context.Background()
+
+	var recordedReq llm.GenerateRequest
+	mock := llm.NewMockLLM().ApplyOptions(
+		llm.WithCustomHandler(func(_ context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error) {
+			recordedReq = req
+			return &llm.GenerateResponse{
+				Text:         "42",
+				Thinking:     "Thinking steps...",
+				FinishReason: llm.FinishReasonStop,
+				Usage: llm.Usage{
+					PromptTokens:     10,
+					CompletionTokens: 5,
+					ReasoningTokens:  15,
+				},
+			}, nil
+		}),
+	)
+
+	defaultThinking := &llm.ThinkingConfig{Level: llm.ThinkingLevelLow}
+	a, err := agent.New(agent.Config{
+		ID:       "thinking-agent",
+		Model:    mock,
+		Thinking: defaultThinking,
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	// 1. Generation with agent-level default thinking
+	res1, err := a.Generate(ctx, "Calculate meaning")
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	if res1.Thinking != "Thinking steps..." {
+		t.Errorf("expected response thinking 'Thinking steps...', got %q", res1.Thinking)
+	}
+	if recordedReq.Thinking == nil || recordedReq.Thinking.Level != llm.ThinkingLevelLow {
+		t.Errorf("expected request thinking level low, got %+v", recordedReq.Thinking)
+	}
+	if res1.Usage.ReasoningTokens != 15 {
+		t.Errorf("expected reasoning tokens 15, got %d", res1.Usage.ReasoningTokens)
+	}
+
+	// 2. Generation with WithThinkingLevel override (generate message config)
+	_, err = a.Generate(ctx, "Calculate meaning", agent.WithThinkingLevel(llm.ThinkingLevelMedium))
+	if err != nil {
+		t.Fatalf("Generate with option failed: %v", err)
+	}
+	if recordedReq.Thinking == nil || recordedReq.Thinking.Level != llm.ThinkingLevelMedium {
+		t.Errorf("expected request thinking level medium, got %+v", recordedReq.Thinking)
+	}
+
+	// 3. Generation with WithThinkingBudget override
+	_, err = a.Generate(ctx, "Hard problem", agent.WithThinkingBudget(2048))
+	if err != nil {
+		t.Fatalf("Generate with budget option failed: %v", err)
+	}
+	if recordedReq.Thinking == nil || recordedReq.Thinking.BudgetTokens == nil || *recordedReq.Thinking.BudgetTokens != 2048 {
+		t.Errorf("expected request thinking budget 2048, got %+v", recordedReq.Thinking)
+	}
+
+	// 4. Generation with full WithThinking config override
+	budget := 4096
+	_, err = a.Generate(ctx, "Deep thinking", agent.WithThinking(llm.ThinkingConfig{
+		Level:        llm.ThinkingLevelHigh,
+		BudgetTokens: &budget,
+	}))
+	if err != nil {
+		t.Fatalf("Generate with full thinking option failed: %v", err)
+	}
+	if recordedReq.Thinking == nil || recordedReq.Thinking.Level != llm.ThinkingLevelHigh || recordedReq.Thinking.BudgetTokens == nil || *recordedReq.Thinking.BudgetTokens != 4096 {
+		t.Errorf("expected request thinking level high and budget 4096, got %+v", recordedReq.Thinking)
+	}
+}
+
+func TestAgent_StreamThinking(t *testing.T) {
+	ctx := context.Background()
+
+	mock := llm.NewMockLLM().ApplyOptions(
+		llm.WithCustomStreamHandler(func(ctx context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
+			chunks := []*llm.StreamChunk{
+				{ThinkingDelta: "Step 1: Analyzing... "},
+				{ThinkingDelta: "Step 2: Concluding..."},
+				{Delta: "The answer is "},
+				{Delta: "42.", FinishReason: llm.FinishReasonStop, Usage: &llm.Usage{
+					PromptTokens:     10,
+					CompletionTokens: 5,
+					ReasoningTokens:  20,
+				}},
+			}
+			return llm.NewSliceStream(ctx, chunks), nil
+		}),
+	)
+
+	a, err := agent.New(agent.Config{
+		ID:    "stream-thinking-agent",
+		Model: mock,
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	stream, err := a.Stream(ctx, "Solve puzzle", agent.WithThinkingLevel(llm.ThinkingLevelHigh))
+	if err != nil {
+		t.Fatalf("Stream failed: %v", err)
+	}
+
+	res, err := stream.Drain()
+	if err != nil {
+		t.Fatalf("Drain failed: %v", err)
+	}
+
+	if stream.Thinking() != "Step 1: Analyzing... Step 2: Concluding..." {
+		t.Errorf("unexpected stream.Thinking(): %q", stream.Thinking())
+	}
+	if stream.Text() != "The answer is 42." {
+		t.Errorf("unexpected stream.Text(): %q", stream.Text())
+	}
+	if res.Thinking != "Step 1: Analyzing... Step 2: Concluding..." {
+		t.Errorf("unexpected res.Thinking: %q", res.Thinking)
+	}
+	if res.Text != "The answer is 42." {
+		t.Errorf("unexpected res.Text: %q", res.Text)
+	}
+	if res.Usage.ReasoningTokens != 20 {
+		t.Errorf("expected reasoning tokens 20, got %d", res.Usage.ReasoningTokens)
+	}
+}

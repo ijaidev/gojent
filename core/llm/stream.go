@@ -19,6 +19,8 @@ var (
 type StreamChunk struct {
 	// Delta is the newly generated text fragment.
 	Delta string `json:"delta"`
+	// ThinkingDelta is the newly generated reasoning/thought fragment.
+	ThinkingDelta string `json:"thinking_delta,omitempty"`
 	// ToolCalls contains any tool calls requested by the model during generation.
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 	// FinishReason explains why generation ended, populated on the terminal chunk.
