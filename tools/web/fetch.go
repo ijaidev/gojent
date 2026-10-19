@@ -95,7 +95,7 @@ func NewWebFetchTool(cfg ...FetchConfig) (tool.Tool, error) {
 			reqCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 
-			req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, in.URL, nil)
+			req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, in.URL, http.NoBody)
 			if err != nil {
 				return FetchOutput{}, fmt.Errorf("web_fetch: invalid request: %w", err)
 			}

@@ -27,7 +27,7 @@ func blockedResponseError(resp *genai.GenerateContentResponse) error {
 }
 
 // extractCandidateTextAndThinking retrieves output text and thought process across candidates separately.
-func extractCandidateTextAndThinking(candidates []*genai.Candidate) (text string, thinking string) {
+func extractCandidateTextAndThinking(candidates []*genai.Candidate) (text, thinking string) {
 	var textSb strings.Builder
 	var thinkSb strings.Builder
 	for _, cand := range candidates {

@@ -42,13 +42,13 @@ func TestMockLLM_NewMockllmAlias(t *testing.T) {
 }
 
 func TestMockLLM_RespectsContextCancellation(t *testing.T) {
-	mock := llm.NewMockLLM("cancelled")
+	mock := llm.NewMockLLM("canceled")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
 	_, err := mock.Generate(ctx, llm.GenerateRequest{})
 	if err == nil {
-		t.Error("expected error due to cancelled context, got nil")
+		t.Error("expected error due to canceled context, got nil")
 	}
 }
 

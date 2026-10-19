@@ -93,7 +93,7 @@ func (s *jsonScanner) Scan(src any) error {
 		return fmt.Errorf("postgres: cannot scan %T into JSON", src)
 	}
 	trimmed := strings.TrimSpace(string(b))
-	if len(trimmed) == 0 || trimmed == "null" || trimmed == `""` {
+	if trimmed == "" || trimmed == "null" || trimmed == `""` {
 		return nil
 	}
 	return json.Unmarshal([]byte(trimmed), s.dest)
@@ -121,7 +121,7 @@ func (s *contentScanner) Scan(src any) error {
 		return fmt.Errorf("postgres: cannot scan %T into content", src)
 	}
 	trimmed := strings.TrimSpace(str)
-	if len(trimmed) == 0 || trimmed == "null" {
+	if trimmed == "" || trimmed == "null" {
 		*s.dest = nil
 		return nil
 	}

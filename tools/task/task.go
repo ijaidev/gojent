@@ -20,8 +20,8 @@ const (
 	StatusInProgress Status = "in_progress"
 	// StatusCompleted indicates a task that has finished successfully.
 	StatusCompleted Status = "completed"
-	// StatusCancelled indicates a task that was discarded or aborted.
-	StatusCancelled Status = "cancelled"
+	// StatusCanceled indicates a task that was discarded or aborted.
+	StatusCanceled Status = "canceled"
 )
 
 // Task represents an individual task in a plan.
@@ -55,7 +55,7 @@ type CreateTaskInput struct {
 
 // ListTasksInput defines parameters for listing tasks.
 type ListTasksInput struct {
-	Status Status `json:"status,omitempty" description:"Optional filter by status (pending, in_progress, completed, cancelled)"`
+	Status Status `json:"status,omitempty" description:"Optional filter by status (pending, in_progress, completed, canceled)"`
 }
 
 // ListTasksOutput represents the list of tasks.
@@ -67,7 +67,7 @@ type ListTasksOutput struct {
 // UpdateTaskInput defines parameters for updating a task.
 type UpdateTaskInput struct {
 	ID     string `json:"id" description:"The unique task ID to update"`
-	Status Status `json:"status,omitempty" description:"New status (pending, in_progress, completed, cancelled)"`
+	Status Status `json:"status,omitempty" description:"New status (pending, in_progress, completed, canceled)"`
 	Title  string `json:"title,omitempty" description:"Updated task title"`
 }
 
@@ -132,7 +132,7 @@ func (t *Tracker) NewListTasksTool() (tool.Tool, error) {
 func (t *Tracker) NewUpdateTaskTool() (tool.Tool, error) {
 	return tool.New(tool.Config[UpdateTaskInput, Task]{
 		ID:          "task_update",
-		Description: "Update a task's status (pending, in_progress, completed, cancelled) or title.",
+		Description: "Update a task's status (pending, in_progress, completed, canceled) or title.",
 		Execute: func(_ context.Context, in UpdateTaskInput) (Task, error) {
 			if in.ID == "" {
 				return Task{}, fmt.Errorf("task_update: task id is required")

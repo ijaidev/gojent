@@ -95,7 +95,7 @@ func TestFSTools_ReadWriteEditList(t *testing.T) {
 	}
 
 	// Verify edit
-	data, err := os.ReadFile(filepath.Join(tmpDir, "docs/hello.txt"))
+	data, err := os.ReadFile(filepath.Join(tmpDir, "docs", "hello.txt"))
 	if err != nil {
 		t.Fatalf("failed reading edited file: %v", err)
 	}

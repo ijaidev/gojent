@@ -118,8 +118,8 @@ func (r *run) saveMessages(ctx context.Context, msgs ...llm.Message) {
 	}
 
 	toSave := make([]*storage.Message, len(msgs))
-	for i, m := range msgs {
-		toSave[i] = storage.NewMessageFromLLM(r.cfg.ThreadID, m)
+	for i := range msgs {
+		toSave[i] = storage.NewMessageFromLLM(r.cfg.ThreadID, msgs[i])
 		if r.cfg.ResourceID != "" {
 			toSave[i].ResourceID = r.cfg.ResourceID
 		}

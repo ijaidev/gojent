@@ -28,7 +28,7 @@ func newEchoTool() tool.Tool {
 
 // toolCallingMock returns a mock that requests the given tool once and then
 // responds with finalText.
-func toolCallingMock(toolName string, finalText string) *llm.MockLLM {
+func toolCallingMock(toolName, finalText string) *llm.MockLLM {
 	callCount := 0
 	return llm.NewMockLLM().ApplyOptions(
 		llm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {

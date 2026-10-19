@@ -70,7 +70,7 @@ type sliceStream struct {
 }
 
 // NewSliceStream returns a new Stream that emits the provided chunks in order.
-// If ctx is cancelled before or during consumption, Recv returns ctx.Err().
+// If ctx is canceled before or during consumption, Recv returns ctx.Err().
 func NewSliceStream(ctx context.Context, chunks []*StreamChunk) Stream {
 	if ctx == nil {
 		ctx = context.Background()
@@ -123,7 +123,7 @@ type channelStream struct {
 //
 // Producers must send any terminal error to errCh before closing ch. When both
 // channels become ready, a pending errCh value takes precedence over the clean
-// io.EOF signalled by a closed ch, so terminal errors are never lost.
+// io.EOF signaled by a closed ch, so terminal errors are never lost.
 //
 // Closing the stream invokes the optional cancel function to terminate background producers.
 func NewChannelStream(ctx context.Context, cancel context.CancelFunc, ch <-chan *StreamChunk, errCh <-chan error) Stream {
@@ -175,7 +175,7 @@ func (s *channelStream) recvChunk() (*StreamChunk, error) {
 }
 
 // terminalErr reports a terminal error pending on errCh, preferring it over
-// the clean io.EOF signalled by a closed chunk channel. Producers close both
+// the clean io.EOF signaled by a closed chunk channel. Producers close both
 // channels when they finish, so a buffered error must not be lost just because
 // the select observed the closed chunk channel first.
 func (s *channelStream) terminalErr() error {

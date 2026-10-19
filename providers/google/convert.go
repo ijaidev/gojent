@@ -12,7 +12,8 @@ import (
 func convertMessages(messages []llm.Message) (contents []*genai.Content, systemInstruction *genai.Content, err error) {
 	var systemParts []*genai.Part
 
-	for _, msg := range messages {
+	for i := range messages {
+		msg := &messages[i]
 		switch msg.Role {
 		case llm.RoleSystem:
 			for _, p := range msg.Content {

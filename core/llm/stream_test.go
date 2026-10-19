@@ -65,16 +65,16 @@ func TestMockLLM_Stream(t *testing.T) {
 	}
 }
 
-func TestMockLLM_Stream_ContextCancelled(t *testing.T) {
-	mock := llm.NewMockLLM("cancelled streaming")
+func TestMockLLM_Stream_ContextCanceled(t *testing.T) {
+	mock := llm.NewMockLLM("canceled streaming")
 
-	// Pre-cancelled context
+	// Pre-canceled context
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	_, err := mock.Stream(ctx, llm.GenerateRequest{})
 	if err == nil {
-		t.Fatal("expected error with pre-cancelled context, got nil")
+		t.Fatal("expected error with pre-canceled context, got nil")
 	}
 
 	// Mid-stream cancellation

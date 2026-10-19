@@ -12,7 +12,7 @@ import (
 )
 
 // GetThreadState retrieves the durable state value for a (threadID, stateType) pair.
-func (s *Store) GetThreadState(ctx context.Context, threadID string, stateType string) (any, error) {
+func (s *Store) GetThreadState(ctx context.Context, threadID, stateType string) (any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -37,7 +37,7 @@ func (s *Store) GetThreadState(ctx context.Context, threadID string, stateType s
 }
 
 // SetThreadState sets or overwrites the durable state value for a (threadID, stateType) pair.
-func (s *Store) SetThreadState(ctx context.Context, threadID string, stateType string, value any) error {
+func (s *Store) SetThreadState(ctx context.Context, threadID, stateType string, value any) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -70,7 +70,7 @@ func (s *Store) SetThreadState(ctx context.Context, threadID string, stateType s
 }
 
 // DeleteThreadState removes the durable state value for a (threadID, stateType) pair.
-func (s *Store) DeleteThreadState(ctx context.Context, threadID string, stateType string) error {
+func (s *Store) DeleteThreadState(ctx context.Context, threadID, stateType string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

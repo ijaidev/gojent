@@ -266,7 +266,7 @@ func (s *Store) ListThreads(ctx context.Context, filter storage.ThreadFilter) ([
 		for k, v := range filter.Metadata {
 			escapedKey := strings.ReplaceAll(k, `\`, `\\`)
 			escapedKey = strings.ReplaceAll(escapedKey, `"`, `\"`)
-			path := fmt.Sprintf(`$."%s"`, escapedKey)
+			path := `$."` + escapedKey + `"`
 			if v == nil {
 				whereClauses = append(whereClauses, "metadata != '' AND json_extract(NULLIF(metadata, ''), ?) IS NULL")
 				args = append(args, path)

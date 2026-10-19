@@ -148,7 +148,8 @@ func run() error {
 		res1.Usage.PromptTokens, res1.Usage.CompletionTokens, res1.Usage.TotalTokens)
 
 	fmt.Println("\n--- Conversation ReAct Trajectory ---")
-	for i, msg := range res1.Messages {
+	for i := range res1.Messages {
+		msg := &res1.Messages[i]
 		switch msg.Role {
 		case llm.RoleSystem:
 			fmt.Printf("  Step %d [%s]: %s\n", i+1, msg.Role, msg.Text())

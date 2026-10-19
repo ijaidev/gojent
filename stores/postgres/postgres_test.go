@@ -1,6 +1,7 @@
 package postgres_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -847,7 +848,7 @@ func TestStore_MultipartMessage_Postgres(t *testing.T) {
 	if msgs[0].Content[0].Text != "Inspect this photo" || msgs[0].Content[1].Type != llm.PartTypeImage {
 		t.Errorf("unexpected content parts in retrieved message: %+v", msgs[0].Content)
 	}
-	if string(msgs[0].Content[1].Data) != string(imgBytes) {
+	if !bytes.Equal(msgs[0].Content[1].Data, imgBytes) {
 		t.Errorf("expected decoded image bytes %v, got %v", imgBytes, msgs[0].Content[1].Data)
 	}
 

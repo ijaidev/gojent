@@ -56,7 +56,7 @@ func testContextCancellation(t *testing.T, store storage.Storage) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := store.SaveThread(ctx, &storage.Thread{Title: "cancelled"}); !errors.Is(err, context.Canceled) {
+	if _, err := store.SaveThread(ctx, &storage.Thread{Title: "canceled"}); !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled from SaveThread, got %v", err)
 	}
 	if _, err := store.ListMessages(ctx, storage.MessageFilter{}); !errors.Is(err, context.Canceled) {

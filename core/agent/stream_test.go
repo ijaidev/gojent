@@ -302,12 +302,13 @@ func assertNoDanglingToolCalls(t *testing.T, messages []llm.Message) {
 	t.Helper()
 
 	answered := make(map[string]bool)
-	for _, msg := range messages {
-		if msg.Role == llm.RoleTool && msg.ToolCallID != "" {
-			answered[msg.ToolCallID] = true
+	for i := range messages {
+		if messages[i].Role == llm.RoleTool && messages[i].ToolCallID != "" {
+			answered[messages[i].ToolCallID] = true
 		}
 	}
-	for i, msg := range messages {
+	for i := range messages {
+		msg := &messages[i]
 		if msg.Role != llm.RoleAssistant {
 			continue
 		}
