@@ -3,7 +3,6 @@ package storage
 import (
 	"maps"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/ijaidev/gojent/core/llm"
@@ -45,16 +44,7 @@ func (m *Message) Text() string {
 	if m == nil {
 		return ""
 	}
-	var sb strings.Builder
-	for _, p := range m.Content {
-		if p.Type == llm.PartTypeText && p.Text != "" {
-			if sb.Len() > 0 {
-				sb.WriteString("\n")
-			}
-			sb.WriteString(p.Text)
-		}
-	}
-	return sb.String()
+	return llm.TextFromParts(m.Content)
 }
 
 // Clone returns a copy of the Message with independent content, content data,

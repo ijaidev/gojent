@@ -35,8 +35,14 @@ type Message struct {
 
 // Text returns the aggregated textual content of all text parts in the message.
 func (m Message) Text() string {
+	return TextFromParts(m.Content)
+}
+
+// TextFromParts joins the text parts of a multipart value with newlines.
+// Empty text parts are ignored.
+func TextFromParts(parts []Part) string {
 	var sb strings.Builder
-	for _, p := range m.Content {
+	for _, p := range parts {
 		if p.Type == PartTypeText && p.Text != "" {
 			if sb.Len() > 0 {
 				sb.WriteString("\n")
