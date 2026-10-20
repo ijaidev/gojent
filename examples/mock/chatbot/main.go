@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/examples/chatbot"
+	"github.com/ijaidev/gojent/providers/mockllm"
 )
 
 func main() {
 	// 1. Create a mock LLM with canned responses to simulate conversation
-	mockLLM := llm.NewMockLLM(
+	mockLLM := mockllm.New(
 		"Hello! I am an AI chatbot built with Gojent. I remember our conversation and stream responses in real-time.",
 		"Gojent provides a lightweight, modular agent framework in Go.",
 		"You can plug any LLM provider into this chatbot (like Google Gemini or OpenAI) without changing any chat logic!",

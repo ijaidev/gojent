@@ -7,12 +7,12 @@ import (
 	"log"
 
 	"github.com/ijaidev/gojent/core/agent"
-	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/providers/mockllm"
 )
 
 func main() {
 	// 1. Create a swappable mock LLM with canned responses
-	mockLLM := llm.NewMockLLM(
+	mockLLM := mockllm.New(
 		"Hello! I am your AI assistant built with Gojent.",
 		"I can help you build autonomous agents and workflows in Go.",
 	)
@@ -45,7 +45,7 @@ func main() {
 	fmt.Printf("User: What can you do?\nAgent: %s\n\n", res2.Text)
 
 	// 4. Demonstrate runtime model swapping!
-	specializedMock := llm.NewMockLLM("Here is the recipe: Dice tomatoes, add olive oil and fresh basil.")
+	specializedMock := mockllm.New("Here is the recipe: Dice tomatoes, add olive oil and fresh basil.")
 	fmt.Println("--- Swapping Model dynamically at runtime ---")
 	_ = bot.SetModel(specializedMock)
 

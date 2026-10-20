@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"github.com/ijaidev/gojent/core/agent"
-	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/providers/mockllm"
 )
 
 func run() error {
 	// 1. Create a mock LLM with canned responses that will be streamed word-by-word
-	mockLLM := llm.NewMockLLM(
+	mockLLM := mockllm.New(
 		"Hello! I am your AI assistant running on Gojent. Streaming tokens in real time gives your users immediate feedback.",
 		"Autonomous workflows in Go can be lightweight, fast, and concurrent.",
 	)

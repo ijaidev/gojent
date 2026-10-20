@@ -10,10 +10,11 @@ import (
 	"github.com/ijaidev/gojent/core/agent"
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/tool"
+	"github.com/ijaidev/gojent/providers/mockllm"
 )
 
 func TestAgent_Stream_WithMockLLM(t *testing.T) {
-	mock := llm.NewMockLLM("Here is step one. Here is step two.")
+	mock := mockllm.New("Here is step one. Here is step two.")
 
 	bot, err := agent.New(agent.Config{
 		ID:           "assistant",
@@ -80,7 +81,7 @@ func TestAgent_Stream_WithMockLLM(t *testing.T) {
 }
 
 func TestAgent_Stream_Drain(t *testing.T) {
-	mock := llm.NewMockLLM("Drained response")
+	mock := mockllm.New("Drained response")
 
 	bot, err := agent.New(agent.Config{
 		ID:    "drain-agent",
@@ -108,7 +109,7 @@ func TestAgent_Stream_Drain(t *testing.T) {
 }
 
 func TestAgent_Stream_AllIterator(t *testing.T) {
-	mock := llm.NewMockLLM("Alpha Beta Gamma")
+	mock := mockllm.New("Alpha Beta Gamma")
 
 	bot, err := agent.New(agent.Config{
 		ID:    "iterator-agent",
@@ -148,7 +149,7 @@ func TestAgent_Stream_AllIterator(t *testing.T) {
 }
 
 func TestAgent_Stream_PrematureResponseError(t *testing.T) {
-	mock := llm.NewMockLLM("Some content")
+	mock := mockllm.New("Some content")
 
 	bot, err := agent.New(agent.Config{
 		ID:    "premature-agent",
@@ -174,7 +175,7 @@ func TestAgent_Stream_PrematureResponseError(t *testing.T) {
 }
 
 func TestAgent_Stream_Close(t *testing.T) {
-	mock := llm.NewMockLLM("Content to be closed")
+	mock := mockllm.New("Content to be closed")
 
 	bot, err := agent.New(agent.Config{
 		ID:    "close-agent",
@@ -201,8 +202,8 @@ func TestAgent_Stream_Close(t *testing.T) {
 }
 
 func TestAgent_Stream_PerCallModelOverride(t *testing.T) {
-	defaultMock := llm.NewMockLLM("Default stream")
-	overrideMock := llm.NewMockLLM("Overridden stream")
+	defaultMock := mockllm.New("Default stream")
+	overrideMock := mockllm.New("Overridden stream")
 
 	bot, err := agent.New(agent.Config{
 		ID:    "override-agent",
@@ -250,7 +251,7 @@ func TestAgent_Stream_MaxStepsDoesNotLeaveDanglingToolCalls(t *testing.T) {
 	})
 
 	// The model always asks for the tool, so only the ReAct budget stops it.
-	mock := llm.NewMockLLM().ApplyOptions(llm.WithCustomStreamHandler(
+	mock := mockllm.New().ApplyOptions(mockllm.WithCustomStreamHandler(
 		func(ctx context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
 			return llm.NewSliceStream(ctx, []*llm.StreamChunk{
 				{

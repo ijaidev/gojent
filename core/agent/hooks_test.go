@@ -12,6 +12,7 @@ import (
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/storage"
 	"github.com/ijaidev/gojent/core/tool"
+	"github.com/ijaidev/gojent/providers/mockllm"
 	"github.com/ijaidev/gojent/stores/inmemory"
 )
 
@@ -28,10 +29,10 @@ func newEchoTool() tool.Tool {
 
 // toolCallingMock returns a mock that requests the given tool once and then
 // responds with finalText.
-func toolCallingMock(toolName, finalText string) *llm.MockLLM {
+func toolCallingMock(toolName, finalText string) *mockllm.Model {
 	callCount := 0
-	return llm.NewMockLLM().ApplyOptions(
-		llm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
+	return mockllm.New().ApplyOptions(
+		mockllm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
 			callCount++
 			if callCount == 1 {
 				return &llm.GenerateResponse{
@@ -141,7 +142,7 @@ func TestHooks_GenerateLifecycle(t *testing.T) {
 }
 
 func TestHooks_BeforeModelMutatesRequest(t *testing.T) {
-	mock := llm.NewMockLLM("ok")
+	mock := mockllm.New("ok")
 
 	a, err := agent.New(agent.Config{ID: "hooked-agent", Model: mock})
 	if err != nil {
@@ -183,7 +184,7 @@ func TestHooks_BeforeModelMutatesRequest(t *testing.T) {
 }
 
 func TestHooks_BeforeModelErrorAborts(t *testing.T) {
-	mock := llm.NewMockLLM("ok")
+	mock := mockllm.New("ok")
 
 	a, err := agent.New(agent.Config{ID: "hooked-agent", Model: mock})
 	if err != nil {
@@ -328,8 +329,8 @@ func TestHooks_AfterToolError(t *testing.T) {
 
 func TestHooks_UnknownToolReportsError(t *testing.T) {
 	callCount := 0
-	mock := llm.NewMockLLM().ApplyOptions(
-		llm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
+	mock := mockllm.New().ApplyOptions(
+		mockllm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
 			callCount++
 			if callCount == 1 {
 				return &llm.GenerateResponse{
@@ -392,7 +393,7 @@ func TestHooks_StorageError(t *testing.T) {
 		listErr: listErr,
 	}
 
-	a, err := agent.New(agent.Config{ID: "hooked-agent", Model: llm.NewMockLLM("hello")})
+	a, err := agent.New(agent.Config{ID: "hooked-agent", Model: mockllm.New("hello")})
 	if err != nil {
 		t.Fatalf("failed to create agent: %v", err)
 	}
@@ -434,8 +435,8 @@ func TestHooks_StorageError(t *testing.T) {
 
 func TestHooks_StreamLifecycle(t *testing.T) {
 	callCount := 0
-	mock := llm.NewMockLLM().ApplyOptions(
-		llm.WithCustomStreamHandler(func(ctx context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
+	mock := mockllm.New().ApplyOptions(
+		mockllm.WithCustomStreamHandler(func(ctx context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
 			callCount++
 			if callCount == 1 {
 				return llm.NewSliceStream(ctx, []*llm.StreamChunk{
@@ -532,8 +533,8 @@ func TestHooks_StreamError(t *testing.T) {
 	streamErr := errors.New("stream exploded")
 
 	t.Run("recv failure", func(t *testing.T) {
-		mock := llm.NewMockLLM().ApplyOptions(
-			llm.WithCustomStreamHandler(func(_ context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
+		mock := mockllm.New().ApplyOptions(
+			mockllm.WithCustomStreamHandler(func(_ context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
 				return &errorStream{err: streamErr}, nil
 			}),
 		)
@@ -569,8 +570,8 @@ func TestHooks_StreamError(t *testing.T) {
 	})
 
 	t.Run("stream creation failure", func(t *testing.T) {
-		mock := llm.NewMockLLM().ApplyOptions(
-			llm.WithCustomStreamHandler(func(_ context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
+		mock := mockllm.New().ApplyOptions(
+			mockllm.WithCustomStreamHandler(func(_ context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
 				return nil, streamErr
 			}),
 		)
@@ -667,7 +668,7 @@ func TestHooks_PerCallMergeAndOverride(t *testing.T) {
 }
 
 func TestHooks_RepeatedWithHooksLayers(t *testing.T) {
-	mock := llm.NewMockLLM("ok")
+	mock := mockllm.New("ok")
 
 	a, err := agent.New(agent.Config{ID: "hooked-agent", Model: mock})
 	if err != nil {
@@ -712,7 +713,7 @@ func TestHooks_RepeatedWithHooksLayers(t *testing.T) {
 func TestHooks_AgentAccessors(t *testing.T) {
 	a, err := agent.New(agent.Config{
 		ID:    "hooked-agent",
-		Model: llm.NewMockLLM("ok"),
+		Model: mockllm.New("ok"),
 		Hooks: agent.Hooks{
 			AfterModel: func(_ context.Context, _ *agent.ModelEvent) {},
 		},

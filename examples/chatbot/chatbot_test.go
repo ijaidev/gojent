@@ -11,6 +11,7 @@ import (
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/storage"
 	"github.com/ijaidev/gojent/examples/chatbot"
+	"github.com/ijaidev/gojent/providers/mockllm"
 	"github.com/ijaidev/gojent/stores/inmemory"
 )
 
@@ -22,7 +23,7 @@ func TestRun_NilModel(t *testing.T) {
 }
 
 func TestRun_ExitImmediate(t *testing.T) {
-	mockLLM := llm.NewMockLLM("Never called")
+	mockLLM := mockllm.New("Never called")
 	input := strings.NewReader("exit\n")
 	output := &bytes.Buffer{}
 
@@ -44,7 +45,7 @@ func TestRun_ExitImmediate(t *testing.T) {
 }
 
 func TestRun_MultiTurnMemory(t *testing.T) {
-	mockLLM := llm.NewMockLLM(
+	mockLLM := mockllm.New(
 		"Hello Alice! Nice to meet you.",
 		"Your name is Alice.",
 	)
@@ -105,7 +106,7 @@ func TestRun_MultiTurnMemory(t *testing.T) {
 }
 
 func TestRun_ContextCancelled(t *testing.T) {
-	mockLLM := llm.NewMockLLM("Response")
+	mockLLM := mockllm.New("Response")
 	input := strings.NewReader("Hello\n")
 	output := &bytes.Buffer{}
 

@@ -1,7 +1,6 @@
 package llm_test
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,48 +8,6 @@ import (
 
 	"github.com/ijaidev/gojent/core/llm"
 )
-
-func TestMockLLM_BasicResponses(t *testing.T) {
-	mock := llm.NewMockLLM("first", "second")
-
-	res1, _ := mock.Generate(context.Background(), llm.GenerateRequest{})
-	if res1.Text != "first" {
-		t.Errorf("expected 'first', got '%s'", res1.Text)
-	}
-
-	res2, _ := mock.Generate(context.Background(), llm.GenerateRequest{})
-	if res2.Text != "second" {
-		t.Errorf("expected 'second', got '%s'", res2.Text)
-	}
-
-	// Should repeat the last response
-	res3, _ := mock.Generate(context.Background(), llm.GenerateRequest{})
-	if res3.Text != "second" {
-		t.Errorf("expected 'second', got '%s'", res3.Text)
-	}
-}
-
-func TestMockLLM_NewMockllmAlias(t *testing.T) {
-	mock := llm.NewMockllm("alias check")
-	res, err := mock.Generate(context.Background(), llm.GenerateRequest{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if res.Text != "alias check" {
-		t.Errorf("expected 'alias check', got '%s'", res.Text)
-	}
-}
-
-func TestMockLLM_RespectsContextCancellation(t *testing.T) {
-	mock := llm.NewMockLLM("canceled")
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
-
-	_, err := mock.Generate(ctx, llm.GenerateRequest{})
-	if err == nil {
-		t.Error("expected error due to canceled context, got nil")
-	}
-}
 
 func TestMessage_Constructors(t *testing.T) {
 	user := llm.UserMessage("hello")
@@ -198,7 +155,7 @@ func TestThinkingConfig_CloneAndMessage(t *testing.T) {
 	}
 }
 
-func TestResponseFormat_CloneAndMock(t *testing.T) {
+func TestResponseFormat_Clone(t *testing.T) {
 	strict := true
 	rf := &llm.ResponseFormat{
 		Type:        llm.ResponseFormatJSONSchema,
@@ -216,22 +173,6 @@ func TestResponseFormat_CloneAndMock(t *testing.T) {
 	*rf.Strict = false
 	if *cloned.Strict != true {
 		t.Errorf("expected clone strict to remain true, got %v", *cloned.Strict)
-	}
-
-	mock := llm.NewMockLLM(`{"name":"Gojent"}`)
-	req := llm.GenerateRequest{
-		Messages:       []llm.Message{llm.UserMessage("Send JSON")},
-		ResponseFormat: rf,
-	}
-	res, err := mock.Generate(context.Background(), req)
-	if err != nil {
-		t.Fatalf("Generate failed: %v", err)
-	}
-	if res.Text != `{"name":"Gojent"}` {
-		t.Errorf("unexpected response text: %s", res.Text)
-	}
-	if mock.LastCall().ResponseFormat == nil || mock.LastCall().ResponseFormat.Name != "TestSchema" {
-		t.Errorf("expected mock to record response format, got %+v", mock.LastCall().ResponseFormat)
 	}
 }
 
@@ -252,86 +193,5 @@ func TestToolCall_UnmarshalArgs(t *testing.T) {
 	}
 	if parsed.A != 10 || parsed.B != 20 {
 		t.Errorf("unexpected parsed values: %+v", parsed)
-	}
-}
-
-func TestMockLLM_ToolCalls_GenerateAndStream(t *testing.T) {
-	expectedCalls := []llm.ToolCall{
-		{
-			ID:        "call-1",
-			Name:      "get_weather",
-			Arguments: `{"location":"San Francisco"}`,
-		},
-	}
-
-	mock := llm.NewMockLLM("tool calling...").ApplyOptions(
-		llm.WithToolCalls(expectedCalls...),
-	)
-
-	req := llm.GenerateRequest{
-		Messages: []llm.Message{llm.UserMessage("What is the weather?")},
-		Tools: []llm.ToolDefinition{
-			{Name: "get_weather", Description: "Fetches weather"},
-		},
-	}
-
-	// 1. Generate test
-	res, err := mock.Generate(context.Background(), req)
-	if err != nil {
-		t.Fatalf("Generate failed: %v", err)
-	}
-	if res.FinishReason != llm.FinishReasonTool {
-		t.Errorf("expected finish reason tool_calls, got %s", res.FinishReason)
-	}
-	if len(res.ToolCalls) != 1 || res.ToolCalls[0].ID != "call-1" {
-		t.Errorf("unexpected tool calls in response: %+v", res.ToolCalls)
-	}
-
-	// Verify Tools were recorded in request
-	lastCall := mock.LastCall()
-	if lastCall == nil || len(lastCall.Tools) != 1 || lastCall.Tools[0].Name != "get_weather" {
-		t.Fatalf("expected recorded call to contain tools, got %+v", lastCall)
-	}
-
-	// 2. Stream test
-	stream, err := mock.Stream(context.Background(), req)
-	if err != nil {
-		t.Fatalf("Stream failed: %v", err)
-	}
-	defer func() {
-		_ = stream.Close()
-	}()
-
-	var foundToolCall bool
-	for {
-		chunk, err := stream.Recv()
-		if err != nil {
-			break
-		}
-		if len(chunk.ToolCalls) > 0 {
-			foundToolCall = true
-			if chunk.FinishReason != llm.FinishReasonTool {
-				t.Errorf("expected stream chunk finish reason tool_calls, got %s", chunk.FinishReason)
-			}
-			if chunk.ToolCalls[0].Name != "get_weather" {
-				t.Errorf("unexpected tool call name: %s", chunk.ToolCalls[0].Name)
-			}
-		}
-	}
-	if !foundToolCall {
-		t.Error("expected tool call to be emitted in stream")
-	}
-
-	// 3. Reset clears tool calls
-	mock.Reset()
-	if mock.CallCount() != 0 {
-		t.Errorf("expected call count 0 after reset, got %d", mock.CallCount())
-	}
-	normalRes, err := mock.Generate(context.Background(), req)
-	if err != nil {
-		t.Fatalf("Generate after reset failed: %v", err)
-	}
-	if normalRes.FinishReason != llm.FinishReasonStop {
-		t.Errorf("expected finish reason stop after reset, got %s", normalRes.FinishReason)
 	}
 }

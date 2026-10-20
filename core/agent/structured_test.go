@@ -8,6 +8,7 @@ import (
 	"github.com/ijaidev/gojent/core/agent"
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/tool"
+	"github.com/ijaidev/gojent/providers/mockllm"
 )
 
 type WeatherReport struct {
@@ -61,7 +62,7 @@ func TestResponse_Unmarshal_DirectAndFenced(t *testing.T) {
 
 func TestGenerateStructured_EndToEnd(t *testing.T) {
 	mockJSON := `{"city":"London","temperature":15.0,"condition":"rainy"}`
-	mock := llm.NewMockLLM(mockJSON)
+	mock := mockllm.New(mockJSON)
 
 	a, err := agent.New(agent.Config{
 		ID:    "weather-agent",
@@ -125,8 +126,8 @@ func TestGenerateStructured_WithToolsReAct(t *testing.T) {
 		},
 	})
 
-	mock := llm.NewMockLLM("calling tool...").ApplyOptions(
-		llm.WithCustomHandler(func(_ context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error) {
+	mock := mockllm.New("calling tool...").ApplyOptions(
+		mockllm.WithCustomHandler(func(_ context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error) {
 			// First step has no tool results
 			hasToolResult := false
 			for _, m := range req.Messages {
@@ -169,7 +170,7 @@ func TestGenerateStructured_WithToolsReAct(t *testing.T) {
 }
 
 func TestGenerateStructured_UnmarshalError(t *testing.T) {
-	mock := llm.NewMockLLM("I cannot provide weather data right now.")
+	mock := mockllm.New("I cannot provide weather data right now.")
 	a, _ := agent.New(agent.Config{
 		ID:    "error-agent",
 		Model: mock,
@@ -185,7 +186,7 @@ func TestGenerateStructured_UnmarshalError(t *testing.T) {
 }
 
 func TestWithJSONOutput_Option(t *testing.T) {
-	mock := llm.NewMockLLM(`{"custom":"json"}`)
+	mock := mockllm.New(`{"custom":"json"}`)
 	a, _ := agent.New(agent.Config{
 		ID:    "json-agent",
 		Model: mock,

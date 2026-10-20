@@ -12,6 +12,7 @@ import (
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/storage"
 	"github.com/ijaidev/gojent/core/tool"
+	"github.com/ijaidev/gojent/providers/mockllm"
 	"github.com/ijaidev/gojent/stores/inmemory"
 )
 
@@ -30,7 +31,7 @@ func TestAgent_Validation(t *testing.T) {
 }
 
 func TestAgent_Generate_WithMockLLM(t *testing.T) {
-	mock := llm.NewMockLLM("I can help you with recipes!")
+	mock := mockllm.New("I can help you with recipes!")
 
 	chef, err := agent.New(agent.Config{
 		ID:           "chef-agent",
@@ -77,8 +78,8 @@ func TestAgent_Generate_WithMockLLM(t *testing.T) {
 }
 
 func TestAgent_SwapModel(t *testing.T) {
-	mock1 := llm.NewMockLLM("Response from Model 1")
-	mock2 := llm.NewMockLLM("Response from Model 2")
+	mock1 := mockllm.New("Response from Model 1")
+	mock2 := mockllm.New("Response from Model 2")
 
 	a, err := agent.New(agent.Config{
 		ID:    "agent-swap",
@@ -110,8 +111,8 @@ func TestAgent_SwapModel(t *testing.T) {
 }
 
 func TestAgent_PerCallModelOverride(t *testing.T) {
-	defaultMock := llm.NewMockLLM("Default response")
-	overrideMock := llm.NewMockLLM("Overridden response")
+	defaultMock := mockllm.New("Default response")
+	overrideMock := mockllm.New("Overridden response")
 
 	a, err := agent.New(agent.Config{
 		ID:    "agent-override",
@@ -150,7 +151,7 @@ func TestAgent_ToolRegistrationAndManagement(t *testing.T) {
 		},
 	})
 
-	mock := llm.NewMockLLM("ok")
+	mock := mockllm.New("ok")
 	a, err := agent.New(agent.Config{
 		ID:    "agent-tools",
 		Model: mock,
@@ -213,7 +214,7 @@ func TestAgent_Generate_PassesToolsToLLM(t *testing.T) {
 		},
 	})
 
-	mock := llm.NewMockLLM("computed")
+	mock := mockllm.New("computed")
 	a, err := agent.New(agent.Config{
 		ID:    "agent-calc",
 		Model: mock,
@@ -250,8 +251,8 @@ func TestAgent_Generate_ReActLoop(t *testing.T) {
 	})
 
 	callCount := 0
-	mock := llm.NewMockLLM().ApplyOptions(
-		llm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
+	mock := mockllm.New().ApplyOptions(
+		mockllm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
 			callCount++
 			if callCount == 1 {
 				return &llm.GenerateResponse{
@@ -325,8 +326,8 @@ func TestAgent_Stream_ReActLoop_WithToolArgumentStreaming(t *testing.T) {
 	})
 
 	stepIndex := 0
-	mock := llm.NewMockLLM().ApplyOptions(
-		llm.WithCustomStreamHandler(func(ctx context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
+	mock := mockllm.New().ApplyOptions(
+		mockllm.WithCustomStreamHandler(func(ctx context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
 			stepIndex++
 			if stepIndex == 1 {
 				// Step 1: Model streams tool arguments in chunks (argument delta streaming)
@@ -415,8 +416,8 @@ func TestAgent_MaxSteps(t *testing.T) {
 	})
 
 	callCount := 0
-	mock := llm.NewMockLLM().ApplyOptions(
-		llm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
+	mock := mockllm.New().ApplyOptions(
+		mockllm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
 			callCount++
 			return &llm.GenerateResponse{
 				FinishReason: llm.FinishReasonTool,
@@ -459,7 +460,7 @@ func TestAgent_PerCallToolsOverride(t *testing.T) {
 		},
 	})
 
-	mock := llm.NewMockLLM("response")
+	mock := mockllm.New("response")
 	a, err := agent.New(agent.Config{
 		ID:    "agent-no-default-tools",
 		Model: mock,
@@ -488,7 +489,7 @@ func TestAgent_WithStorage_ConversationMemory(t *testing.T) {
 		"Got it, your favorite color is blue.",
 		"Your favorite color is blue!",
 	}
-	mock := llm.NewMockLLM(responses...)
+	mock := mockllm.New(responses...)
 
 	a, err := agent.New(agent.Config{
 		ID:           "memory-agent",
@@ -568,7 +569,7 @@ func TestAgent_WithStorage_ConversationMemory(t *testing.T) {
 }
 
 func TestAgent_StorageGetterAndSetter(t *testing.T) {
-	mock := llm.NewMockLLM("hello")
+	mock := mockllm.New("hello")
 	store1 := inmemory.New()
 	store2 := inmemory.New()
 
@@ -596,7 +597,7 @@ func TestAgent_Stream_WithStorage(t *testing.T) {
 	store := inmemory.New()
 	defer func() { _ = store.Close() }()
 
-	mock := llm.NewMockLLM("Streamed response")
+	mock := mockllm.New("Streamed response")
 	a, err := agent.New(agent.Config{
 		ID:      "streaming-agent",
 		Model:   mock,
@@ -648,8 +649,8 @@ func TestAgent_WithStorage_MaxSteps_NoDuplicateMessages(t *testing.T) {
 		},
 	})
 
-	mock := llm.NewMockLLM().ApplyOptions(
-		llm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
+	mock := mockllm.New().ApplyOptions(
+		mockllm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
 			return &llm.GenerateResponse{
 				FinishReason: llm.FinishReasonTool,
 				ToolCalls: []llm.ToolCall{
@@ -697,7 +698,7 @@ func TestAgent_WithStorage_MaxSteps_NoDuplicateMessages(t *testing.T) {
 
 func TestAgent_WithMedia(t *testing.T) {
 	ctx := context.Background()
-	mock := llm.NewMockLLM("I see an image of a red apple.")
+	mock := mockllm.New("I see an image of a red apple.")
 
 	a, err := agent.New(agent.Config{
 		ID:    "vision-agent",
@@ -741,8 +742,8 @@ func TestAgent_MultipartToolResult(t *testing.T) {
 		},
 	})
 
-	mock := llm.NewMockLLM().ApplyOptions(
-		llm.WithCustomHandler(func(_ context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error) {
+	mock := mockllm.New().ApplyOptions(
+		mockllm.WithCustomHandler(func(_ context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error) {
 			if len(req.Messages) == 1 {
 				return &llm.GenerateResponse{
 					FinishReason: llm.FinishReasonTool,
@@ -787,8 +788,8 @@ func TestAgent_ThinkingConfigurationAndOverride(t *testing.T) {
 	ctx := context.Background()
 
 	var recordedReq llm.GenerateRequest
-	mock := llm.NewMockLLM().ApplyOptions(
-		llm.WithCustomHandler(func(_ context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error) {
+	mock := mockllm.New().ApplyOptions(
+		mockllm.WithCustomHandler(func(_ context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error) {
 			recordedReq = req
 			return &llm.GenerateResponse{
 				Text:         "42",
@@ -863,8 +864,8 @@ func TestAgent_ThinkingConfigurationAndOverride(t *testing.T) {
 func TestAgent_StreamThinking(t *testing.T) {
 	ctx := context.Background()
 
-	mock := llm.NewMockLLM().ApplyOptions(
-		llm.WithCustomStreamHandler(func(ctx context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
+	mock := mockllm.New().ApplyOptions(
+		mockllm.WithCustomStreamHandler(func(ctx context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
 			chunks := []*llm.StreamChunk{
 				{ThinkingDelta: "Step 1: Analyzing... "},
 				{ThinkingDelta: "Step 2: Concluding..."},
@@ -916,8 +917,8 @@ func TestAgent_StreamThinking(t *testing.T) {
 
 func TestAgent_ToolDefinitionsAreDeterministicallyOrdered(t *testing.T) {
 	var names []string
-	mock := llm.NewMockLLM().ApplyOptions(
-		llm.WithCustomHandler(func(_ context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error) {
+	mock := mockllm.New().ApplyOptions(
+		mockllm.WithCustomHandler(func(_ context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error) {
 			names = names[:0]
 			for _, def := range req.Tools {
 				names = append(names, def.Name)
@@ -953,7 +954,7 @@ func TestAgent_ToolDefinitionsAreDeterministicallyOrdered(t *testing.T) {
 }
 
 func TestAgent_WithMediaDoesNotMutateInputMessages(t *testing.T) {
-	mock := llm.NewMockLLM("seen")
+	mock := mockllm.New("seen")
 	a, err := agent.New(agent.Config{ID: "media-agent", Model: mock})
 	if err != nil {
 		t.Fatalf("failed to create agent: %v", err)

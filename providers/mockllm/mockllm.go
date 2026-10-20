@@ -1,83 +1,89 @@
-package llm
+// Package mockllm provides a deterministic, in-memory LLM implementation for
+// tests, examples, and local simulation without external network calls.
+package mockllm
 
 import (
 	"context"
 	"strings"
 	"sync"
+
+	"github.com/ijaidev/gojent/core/llm"
 )
 
-// MockLLM is a thread-safe mock implementation of the LLM interface.
+// Model is a thread-safe mock implementation of the llm.LLM interface.
 // It is designed for unit testing, integration tests, and local simulation
 // without making external network calls.
-type MockLLM struct {
+type Model struct {
 	mu             sync.RWMutex
 	modelID        string
 	responses      []string
 	callIndex      int
-	calls          []GenerateRequest
-	customFn       func(ctx context.Context, req GenerateRequest) (*GenerateResponse, error)
-	customStreamFn func(ctx context.Context, req GenerateRequest) (Stream, error)
-	usage          Usage
-	toolCalls      []ToolCall
+	calls          []llm.GenerateRequest
+	customFn       func(ctx context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error)
+	customStreamFn func(ctx context.Context, req llm.GenerateRequest) (llm.Stream, error)
+	usage          llm.Usage
+	toolCalls      []llm.ToolCall
 }
 
-// MockOption configures a MockLLM.
-type MockOption func(*MockLLM)
+var _ llm.LLM = (*Model)(nil)
 
-// WithModelID configures a custom model identifier on MockLLM.
-func WithModelID(id string) MockOption {
-	return func(m *MockLLM) {
+// Option configures a Model.
+type Option func(*Model)
+
+// WithModelID configures a custom model identifier on Model.
+func WithModelID(id string) Option {
+	return func(m *Model) {
 		m.modelID = id
 	}
 }
 
 // WithCustomHandler configures a dynamic response generator function.
-func WithCustomHandler(fn func(ctx context.Context, req GenerateRequest) (*GenerateResponse, error)) MockOption {
-	return func(m *MockLLM) {
+func WithCustomHandler(fn func(ctx context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error)) Option {
+	return func(m *Model) {
 		m.customFn = fn
 	}
 }
 
 // WithCustomStreamHandler configures a dynamic stream generator function.
-func WithCustomStreamHandler(fn func(ctx context.Context, req GenerateRequest) (Stream, error)) MockOption {
-	return func(m *MockLLM) {
+func WithCustomStreamHandler(fn func(ctx context.Context, req llm.GenerateRequest) (llm.Stream, error)) Option {
+	return func(m *Model) {
 		m.customStreamFn = fn
 	}
 }
 
 // WithUsage configures custom token usage statistics returned on each response.
-func WithUsage(u Usage) MockOption {
-	return func(m *MockLLM) {
+func WithUsage(u llm.Usage) Option {
+	return func(m *Model) {
 		m.usage = u
 	}
 }
 
 // WithToolCalls configures tool calls returned on generation.
-func WithToolCalls(calls ...ToolCall) MockOption {
-	return func(m *MockLLM) {
+func WithToolCalls(calls ...llm.ToolCall) Option {
+	return func(m *Model) {
 		m.toolCalls = calls
 	}
 }
 
-// NewMockLLM creates a new MockLLM that returns the specified text responses.
+// New creates a new Model that returns the specified text responses.
 //
 // Usage:
 //
 //	// Returns "Hello, world!" for all Generate calls:
-//	mock := llm.NewMockLLM("Hello, world!")
+//	mock := mockllm.New("Hello, world!")
 //
 //	// Cycles sequentially through responses:
-//	mock := llm.NewMockLLM("Answer 1", "Answer 2")
-func NewMockLLM(texts ...string) *MockLLM {
+//	mock := mockllm.New("Answer 1", "Answer 2")
+func New(texts ...string) *Model {
 	responses := texts
 	if len(responses) == 0 {
 		responses = []string{"Mock LLM response"}
 	}
-	return &MockLLM{
+	return &Model{
 		modelID:   "mock-llm",
 		responses: responses,
-		calls:     make([]GenerateRequest, 0),
-		usage: Usage{
+		calls:     make([]llm.GenerateRequest, 0),
+		usage: llm.Usage{
 			PromptTokens:     10,
 			CompletionTokens: 20,
 			TotalTokens:      30,
@@ -85,13 +91,8 @@ func NewMockLLM(texts ...string) *MockLLM {
 	}
 }
 
-// NewMockllm is an alias for NewMockLLM for compatibility with various casing.
-func NewMockllm(texts ...string) *MockLLM {
-	return NewMockLLM(texts...)
-}
-
 // ApplyOptions applies additional configuration options to the mock.
-func (m *MockLLM) ApplyOptions(opts ...MockOption) *MockLLM {
+func (m *Model) ApplyOptions(opts ...Option) *Model {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, opt := range opts {
@@ -101,14 +102,14 @@ func (m *MockLLM) ApplyOptions(opts ...MockOption) *MockLLM {
 }
 
 // ModelID returns the identifier of this mock model.
-func (m *MockLLM) ModelID() string {
+func (m *Model) ModelID() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.modelID
 }
 
-// Generate implements the LLM interface.
-func (m *MockLLM) Generate(ctx context.Context, req GenerateRequest) (*GenerateResponse, error) {
+// Generate implements the llm.LLM interface.
+func (m *Model) Generate(ctx context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error) {
 	// Respect context cancellation
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -136,23 +137,23 @@ func (m *MockLLM) Generate(ctx context.Context, req GenerateRequest) (*GenerateR
 	}
 
 	if len(m.toolCalls) > 0 {
-		return &GenerateResponse{
+		return &llm.GenerateResponse{
 			Text:         text,
 			ToolCalls:    m.toolCalls,
-			FinishReason: FinishReasonTool,
+			FinishReason: llm.FinishReasonTool,
 			Usage:        m.usage,
 		}, nil
 	}
 
-	return &GenerateResponse{
+	return &llm.GenerateResponse{
 		Text:         text,
-		FinishReason: FinishReasonStop,
+		FinishReason: llm.FinishReasonStop,
 		Usage:        m.usage,
 	}, nil
 }
 
-// Stream implements the LLM interface, splitting responses into token deltas.
-func (m *MockLLM) Stream(ctx context.Context, req GenerateRequest) (Stream, error) {
+// Stream implements the llm.LLM interface, splitting responses into token deltas.
+func (m *Model) Stream(ctx context.Context, req llm.GenerateRequest) (llm.Stream, error) {
 	// Respect context cancellation
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -183,45 +184,45 @@ func (m *MockLLM) Stream(ctx context.Context, req GenerateRequest) (Stream, erro
 	if len(m.toolCalls) > 0 && len(chunks) > 0 {
 		last := chunks[len(chunks)-1]
 		last.ToolCalls = m.toolCalls
-		last.FinishReason = FinishReasonTool
+		last.FinishReason = llm.FinishReasonTool
 	}
-	return NewSliceStream(ctx, chunks), nil
+	return llm.NewSliceStream(ctx, chunks), nil
 }
 
 // splitIntoChunks splits a full response text into word-like delta chunks
 // while preserving exact whitespace, newlines, and attached terminal metadata.
-func splitIntoChunks(text string, usage Usage) []*StreamChunk {
+func splitIntoChunks(text string, usage llm.Usage) []*llm.StreamChunk {
 	if text == "" {
-		return []*StreamChunk{
+		return []*llm.StreamChunk{
 			{
 				Delta:        "",
-				FinishReason: FinishReasonStop,
+				FinishReason: llm.FinishReasonStop,
 				Usage:        &usage,
 			},
 		}
 	}
 
-	var chunks []*StreamChunk
+	var chunks []*llm.StreamChunk
 	var current strings.Builder
 
 	for i, r := range text {
 		current.WriteRune(r)
 		if r == ' ' || r == '\n' || r == '\t' || i == len(text)-1 {
-			chunks = append(chunks, &StreamChunk{
+			chunks = append(chunks, &llm.StreamChunk{
 				Delta: current.String(),
 			})
 			current.Reset()
 		}
 	}
 	if current.Len() > 0 {
-		chunks = append(chunks, &StreamChunk{
+		chunks = append(chunks, &llm.StreamChunk{
 			Delta: current.String(),
 		})
 	}
 
 	if len(chunks) > 0 {
 		last := chunks[len(chunks)-1]
-		last.FinishReason = FinishReasonStop
+		last.FinishReason = llm.FinishReasonStop
 		last.Usage = &usage
 	}
 
@@ -229,16 +230,16 @@ func splitIntoChunks(text string, usage Usage) []*StreamChunk {
 }
 
 // Calls returns a copy of all requests received by this mock.
-func (m *MockLLM) Calls() []GenerateRequest {
+func (m *Model) Calls() []llm.GenerateRequest {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	copied := make([]GenerateRequest, len(m.calls))
+	copied := make([]llm.GenerateRequest, len(m.calls))
 	copy(copied, m.calls)
 	return copied
 }
 
-// LastCall returns the most recent GenerateRequest received, or nil if no calls were made.
-func (m *MockLLM) LastCall() *GenerateRequest {
+// LastCall returns the most recent llm.GenerateRequest received, or nil if no calls were made.
+func (m *Model) LastCall() *llm.GenerateRequest {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if len(m.calls) == 0 {
@@ -248,25 +249,25 @@ func (m *MockLLM) LastCall() *GenerateRequest {
 	return &last
 }
 
-// CallCount returns how many times Generate has been invoked.
-func (m *MockLLM) CallCount() int {
+// CallCount returns how many times Generate or Stream has been invoked.
+func (m *Model) CallCount() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.calls)
 }
 
 // SetToolCalls dynamically configures tool calls returned on future generations.
-func (m *MockLLM) SetToolCalls(calls ...ToolCall) {
+func (m *Model) SetToolCalls(calls ...llm.ToolCall) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.toolCalls = calls
 }
 
 // Reset clears recorded calls and resets the response index.
-func (m *MockLLM) Reset() {
+func (m *Model) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.callIndex = 0
-	m.calls = make([]GenerateRequest, 0)
+	m.calls = make([]llm.GenerateRequest, 0)
 	m.toolCalls = nil
 }

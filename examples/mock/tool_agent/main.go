@@ -14,6 +14,7 @@ import (
 	"github.com/ijaidev/gojent/core/agent"
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/tool"
+	"github.com/ijaidev/gojent/providers/mockllm"
 )
 
 // CalculatorInput specifies arguments for arithmetic operations.
@@ -97,8 +98,8 @@ func run() error {
 	fmt.Println("=== Demo 1: Autonomous ReAct Tool Execution (Non-streaming) ===")
 
 	calcTurn := 0
-	mockCalc := llm.NewMockLLM().ApplyOptions(
-		llm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
+	mockCalc := mockllm.New().ApplyOptions(
+		mockllm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
 			calcTurn++
 			if calcTurn == 1 {
 				// Turn 1: Model inspects prompt and returns a ToolCall request
@@ -176,8 +177,8 @@ func run() error {
 	fmt.Println("\n=== Demo 2: Streaming ReAct with Tool Argument Streaming ===")
 
 	streamTurn := 0
-	mockStream := llm.NewMockLLM().ApplyOptions(
-		llm.WithCustomStreamHandler(func(ctx context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
+	mockStream := mockllm.New().ApplyOptions(
+		mockllm.WithCustomStreamHandler(func(ctx context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
 			streamTurn++
 			if streamTurn == 1 {
 				// Turn 1: Model streams the tool arguments in real-time chunks
