@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"reflect"
@@ -26,7 +27,7 @@ type Store struct {
 	threads      map[string]*storage.Thread
 	messages     map[string]*storage.Message
 	threadMsgs   map[string][]string
-	threadStates map[string]map[string]*storage.ThreadState
+	threadStates map[string]map[string]json.RawMessage
 }
 
 // New creates and initializes a new in-memory Store.
@@ -35,7 +36,7 @@ func New() *Store {
 		threads:      make(map[string]*storage.Thread),
 		messages:     make(map[string]*storage.Message),
 		threadMsgs:   make(map[string][]string),
-		threadStates: make(map[string]map[string]*storage.ThreadState),
+		threadStates: make(map[string]map[string]json.RawMessage),
 	}
 }
 
@@ -427,11 +428,11 @@ func (s *Store) GetThreadState(ctx context.Context, threadID, stateType string) 
 	if !ok {
 		return nil, storage.ErrStateNotFound
 	}
-	record, ok := byType[stateType]
+	raw, ok := byType[stateType]
 	if !ok {
 		return nil, storage.ErrStateNotFound
 	}
-	return record.Value, nil
+	return decodeThreadState(raw)
 }
 
 // SetThreadState sets or overwrites the durable state value for a (threadID, stateType) pair.
@@ -449,17 +450,17 @@ func (s *Store) SetThreadState(ctx context.Context, threadID, stateType string, 
 		return storage.ErrClosed
 	}
 
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("%w: failed to marshal state value: %w", storage.ErrInvalidInput, err)
+	}
+
 	byType, ok := s.threadStates[threadID]
 	if !ok {
-		byType = make(map[string]*storage.ThreadState)
+		byType = make(map[string]json.RawMessage)
 		s.threadStates[threadID] = byType
 	}
-	byType[stateType] = &storage.ThreadState{
-		ThreadID:  threadID,
-		Type:      stateType,
-		Value:     value,
-		UpdatedAt: time.Now().UTC(),
-	}
+	byType[stateType] = json.RawMessage(raw)
 	return nil
 }
 
@@ -507,10 +508,25 @@ func (s *Store) ListThreadStates(ctx context.Context, threadID string) (map[stri
 		return make(map[string]any), nil
 	}
 	res := make(map[string]any, len(byType))
-	for k, v := range byType {
-		res[k] = v.Value
+	for k, raw := range byType {
+		value, err := decodeThreadState(raw)
+		if err != nil {
+			return nil, fmt.Errorf("inmemory: failed to decode state %q: %w", k, err)
+		}
+		res[k] = value
 	}
 	return res, nil
+}
+
+func decodeThreadState(raw json.RawMessage) (any, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal state value: %w", err)
+	}
+	return value, nil
 }
 
 // Clear removes all stored threads, messages, and state. Useful in testing.
@@ -520,7 +536,7 @@ func (s *Store) Clear() {
 	s.threads = make(map[string]*storage.Thread)
 	s.messages = make(map[string]*storage.Message)
 	s.threadMsgs = make(map[string][]string)
-	s.threadStates = make(map[string]map[string]*storage.ThreadState)
+	s.threadStates = make(map[string]map[string]json.RawMessage)
 }
 
 // DangerouslyClearAll removes all stored threads, messages, and state.
@@ -536,10 +552,9 @@ func (s *Store) Close() error {
 	return nil
 }
 
-// Ensure Store satisfies Storage, MemoryStore, and all domain store interfaces at compile time.
+// Ensure Store satisfies Storage and all domain store interfaces at compile time.
 var (
 	_ storage.Storage          = (*Store)(nil)
-	_ storage.MemoryStore      = (*Store)(nil)
 	_ storage.ThreadStore      = (*Store)(nil)
 	_ storage.MessageStore     = (*Store)(nil)
 	_ storage.ThreadStateStore = (*Store)(nil)

@@ -76,7 +76,7 @@ func (s *Store) SaveThread(ctx context.Context, thread *storage.Thread) (*storag
 		return nil, fmt.Errorf("sqlite: failed to save thread: %w", err)
 	}
 
-	return th.Clone(), nil
+	return th, nil
 }
 
 // GetThreadByID retrieves a conversation thread by its unique ID.
@@ -121,7 +121,7 @@ func (s *Store) GetThreadByID(ctx context.Context, id string) (*storage.Thread, 
 		}
 	}
 
-	return th.Clone(), nil
+	return &th, nil
 }
 
 // UpdateThread updates specific attributes of an existing thread.
@@ -201,7 +201,7 @@ func (s *Store) UpdateThread(ctx context.Context, id string, input storage.Updat
 		return nil, err
 	}
 
-	return th.Clone(), nil
+	return th, nil
 }
 
 // DeleteThread removes a conversation thread and cascades deletion to all messages and thread state.
@@ -343,7 +343,7 @@ func (s *Store) ListThreads(ctx context.Context, filter storage.ThreadFilter) ([
 				th.Metadata = meta
 			}
 		}
-		results = append(results, th.Clone())
+		results = append(results, &th)
 	}
 
 	if err := rows.Err(); err != nil {

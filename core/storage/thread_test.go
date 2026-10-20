@@ -6,7 +6,7 @@ import (
 	"github.com/ijaidev/gojent/core/storage"
 )
 
-func TestThreadClone_IsDeep(t *testing.T) {
+func TestThreadClone_CopiesTopLevelMetadata(t *testing.T) {
 	original := &storage.Thread{
 		ID:       "thread-1",
 		Title:    "Title",
@@ -21,6 +21,6 @@ func TestThreadClone_IsDeep(t *testing.T) {
 		t.Error("title mutation leaked into the original")
 	}
 	if original.Metadata["key"] != "value" {
-		t.Error("metadata mutation leaked into the original")
+		t.Error("top-level metadata mutation leaked into the original")
 	}
 }

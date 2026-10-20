@@ -38,14 +38,19 @@ func testThreadLifecycle(t *testing.T, store storage.Storage) {
 		t.Errorf("metadata not persisted: %+v", fetched.Metadata)
 	}
 
-	// Callers must not be able to mutate stored state through returned values.
+	// Callers must not be able to mutate normalized fields or top-level metadata
+	// through returned values.
 	fetched.Title = "mutated"
+	fetched.Metadata["env"] = "mutated"
 	again, err := store.GetThreadByID(ctx, created.ID)
 	if err != nil {
 		t.Fatalf("GetThreadByID after mutation failed: %v", err)
 	}
 	if again.Title != "First" {
 		t.Error("store returned a reference to internal state")
+	}
+	if again.Metadata["env"] != "test" {
+		t.Error("store returned a reference to top-level metadata")
 	}
 
 	title := "Updated"

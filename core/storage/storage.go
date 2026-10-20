@@ -1,3 +1,5 @@
+// Package storage defines the persistence models, domain contracts, and interfaces
+// for managing conversation threads, messages, and durable thread state in Gojent.
 package storage
 
 import "context"
@@ -41,6 +43,9 @@ type MessageStore interface {
 }
 
 // ThreadStateStore defines persistence operations for durable, arbitrary thread state.
+//
+// State values are stored as JSON. Values must be JSON-serializable; when read
+// back, numbers are decoded as float64 and objects as map[string]any.
 type ThreadStateStore interface {
 	// GetThreadState retrieves the stored state value for a (threadID, stateType) pair.
 	// Returns ErrStateNotFound if no state has been set for that type.
@@ -54,12 +59,6 @@ type ThreadStateStore interface {
 
 	// ListThreadStates returns all state values recorded for a thread, mapped by state type.
 	ListThreadStates(ctx context.Context, threadID string) (map[string]any, error)
-}
-
-// MemoryStore defines the domain interface uniting thread persistence and message persistence.
-type MemoryStore interface {
-	ThreadStore
-	MessageStore
 }
 
 // Storage represents the complete swappable storage backend in Gojent.

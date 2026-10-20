@@ -150,7 +150,7 @@ func (s *Store) SaveMessages(ctx context.Context, messages []*storage.Message) (
 
 		_, _ = tx.ExecContext(ctx, "UPDATE threads SET updated_at = ? WHERE id = ?", formatTime(mc.CreatedAt), mc.ThreadID)
 
-		out = append(out, mc.Clone())
+		out = append(out, mc)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -217,7 +217,7 @@ func scanMessage(rows interface {
 		}
 	}
 
-	return msg.Clone(), nil
+	return &msg, nil
 }
 
 // ListMessages retrieves messages matching the filter criteria.
@@ -349,7 +349,7 @@ func (s *Store) GetMessagesByID(ctx context.Context, ids []string) ([]*storage.M
 	results := make([]*storage.Message, 0, len(ids))
 	for _, id := range ids {
 		if msg, ok := msgMap[id]; ok {
-			results = append(results, msg.Clone())
+			results = append(results, msg)
 		}
 	}
 

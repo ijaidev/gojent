@@ -19,19 +19,18 @@ type Thread struct {
 	// UpdatedAt is the timestamp when the thread or its metadata was last updated.
 	UpdatedAt time.Time `json:"updated_at"`
 	// Metadata contains arbitrary key-value pairs associated with the thread.
+	// Nested values are treated as immutable.
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
-// Clone returns a deep copy of the Thread to prevent concurrent modification or mutation races.
+// Clone returns a copy of the Thread with an independent top-level metadata map.
+// Nested metadata values are shared and should be treated as immutable.
 func (t *Thread) Clone() *Thread {
 	if t == nil {
 		return nil
 	}
 	clone := *t
-	if t.Metadata != nil {
-		clone.Metadata = make(map[string]any, len(t.Metadata))
-		maps.Copy(clone.Metadata, t.Metadata)
-	}
+	clone.Metadata = maps.Clone(t.Metadata)
 	return &clone
 }
 
@@ -42,7 +41,7 @@ type UpdateThreadInput struct {
 	Title *string `json:"title,omitempty"`
 	// ResourceID if non-nil updates the thread's resource owner.
 	ResourceID *string `json:"resource_id,omitempty"`
-	// Metadata if non-nil merges or replaces metadata keys on the thread.
+	// Metadata if non-nil merges its keys into the thread's existing metadata.
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 

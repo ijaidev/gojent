@@ -102,7 +102,7 @@ func (s *jsonScanner) Scan(src any) error {
 		return fmt.Errorf("postgres: cannot scan %T into JSON", src)
 	}
 	trimmed := strings.TrimSpace(string(b))
-	if trimmed == "" || trimmed == "null" || trimmed == `""` {
+	if trimmed == "" || trimmed == "null" {
 		return nil
 	}
 	return json.Unmarshal([]byte(trimmed), s.dest)

@@ -179,4 +179,13 @@ func testMultipartMessage(t *testing.T, store storage.Storage) {
 	if msgs[0].Content[0].Text != "Look at this" || msgs[0].Content[1].Type != llm.PartTypeImage {
 		t.Errorf("unexpected content: %+v", msgs[0].Content)
 	}
+
+	msgs[0].Content[1].Data[0] = 9
+	again, err := store.ListMessages(ctx, storage.MessageFilter{ThreadID: th.ID})
+	if err != nil {
+		t.Fatalf("ListMessages after mutation failed: %v", err)
+	}
+	if again[0].Content[1].Data[0] != 1 {
+		t.Error("store returned a reference to message content data")
+	}
 }

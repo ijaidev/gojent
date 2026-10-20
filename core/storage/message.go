@@ -2,6 +2,7 @@ package storage
 
 import (
 	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -32,8 +33,10 @@ type Message struct {
 	// CreatedAt is the timestamp when the message was recorded.
 	CreatedAt time.Time `json:"created_at"`
 	// Metadata contains arbitrary custom metadata attached to this message.
+	// Nested values are treated as immutable.
 	Metadata map[string]any `json:"metadata,omitempty"`
 	// Raw holds provider-specific payloads (e.g. Gemini thought signatures or OpenAI annotations).
+	// It is treated as immutable.
 	Raw any `json:"raw,omitempty"`
 }
 
@@ -54,7 +57,9 @@ func (m *Message) Text() string {
 	return sb.String()
 }
 
-// Clone returns a deep copy of the Message to prevent mutation races.
+// Clone returns a copy of the Message with independent content, content data,
+// tool calls, and top-level metadata. Nested metadata values and Raw are shared
+// and should be treated as immutable.
 func (m *Message) Clone() *Message {
 	if m == nil {
 		return nil
@@ -62,20 +67,18 @@ func (m *Message) Clone() *Message {
 	clone := *m
 	if m.Content != nil {
 		clone.Content = make([]llm.Part, len(m.Content))
-		copy(clone.Content, m.Content)
+		for i, part := range m.Content {
+			clone.Content[i] = part
+			clone.Content[i].Data = slices.Clone(part.Data)
+		}
 	}
-	if m.ToolCalls != nil {
-		clone.ToolCalls = make([]llm.ToolCall, len(m.ToolCalls))
-		copy(clone.ToolCalls, m.ToolCalls)
-	}
-	if m.Metadata != nil {
-		clone.Metadata = make(map[string]any, len(m.Metadata))
-		maps.Copy(clone.Metadata, m.Metadata)
-	}
+	clone.ToolCalls = slices.Clone(m.ToolCalls)
+	clone.Metadata = maps.Clone(m.Metadata)
 	return &clone
 }
 
 // ToLLMMessage converts a storage Message to an execution llm.Message.
+// The returned message shares Content, ToolCalls, and Raw with the storage message.
 func (m *Message) ToLLMMessage() llm.Message {
 	if m == nil {
 		return llm.Message{}

@@ -1,5 +1,3 @@
-// Package storage defines the persistence models, domain contracts, and interfaces
-// for managing conversation threads, messages, and durable thread state in Gojent.
 package storage
 
 // SortOrder defines the sorting order for storage queries.
@@ -20,12 +18,4 @@ const (
 	ThreadSortCreatedAt ThreadSortField = "created_at"
 	// ThreadSortUpdatedAt sorts threads by their last update timestamp.
 	ThreadSortUpdatedAt ThreadSortField = "updated_at"
-)
-
-// MessageSortField defines the fields by which messages can be sorted.
-type MessageSortField string
-
-const (
-	// MessageSortCreatedAt sorts messages by their creation timestamp.
-	MessageSortCreatedAt MessageSortField = "created_at"
 )

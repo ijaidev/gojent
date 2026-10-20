@@ -269,7 +269,6 @@ func (s *Store) DangerouslyClearAll() {
 // Compile-time checks that Store implements storage.Storage and all domain store interfaces.
 var (
 	_ storage.Storage          = (*Store)(nil)
-	_ storage.MemoryStore      = (*Store)(nil)
 	_ storage.ThreadStore      = (*Store)(nil)
 	_ storage.MessageStore     = (*Store)(nil)
 	_ storage.ThreadStateStore = (*Store)(nil)

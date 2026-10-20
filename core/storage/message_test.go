@@ -69,25 +69,32 @@ func TestToLLMMessages_HandlesNils(t *testing.T) {
 	}
 }
 
-func TestMessageClone_IsDeep(t *testing.T) {
-	original := storage.NewMessageWithParts("thread-1", llm.RoleAssistant, llm.TextPart("hello"))
+func TestMessageClone_CopiesContentAndTopLevelMetadata(t *testing.T) {
+	original := storage.NewMessageWithParts("thread-1", llm.RoleAssistant,
+		llm.TextPart("hello"),
+		llm.ImageFromBytes([]byte{1, 2, 3}, "image/png"),
+	)
 	original.Thinking = "thought"
 	original.ToolCalls = []llm.ToolCall{{ID: "tc-1", Name: "search"}}
 	original.Metadata = map[string]any{"key": "value"}
 
 	clone := original.Clone()
 	clone.Content[0].Text = "changed"
+	clone.Content[1].Data[0] = 9
 	clone.ToolCalls[0].Name = "changed"
 	clone.Metadata["key"] = "changed"
 
 	if original.Content[0].Text != "hello" {
 		t.Error("content mutation leaked into the original")
 	}
+	if original.Content[1].Data[0] != 1 {
+		t.Error("content data mutation leaked into the original")
+	}
 	if original.ToolCalls[0].Name != "search" {
 		t.Error("tool call mutation leaked into the original")
 	}
 	if original.Metadata["key"] != "value" {
-		t.Error("metadata mutation leaked into the original")
+		t.Error("top-level metadata mutation leaked into the original")
 	}
 }
 
