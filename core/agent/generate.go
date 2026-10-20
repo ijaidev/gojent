@@ -15,15 +15,6 @@ func (a *Agent) Generate(ctx context.Context, prompt string, opts ...GenerateOpt
 	return a.GenerateMessages(ctx, userMsg, opts...)
 }
 
-// GenerateParts runs the agent with multimodal content parts directly.
-func (a *Agent) GenerateParts(ctx context.Context, parts []llm.Part, opts ...GenerateOption) (*Response, error) {
-	var userMsg []llm.Message
-	if len(parts) > 0 {
-		userMsg = []llm.Message{llm.UserMessageWithParts(parts...)}
-	}
-	return a.GenerateMessages(ctx, userMsg, opts...)
-}
-
 // GenerateMessages executes the agent with a slice of chat messages running
 // the ReAct execution loop.
 func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, opts ...GenerateOption) (*Response, error) {
@@ -71,7 +62,6 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 			return &Response{
 				Text:         resp.Text,
 				Thinking:     resp.Thinking,
-				Content:      []llm.Part{llm.TextPart(resp.Text)},
 				Messages:     callMessages,
 				FinishReason: resp.FinishReason,
 				Usage:        cumulativeUsage,
@@ -100,7 +90,6 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 	return &Response{
 		Text:         lastMsg.Text(),
 		Thinking:     lastMsg.Thinking,
-		Content:      lastMsg.Content,
 		ToolCalls:    lastMsg.ToolCalls,
 		Messages:     callMessages,
 		FinishReason: llm.FinishReasonLength,

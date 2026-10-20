@@ -730,6 +730,36 @@ func TestAgent_WithMedia(t *testing.T) {
 	}
 }
 
+func TestAgent_WithMediaOnly(t *testing.T) {
+	ctx := context.Background()
+	mock := mockllm.New("I see an image.")
+
+	a, err := agent.New(agent.Config{
+		ID:    "vision-agent",
+		Model: mock,
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	imgPart := llm.ImageFromBytes([]byte{1, 2, 3}, "image/png")
+	if _, err := a.Generate(ctx, "", agent.WithMedia(imgPart)); err != nil {
+		t.Fatalf("Generate with media-only prompt failed: %v", err)
+	}
+
+	lastCall := mock.LastCall()
+	if lastCall == nil || len(lastCall.Messages) != 1 {
+		t.Fatalf("expected 1 recorded message, got %+v", lastCall)
+	}
+	userMsg := lastCall.Messages[0]
+	if userMsg.Role != llm.RoleUser || len(userMsg.Content) != 1 {
+		t.Fatalf("expected one user message with one part, got %+v", userMsg)
+	}
+	if userMsg.Content[0].Type != llm.PartTypeImage {
+		t.Errorf("expected image part, got %+v", userMsg.Content[0])
+	}
+}
+
 func TestAgent_MultipartToolResult(t *testing.T) {
 	ctx := context.Background()
 	imgPart := llm.ImageFromBytes([]byte{10, 20, 30}, "image/png")

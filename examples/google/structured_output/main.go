@@ -58,22 +58,21 @@ func run() error {
 	fmt.Println("=== Generating Typed Character Sheet via GenerateStructured ===")
 	prompt := "Create a cunning level 4 shadow rogue who specializes in stealth and daggers."
 
-	res, err := agent.GenerateStructured[CharacterSheet](ctx, charAgent, prompt)
+	sheet, res, err := agent.GenerateStructured[CharacterSheet](ctx, charAgent, prompt)
 	if err != nil {
-		return fmt.Errorf("GenerateStructured failed: %w", err)
+		return fmt.Errorf("generate structured character sheet failed: %w", err)
 	}
 
 	// Access strongly typed fields directly without manual JSON parsing:
-	sheet := res.Data
 	fmt.Printf("Name:      %s\n", sheet.Name)
 	fmt.Printf("Class:     %s\n", sheet.Class)
 	fmt.Printf("Level:     %d\n", sheet.Level)
 	fmt.Printf("Abilities: %v\n", sheet.Abilities)
 	fmt.Printf("Backstory: %s\n", sheet.Backstory)
 	fmt.Printf("Tokens:    %d prompt + %d completion = %d total\n",
-		res.Response.Usage.PromptTokens,
-		res.Response.Usage.CompletionTokens,
-		res.Response.Usage.TotalTokens,
+		res.Usage.PromptTokens,
+		res.Usage.CompletionTokens,
+		res.Usage.TotalTokens,
 	)
 
 	return nil

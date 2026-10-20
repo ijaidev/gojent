@@ -3,21 +3,11 @@
 package agent
 
 import (
-	"errors"
 	"sync"
 
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/storage"
 	"github.com/ijaidev/gojent/core/tool"
-)
-
-var (
-	// ErrModelRequired is returned when an Agent is created without an LLM model.
-	ErrModelRequired = errors.New("agent: model is required")
-	// ErrIDRequired is returned when an Agent is created without an ID.
-	ErrIDRequired = errors.New("agent: id is required")
-	// ErrToolNil is returned when attempting to add a nil tool to an Agent.
-	ErrToolNil = errors.New("agent: cannot add nil tool")
 )
 
 const defaultMaxSteps = 5
@@ -134,43 +124,6 @@ func (a *Agent) Model() llm.LLM {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.model
-}
-
-// Tools returns a snapshot slice of all registered tools on this agent.
-func (a *Agent) Tools() []tool.Tool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	res := make([]tool.Tool, 0, len(a.tools))
-	for _, t := range a.tools {
-		res = append(res, t)
-	}
-	return res
-}
-
-// GetTool retrieves a registered tool by its unique identifier.
-func (a *Agent) GetTool(id string) (tool.Tool, bool) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	t, ok := a.tools[id]
-	return t, ok
-}
-
-// AddTool registers a new tool on the agent.
-func (a *Agent) AddTool(t tool.Tool) error {
-	if t == nil {
-		return ErrToolNil
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.tools[t.ID()] = t
-	return nil
-}
-
-// RemoveTool unregisters a tool from the agent by ID.
-func (a *Agent) RemoveTool(id string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	delete(a.tools, id)
 }
 
 // MaxSteps returns the default maximum number of ReAct loop iterations for this agent.

@@ -73,13 +73,13 @@ func TestGenerateStructured_EndToEnd(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	res, err := agent.GenerateStructured[WeatherReport](ctx, a, "Get London weather")
+	report, _, err := agent.GenerateStructured[WeatherReport](ctx, a, "Get London weather")
 	if err != nil {
 		t.Fatalf("GenerateStructured failed: %v", err)
 	}
 
-	if res.Data.City != "London" || res.Data.Temperature != 15.0 || res.Data.Condition != "rainy" {
-		t.Errorf("unexpected structured data: %+v", res.Data)
+	if report.City != "London" || report.Temperature != 15.0 || report.Condition != "rainy" {
+		t.Errorf("unexpected structured data: %+v", report)
 	}
 
 	// Check that the mock received the expected response format and schema
@@ -159,13 +159,13 @@ func TestGenerateStructured_WithToolsReAct(t *testing.T) {
 		t.Fatalf("failed to create agent: %v", err)
 	}
 
-	res, err := agent.GenerateStructured[WeatherReport](context.Background(), a, "Check Berlin weather")
+	report, _, err := agent.GenerateStructured[WeatherReport](context.Background(), a, "Check Berlin weather")
 	if err != nil {
 		t.Fatalf("GenerateStructured with tools failed: %v", err)
 	}
 
-	if res.Data.City != "Berlin" || res.Data.Temperature != 20.5 || res.Data.Condition != "sunny" {
-		t.Errorf("unexpected data after ReAct: %+v", res.Data)
+	if report.City != "Berlin" || report.Temperature != 20.5 || report.Condition != "sunny" {
+		t.Errorf("unexpected data after ReAct: %+v", report)
 	}
 }
 
@@ -176,12 +176,40 @@ func TestGenerateStructured_UnmarshalError(t *testing.T) {
 		Model: mock,
 	})
 
-	_, err := agent.GenerateStructured[WeatherReport](context.Background(), a, "weather")
+	_, _, err := agent.GenerateStructured[WeatherReport](context.Background(), a, "weather")
 	if err == nil {
 		t.Fatal("expected unmarshal error on malformed response, got nil")
 	}
-	if !strings.Contains(err.Error(), "failed to unmarshal response") {
-		t.Errorf("expected unmarshal error message, got %v", err)
+	if !strings.Contains(err.Error(), "failed to unmarshal structured response") {
+		t.Errorf("expected structured unmarshal error, got %v", err)
+	}
+}
+
+func TestGenerateMessagesStructured_EndToEnd(t *testing.T) {
+	mock := mockllm.New(`{"city":"Paris","temperature":21.0,"condition":"sunny"}`)
+	a, err := agent.New(agent.Config{
+		ID:    "messages-agent",
+		Model: mock,
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	report, _, err := agent.GenerateMessagesStructured[WeatherReport](
+		context.Background(),
+		a,
+		[]llm.Message{llm.UserMessage("Get Paris weather")},
+	)
+	if err != nil {
+		t.Fatalf("GenerateMessagesStructured failed: %v", err)
+	}
+	if report.City != "Paris" || report.Temperature != 21.0 || report.Condition != "sunny" {
+		t.Errorf("unexpected structured data: %+v", report)
+	}
+
+	lastCall := mock.LastCall()
+	if lastCall == nil || lastCall.ResponseFormat == nil || lastCall.ResponseFormat.Name != "WeatherReport" {
+		t.Errorf("expected WeatherReport response format, got %+v", lastCall)
 	}
 }
 
