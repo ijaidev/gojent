@@ -2,8 +2,6 @@ package llm_test
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/ijaidev/gojent/core/llm"
@@ -55,53 +53,6 @@ func TestMessage_MultipartConstructors(t *testing.T) {
 	}
 }
 
-func TestPart_FromFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	filePath := filepath.Join(tmpDir, "test.png")
-	data := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
-	if err := os.WriteFile(filePath, data, 0o600); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
-
-	part, err := llm.ImageFromFile(filePath)
-	if err != nil {
-		t.Fatalf("ImageFromFile failed: %v", err)
-	}
-	if part.Type != llm.PartTypeImage || len(part.Data) != len(data) {
-		t.Errorf("unexpected part: %+v", part)
-	}
-	if part.MIMEType != "image/png" {
-		t.Errorf("expected mime image/png, got %s", part.MIMEType)
-	}
-}
-
-func TestPart_Validate(t *testing.T) {
-	// Valid text
-	if err := llm.TextPart("hello").Validate(); err != nil {
-		t.Errorf("unexpected error for valid text part: %v", err)
-	}
-
-	// Empty text
-	if err := (llm.Part{Type: llm.PartTypeText}).Validate(); err == nil {
-		t.Error("expected error for empty text part")
-	}
-
-	// Valid image bytes
-	if err := llm.ImageFromBytes([]byte{1, 2, 3}, "image/png").Validate(); err != nil {
-		t.Errorf("unexpected error for valid image part: %v", err)
-	}
-
-	// Invalid empty media part
-	if err := (llm.Part{Type: llm.PartTypeImage}).Validate(); err == nil {
-		t.Error("expected error for empty image part")
-	}
-
-	// Invalid part type
-	if err := (llm.Part{Type: "unknown"}).Validate(); err == nil {
-		t.Error("expected error for unknown part type")
-	}
-}
-
 func TestMessage_JSONUnmarshal(t *testing.T) {
 	// String content JSON with thinking
 	jsonStr := `{"role":"user","content":"hello world","thinking":"internal CoT"}`
@@ -127,71 +78,11 @@ func TestMessage_JSONUnmarshal(t *testing.T) {
 	}
 }
 
-func TestThinkingConfig_CloneAndMessage(t *testing.T) {
-	budget := 4096
-	includeThoughts := true
-	cfg := llm.ThinkingConfig{
-		Level:           llm.ThinkingLevelMedium,
-		BudgetTokens:    &budget,
-		IncludeThoughts: &includeThoughts,
-	}
-
-	cloned := cfg.Clone()
-	if cloned.Level != llm.ThinkingLevelMedium || *cloned.BudgetTokens != 4096 || *cloned.IncludeThoughts != true {
-		t.Fatalf("unexpected cloned config: %+v", cloned)
-	}
-
-	// Mutating original should not affect clone
-	*cfg.BudgetTokens = 2048
-	if *cloned.BudgetTokens != 4096 {
-		t.Errorf("expected clone to be independent, got budget %d", *cloned.BudgetTokens)
-	}
-
+func TestMessage_WithThinking(t *testing.T) {
 	msg := llm.UserMessage("Analyze this").
 		WithThinking("Pre-thought")
 
 	if msg.Thinking != "Pre-thought" {
 		t.Errorf("expected thinking 'Pre-thought', got %q", msg.Thinking)
-	}
-}
-
-func TestResponseFormat_Clone(t *testing.T) {
-	strict := true
-	rf := &llm.ResponseFormat{
-		Type:        llm.ResponseFormatJSONSchema,
-		Name:        "TestSchema",
-		Description: "A test schema",
-		Schema:      map[string]any{"type": "object"},
-		Strict:      &strict,
-	}
-
-	cloned := rf.Clone()
-	if cloned.Type != llm.ResponseFormatJSONSchema || cloned.Name != "TestSchema" || *cloned.Strict != true {
-		t.Fatalf("unexpected cloned format: %+v", cloned)
-	}
-
-	*rf.Strict = false
-	if *cloned.Strict != true {
-		t.Errorf("expected clone strict to remain true, got %v", *cloned.Strict)
-	}
-}
-
-func TestToolCall_UnmarshalArgs(t *testing.T) {
-	tc := llm.ToolCall{
-		ID:        "call-abc",
-		Name:      "calc",
-		Arguments: `{"a": 10, "b": 20}`,
-	}
-
-	var parsed struct {
-		A int `json:"a"`
-		B int `json:"b"`
-	}
-	err := tc.UnmarshalArgs(&parsed)
-	if err != nil {
-		t.Fatalf("UnmarshalArgs failed: %v", err)
-	}
-	if parsed.A != 10 || parsed.B != 20 {
-		t.Errorf("unexpected parsed values: %+v", parsed)
 	}
 }

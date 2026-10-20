@@ -1,5 +1,3 @@
-// Package llm provides interfaces, message definitions, and provider abstractions
-// for interacting with Large Language Models.
 package llm
 
 import (
