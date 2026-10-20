@@ -103,7 +103,9 @@ func WithJSONOutput() GenerateOption {
 // WithOutputSchema configures the agent to return structured output strictly conforming to the Go type T.
 func WithOutputSchema[T any](opts ...tool.SchemaOption) GenerateOption {
 	return func(cfg *GenerateConfig) {
-		schema := tool.GenerateSchemaWithOptions[T](opts...)
+		schemaOpts := append([]tool.SchemaOption(nil), opts...)
+		schemaOpts = append(schemaOpts, tool.WithStrictSchema(true))
+		schema := tool.GenerateSchemaWithOptions[T](schemaOpts...)
 		var zero T
 		t := reflect.TypeOf(zero)
 		for t != nil && t.Kind() == reflect.Pointer {

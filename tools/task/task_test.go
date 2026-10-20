@@ -33,7 +33,7 @@ func TestTaskTracker_Lifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	task1 := resCreate1Any.(task.Task)
+	task1 := resCreate1Any.Data.(task.Task)
 	if task1.ID != "1" || task1.Status != task.StatusPending {
 		t.Errorf("unexpected task1: %+v", task1)
 	}
@@ -46,7 +46,7 @@ func TestTaskTracker_Lifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	task2 := resCreate2Any.(task.Task)
+	task2 := resCreate2Any.Data.(task.Task)
 	if task2.ID != "2" {
 		t.Errorf("unexpected task2 ID: %s", task2.ID)
 	}
@@ -60,7 +60,7 @@ func TestTaskTracker_Lifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
-	updated1 := resUpdate1Any.(task.Task)
+	updated1 := resUpdate1Any.Data.(task.Task)
 	if updated1.Status != task.StatusInProgress {
 		t.Errorf("expected status in_progress, got %s", updated1.Status)
 	}
@@ -73,7 +73,7 @@ func TestTaskTracker_Lifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list failed: %v", err)
 	}
-	listPendingRes := resListPendingAny.(task.ListTasksOutput)
+	listPendingRes := resListPendingAny.Data.(task.ListTasksOutput)
 	if listPendingRes.Total != 1 || listPendingRes.Tasks[0].ID != "2" {
 		t.Errorf("expected only task 2 in pending, got: %+v", listPendingRes)
 	}
@@ -84,7 +84,7 @@ func TestTaskTracker_Lifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list failed: %v", err)
 	}
-	listAllRes := resListAllAny.(task.ListTasksOutput)
+	listAllRes := resListAllAny.Data.(task.ListTasksOutput)
 	if listAllRes.Total != 2 {
 		t.Errorf("expected 2 tasks, got %d", listAllRes.Total)
 	}

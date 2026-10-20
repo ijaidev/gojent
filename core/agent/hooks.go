@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/core/tool"
 )
 
 // Hooks defines optional lifecycle callbacks invoked during agent execution.
@@ -66,6 +67,9 @@ type ToolEvent struct {
 	Call *llm.ToolCall
 	// Output is the result delivered to the model as the tool message.
 	Output string
+	// Result is the normalized tool output, including structured Data.
+	// It is nil when the tool was skipped, not found, or failed.
+	Result *tool.Result
 	// Err is the tool execution error, or the BeforeTool error when skipped.
 	Err error
 	// Skipped reports that execution was skipped because BeforeTool returned an error.

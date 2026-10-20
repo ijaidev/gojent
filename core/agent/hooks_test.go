@@ -136,8 +136,63 @@ func TestHooks_GenerateLifecycle(t *testing.T) {
 	if !strings.Contains(ev.Output, "echoed") {
 		t.Errorf("expected echoed tool output, got %q", ev.Output)
 	}
+	if ev.Result == nil || ev.Result.Text() != "echoed:ping" {
+		t.Errorf("expected normalized tool result, got %+v", ev.Result)
+	}
 	if ev.Call.Name != "echo" {
 		t.Errorf("expected tool call name echo, got %q", ev.Call.Name)
+	}
+}
+
+type hookWeatherOutput struct {
+	Condition string `json:"condition"`
+}
+
+func TestHooks_ToolEventExposesStructuredData(t *testing.T) {
+	weatherTool := tool.MustNew(tool.Config[string, hookWeatherOutput]{
+		ID:          "weather",
+		Description: "Returns the weather",
+		Execute: func(_ context.Context, _ string) (hookWeatherOutput, error) {
+			return hookWeatherOutput{Condition: "sunny"}, nil
+		},
+	})
+
+	var captured *agent.ToolEvent
+	a, err := agent.New(agent.Config{
+		ID:    "hooked-agent",
+		Model: toolCallingMock("weather", "final answer"),
+		Tools: []tool.Tool{weatherTool},
+	})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	res, err := a.Generate(context.Background(), "weather please", agent.WithHooks(agent.Hooks{
+		AfterTool: func(_ context.Context, ev *agent.ToolEvent) {
+			captured = ev
+		},
+	}))
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	if res.Text != "final answer" {
+		t.Errorf("expected final answer, got %q", res.Text)
+	}
+	if captured == nil {
+		t.Fatal("expected an AfterTool event")
+	}
+	if captured.Result == nil {
+		t.Fatal("expected a normalized tool result")
+	}
+	data, ok := captured.Result.Data.(hookWeatherOutput)
+	if !ok {
+		t.Fatalf("expected typed tool data, got %T", captured.Result.Data)
+	}
+	if data.Condition != "sunny" {
+		t.Errorf("unexpected tool data: %+v", data)
+	}
+	if captured.Output != `{"condition":"sunny"}` {
+		t.Errorf("unexpected tool output: %q", captured.Output)
 	}
 }
 
@@ -499,7 +554,7 @@ func TestHooks_StreamLifecycle(t *testing.T) {
 		"before_model:0",
 		"after_model:0",
 		"before_tool:0",
-		`after_tool:0:echoed:"ping"`,
+		`after_tool:0:echoed:ping`,
 		"before_model:1",
 		"after_model:1",
 	}

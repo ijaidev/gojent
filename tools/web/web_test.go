@@ -46,7 +46,7 @@ func TestWebFetchTool_HTMLCleaning(t *testing.T) {
 		t.Fatalf("fetch failed: %v", err)
 	}
 
-	res := resAny.(web.FetchOutput)
+	res := resAny.Data.(web.FetchOutput)
 	if res.StatusCode != 200 {
 		t.Errorf("expected 200, got %d", res.StatusCode)
 	}
@@ -84,7 +84,7 @@ func TestWebSearchTool_Mock(t *testing.T) {
 		t.Fatalf("search failed: %v", err)
 	}
 
-	res := resAny.(web.SearchOutput)
+	res := resAny.Data.(web.SearchOutput)
 	if res.Total != 1 {
 		t.Errorf("expected 1 result, got %d", res.Total)
 	}

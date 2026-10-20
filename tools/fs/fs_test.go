@@ -45,7 +45,7 @@ func TestFSTools_ReadWriteEditList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("write_file failed: %v", err)
 	}
-	resWrite := resWriteAny.(fs.WriteFileOutput)
+	resWrite := resWriteAny.Data.(fs.WriteFileOutput)
 	if !resWrite.Success || resWrite.Bytes == 0 {
 		t.Errorf("unexpected write result: %+v", resWrite)
 	}
@@ -58,7 +58,7 @@ func TestFSTools_ReadWriteEditList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read_file failed: %v", err)
 	}
-	resRead := resReadAny.(fs.ReadFileOutput)
+	resRead := resReadAny.Data.(fs.ReadFileOutput)
 	if resRead.TotalLines != 5 {
 		t.Errorf("expected 5 lines, got %d", resRead.TotalLines)
 	}
@@ -73,7 +73,7 @@ func TestFSTools_ReadWriteEditList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read_file range failed: %v", err)
 	}
-	resRange := resRangeAny.(fs.ReadFileOutput)
+	resRange := resRangeAny.Data.(fs.ReadFileOutput)
 	expectedRange := "line 2\nline 3\nline 4"
 	if resRange.Content != expectedRange {
 		t.Errorf("expected %q, got %q", expectedRange, resRange.Content)
@@ -89,7 +89,7 @@ func TestFSTools_ReadWriteEditList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("edit_file failed: %v", err)
 	}
-	resEdit := resEditAny.(fs.EditFileOutput)
+	resEdit := resEditAny.Data.(fs.EditFileOutput)
 	if resEdit.Replacements != 1 || !resEdit.Success {
 		t.Errorf("unexpected edit result: %+v", resEdit)
 	}
@@ -111,7 +111,7 @@ func TestFSTools_ReadWriteEditList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list_files failed: %v", err)
 	}
-	resList := resListAny.(fs.ListFilesOutput)
+	resList := resListAny.Data.(fs.ListFilesOutput)
 	if resList.Total < 1 {
 		t.Errorf("expected at least 1 entry, got %d", resList.Total)
 	}
@@ -174,7 +174,7 @@ func TestFSTools_ReadFileLongLines(t *testing.T) {
 		t.Fatalf("read_file failed on a long line: %v", err)
 	}
 
-	res := resAny.(fs.ReadFileOutput)
+	res := resAny.Data.(fs.ReadFileOutput)
 	if res.TotalLines != 2 {
 		t.Errorf("expected 2 lines, got %d", res.TotalLines)
 	}

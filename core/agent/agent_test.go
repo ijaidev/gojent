@@ -177,6 +177,11 @@ func TestAgent_ToolRegistrationAndManagement(t *testing.T) {
 	if !errors.Is(err, agent.ErrToolNil) {
 		t.Errorf("expected ErrToolNil, got %v", err)
 	}
+	var typedNil *tool.BaseTool[string, string]
+	err = a.AddTool(typedNil)
+	if !errors.Is(err, agent.ErrToolNil) {
+		t.Errorf("expected ErrToolNil for typed-nil tool, got %v", err)
+	}
 
 	// Add new tool
 	newTool := tool.MustNew(tool.Config[string, string]{
@@ -243,7 +248,7 @@ func TestAgent_Generate_ReActLoop(t *testing.T) {
 		ID:          "calc",
 		Description: "Perform calculations",
 		Execute: func(_ context.Context, in string) (string, error) {
-			if in == `{"expr":"2+2"}` {
+			if in == "2+2" {
 				return "4", nil
 			}
 			return "unknown", nil
@@ -261,7 +266,7 @@ func TestAgent_Generate_ReActLoop(t *testing.T) {
 						{
 							ID:        "call-1",
 							Name:      "calc",
-							Arguments: `{"expr":"2+2"}`,
+							Arguments: `"2+2"`,
 						},
 					},
 					Usage: llm.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15},
@@ -317,10 +322,14 @@ func TestAgent_Generate_ReActLoop(t *testing.T) {
 }
 
 func TestAgent_Stream_ReActLoop_WithToolArgumentStreaming(t *testing.T) {
-	weatherTool := tool.MustNew(tool.Config[string, string]{
+	weatherTool := tool.MustNew(tool.Config[struct {
+		Location string `json:"location"`
+	}, string]{
 		ID:          "get_weather",
 		Description: "Fetch weather",
-		Execute: func(_ context.Context, _ string) (string, error) {
+		Execute: func(_ context.Context, _ struct {
+			Location string `json:"location"`
+		}) (string, error) {
 			return `{"weather":"sunny"}`, nil
 		},
 	})
@@ -407,10 +416,10 @@ func TestAgent_Stream_ReActLoop_WithToolArgumentStreaming(t *testing.T) {
 }
 
 func TestAgent_MaxSteps(t *testing.T) {
-	repeatingTool := tool.MustNew(tool.Config[string, string]{
+	repeatingTool := tool.MustNew(tool.Config[struct{}, string]{
 		ID:          "loop_tool",
 		Description: "Loops",
-		Execute: func(_ context.Context, _ string) (string, error) {
+		Execute: func(_ context.Context, _ struct{}) (string, error) {
 			return "done", nil
 		},
 	})

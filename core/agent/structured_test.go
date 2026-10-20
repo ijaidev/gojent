@@ -101,6 +101,13 @@ func TestGenerateStructured_EndToEnd(t *testing.T) {
 	if props["city"] == nil || props["temperature"] == nil || props["condition"] == nil {
 		t.Errorf("expected properties in schema, got %+v", props)
 	}
+	if schema["additionalProperties"] != false {
+		t.Errorf("expected strict output schema, got %+v", schema["additionalProperties"])
+	}
+	required := schema["required"].([]string)
+	if len(required) != 4 {
+		t.Errorf("expected all output fields to be required, got %v", required)
+	}
 }
 
 func TestGenerateStructured_WithToolsReAct(t *testing.T) {

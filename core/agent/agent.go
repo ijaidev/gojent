@@ -67,7 +67,7 @@ func New(cfg Config) (*Agent, error) {
 
 	toolsMap := make(map[string]tool.Tool, len(cfg.Tools))
 	for _, t := range cfg.Tools {
-		if t != nil {
+		if !tool.IsNilTool(t) {
 			toolsMap[t.ID()] = t
 		}
 	}

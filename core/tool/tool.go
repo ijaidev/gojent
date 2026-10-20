@@ -7,9 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
-
-	"github.com/ijaidev/gojent/core/llm"
 )
 
 var (
@@ -17,48 +16,19 @@ var (
 	ErrIDRequired = errors.New("tool: id is required")
 	// ErrExecuteRequired is returned when creating a Tool without an execution function.
 	ErrExecuteRequired = errors.New("tool: execute function is required")
+	// ErrInvalidSchema is returned when a tool's parameter schema cannot be built
+	// or is not a valid JSON object.
+	ErrInvalidSchema = errors.New("tool: invalid schema")
+	// ErrInvalidInput is returned when a tool's input cannot be decoded or validated.
+	ErrInvalidInput = errors.New("tool: invalid input")
+	// ErrOutputEncode is returned when a tool's output cannot be encoded for the model.
+	ErrOutputEncode = errors.New("tool: cannot encode output")
 )
 
-// Result represents the execution output of a tool, supporting both textual and rich multipart components.
-type Result struct {
-	// Content contains the message parts returned by the tool (text, images, audio, video, documents).
-	Content []llm.Part `json:"content"`
-	// Data contains optional structured result data for programmatic consumption.
-	Data any `json:"data,omitempty"`
-}
-
-// Text returns the aggregated textual output of all text parts in the result.
-func (r Result) Text() string {
-	var sb strings.Builder
-	for _, p := range r.Content {
-		if p.Type == llm.PartTypeText && p.Text != "" {
-			if sb.Len() > 0 {
-				sb.WriteString("\n")
-			}
-			sb.WriteString(p.Text)
-		}
-	}
-	return sb.String()
-}
-
-// NewTextResult creates a tool result with text content.
-func NewTextResult(text string) Result {
-	return Result{Content: []llm.Part{llm.TextPart(text)}}
-}
-
-// NewImageResult creates a tool result with text and an image part.
-func NewImageResult(text string, img llm.Part) Result {
-	parts := make([]llm.Part, 0, 2)
-	if text != "" {
-		parts = append(parts, llm.TextPart(text))
-	}
-	parts = append(parts, img)
-	return Result{Content: parts}
-}
-
-// NewResult creates a tool result from multiple parts.
-func NewResult(parts ...llm.Part) Result {
-	return Result{Content: parts}
+// Validator is an optional interface for tool input types that need validation
+// after JSON decoding and before execution.
+type Validator interface {
+	Validate() error
 }
 
 // Tool represents an executable action that an Agent or LLM can invoke.
@@ -67,10 +37,10 @@ type Tool interface {
 	ID() string
 	// Description returns a description of what the tool does, used by the LLM for tool selection.
 	Description() string
-	// Parameters returns the parameter schema for the tool (e.g. JSON schema map).
-	Parameters() any
+	// Parameters returns the parameter JSON Schema object for the tool.
+	Parameters() map[string]any
 	// Execute runs the tool with the provided raw input JSON arguments.
-	Execute(ctx context.Context, input []byte) (any, error)
+	Execute(ctx context.Context, input []byte) (Result, error)
 }
 
 // ExecuteFunc defines the typed execution logic of a tool.
@@ -84,6 +54,8 @@ type Config[In any, Out any] struct {
 	Description string
 	// Parameters is an optional custom schema override. If nil, schema is generated from In.
 	Parameters any
+	// SchemaOptions configures automatic schema generation when Parameters is nil.
+	SchemaOptions []SchemaOption
 	// Execute is the strongly typed handler function. Required.
 	Execute ExecuteFunc[In, Out]
 }
@@ -92,23 +64,33 @@ type Config[In any, Out any] struct {
 type BaseTool[In any, Out any] struct {
 	id          string
 	description string
-	parameters  any
+	parameters  map[string]any
 	execute     ExecuteFunc[In, Out]
 }
 
 // New creates and validates a new generic BaseTool.
 // If cfg.Parameters is nil, a JSON Schema is automatically generated from the In type.
 func New[In any, Out any](cfg Config[In, Out]) (*BaseTool[In, Out], error) {
-	if cfg.ID == "" {
+	if strings.TrimSpace(cfg.ID) == "" {
 		return nil, ErrIDRequired
 	}
 	if cfg.Execute == nil {
 		return nil, ErrExecuteRequired
 	}
 
-	params := cfg.Parameters
-	if params == nil {
-		params = GenerateSchema[In]()
+	var params map[string]any
+	if cfg.Parameters == nil {
+		generated, err := GenerateSchemaE[In](cfg.SchemaOptions...)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrInvalidSchema, err)
+		}
+		params = generated
+	} else {
+		normalized, err := normalizeSchema(cfg.Parameters)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrInvalidSchema, err)
+		}
+		params = normalized
 	}
 
 	return &BaseTool[In, Out]{
@@ -130,73 +112,210 @@ func MustNew[In any, Out any](cfg Config[In, Out]) *BaseTool[In, Out] {
 
 // ID returns the unique identifier of the tool.
 func (t *BaseTool[In, Out]) ID() string {
+	if t == nil {
+		return ""
+	}
 	return t.id
 }
 
 // Description returns the description of the tool.
 func (t *BaseTool[In, Out]) Description() string {
+	if t == nil {
+		return ""
+	}
 	return t.description
 }
 
-// Parameters returns the tool's parameter schema.
-func (t *BaseTool[In, Out]) Parameters() any {
-	return t.parameters
+// Parameters returns a copy of the tool's parameter schema.
+func (t *BaseTool[In, Out]) Parameters() map[string]any {
+	if t == nil || t.parameters == nil {
+		return nil
+	}
+	params, err := cloneJSONValue(t.parameters)
+	if err != nil {
+		return nil
+	}
+	schema, _ := params.(map[string]any)
+	return schema
 }
 
-// Execute executes the tool by unmarshaling raw JSON input into In and invoking the handler.
-func (t *BaseTool[In, Out]) Execute(ctx context.Context, input []byte) (any, error) {
-	var in In
+// Execute decodes raw JSON input into In, validates it when supported, invokes
+// the handler, and normalizes the handler output into a Result.
+func (t *BaseTool[In, Out]) Execute(ctx context.Context, input []byte) (Result, error) {
+	if t == nil || t.execute == nil {
+		return Result{}, ErrExecuteRequired
+	}
+	if t.id == "" {
+		return Result{}, ErrIDRequired
+	}
+	if err := ctx.Err(); err != nil {
+		return Result{}, fmt.Errorf("tool %s: %w", t.id, err)
+	}
 
-	switch target := any(&in).(type) {
-	case *[]byte:
-		*target = input
-	case *string:
-		*target = string(input)
-	default:
-		if len(input) > 0 {
-			if err := json.Unmarshal(input, &in); err != nil {
-				return nil, fmt.Errorf("tool %s: invalid input: %w", t.id, err)
-			}
+	var in In
+	if len(input) > 0 {
+		if err := json.Unmarshal(input, &in); err != nil {
+			return Result{}, fmt.Errorf("%w: tool %s: %w", ErrInvalidInput, t.id, err)
+		}
+	}
+	if validator, ok := any(in).(Validator); ok {
+		if err := validator.Validate(); err != nil {
+			return Result{}, fmt.Errorf("%w: tool %s: %w", ErrInvalidInput, t.id, err)
 		}
 	}
 
-	return t.execute(ctx, in)
+	out, err := t.execute(ctx, in)
+	if err != nil {
+		return Result{}, err
+	}
+	result, err := resultFromOutput(out)
+	if err != nil {
+		return Result{}, fmt.Errorf("tool %s: %w", t.id, err)
+	}
+	return result, nil
 }
 
 // ExecuteTyped runs the tool with strongly-typed input directly.
 func (t *BaseTool[In, Out]) ExecuteTyped(ctx context.Context, input In) (Out, error) {
+	var zero Out
+	if t == nil || t.execute == nil {
+		return zero, ErrExecuteRequired
+	}
 	return t.execute(ctx, input)
 }
 
-// Definition returns the tool definition suitable for LLM requests.
-func (t *BaseTool[In, Out]) Definition() llm.ToolDefinition {
-	return llm.ToolDefinition{
-		Name:        t.id,
-		Description: t.description,
-		Parameters:  t.parameters,
+// IsNilTool reports whether t is nil or wraps a typed nil implementation.
+func IsNilTool(t Tool) bool {
+	if t == nil {
+		return true
+	}
+	v := reflect.ValueOf(t)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
 	}
 }
 
-// ToDefinition converts any Tool to an llm.ToolDefinition.
-func ToDefinition(t Tool) llm.ToolDefinition {
-	if definer, ok := t.(interface{ Definition() llm.ToolDefinition }); ok {
-		return definer.Definition()
+// normalizeSchema validates a custom schema and returns an isolated copy.
+// A schema supplied as map[string]any keeps its concrete value types; other
+// JSON object representations are normalized through encoding/json.
+func normalizeSchema(value any) (map[string]any, error) {
+	if schema, ok := value.(map[string]any); ok {
+		if schema == nil {
+			return nil, errors.New("schema must be a JSON object")
+		}
+		if _, err := json.Marshal(schema); err != nil {
+			return nil, err
+		}
+		cloned, err := cloneJSONValue(schema)
+		if err != nil {
+			return nil, err
+		}
+		normalized, ok := cloned.(map[string]any)
+		if !ok || normalized == nil {
+			return nil, errors.New("schema must be a JSON object")
+		}
+		return normalized, nil
 	}
-	return llm.ToolDefinition{
-		Name:        t.ID(),
-		Description: t.Description(),
-		Parameters:  t.Parameters(),
+
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
 	}
+	var normalized map[string]any
+	if err := json.Unmarshal(data, &normalized); err != nil || normalized == nil {
+		return nil, errors.New("schema must be a JSON object")
+	}
+	return normalized, nil
 }
 
-// ToDefinitions converts a slice of Tools to a slice of llm.ToolDefinition.
-func ToDefinitions(tools []Tool) []llm.ToolDefinition {
-	if len(tools) == 0 {
+// cloneJSONValue deep-copies a JSON-compatible value while preserving concrete
+// map and slice types. It is used to keep caller-owned schemas isolated.
+func cloneJSONValue(value any) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	return cloneValue(reflect.ValueOf(value)), nil
+}
+
+func cloneValue(value reflect.Value) any {
+	if !value.IsValid() {
 		return nil
 	}
-	defs := make([]llm.ToolDefinition, len(tools))
-	for i, t := range tools {
-		defs[i] = ToDefinition(t)
+	switch value.Kind() {
+	case reflect.Interface:
+		if value.IsNil() {
+			return nil
+		}
+		return cloneValue(value.Elem())
+	case reflect.Pointer:
+		if value.IsNil() {
+			return value.Interface()
+		}
+		clonedValue := cloneValue(value.Elem())
+		if clonedValue == nil {
+			return reflect.Zero(value.Type()).Interface()
+		}
+		reflected := reflect.ValueOf(clonedValue)
+		if !reflected.Type().AssignableTo(value.Type().Elem()) {
+			return value.Interface()
+		}
+		cloned := reflect.New(value.Type().Elem())
+		cloned.Elem().Set(reflected)
+		return cloned.Interface()
+	case reflect.Map:
+		if value.IsNil() {
+			return value.Interface()
+		}
+		cloned := reflect.MakeMapWithSize(value.Type(), value.Len())
+		iter := value.MapRange()
+		for iter.Next() {
+			clonedValue := cloneValue(iter.Value())
+			if clonedValue == nil {
+				cloned.SetMapIndex(iter.Key(), reflect.Zero(iter.Value().Type()))
+				continue
+			}
+			reflected := reflect.ValueOf(clonedValue)
+			if !reflected.Type().AssignableTo(iter.Value().Type()) {
+				reflected = reflected.Convert(iter.Value().Type())
+			}
+			cloned.SetMapIndex(iter.Key(), reflected)
+		}
+		return cloned.Interface()
+	case reflect.Slice:
+		if value.IsNil() {
+			return value.Interface()
+		}
+		cloned := reflect.MakeSlice(value.Type(), value.Len(), value.Len())
+		for i := 0; i < value.Len(); i++ {
+			clonedValue := cloneValue(value.Index(i))
+			if clonedValue == nil {
+				continue
+			}
+			reflected := reflect.ValueOf(clonedValue)
+			if !reflected.Type().AssignableTo(value.Type().Elem()) {
+				reflected = reflected.Convert(value.Type().Elem())
+			}
+			cloned.Index(i).Set(reflected)
+		}
+		return cloned.Interface()
+	case reflect.Array:
+		cloned := reflect.New(value.Type()).Elem()
+		for i := 0; i < value.Len(); i++ {
+			clonedValue := cloneValue(value.Index(i))
+			if clonedValue == nil {
+				continue
+			}
+			reflected := reflect.ValueOf(clonedValue)
+			if !reflected.Type().AssignableTo(value.Type().Elem()) {
+				reflected = reflected.Convert(value.Type().Elem())
+			}
+			cloned.Index(i).Set(reflected)
+		}
+		return cloned.Interface()
+	default:
+		return value.Interface()
 	}
-	return defs
 }

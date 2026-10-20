@@ -210,7 +210,7 @@ func (a *Agent) collectTools(extraTools []tool.Tool) []tool.Tool {
 		merged[k] = v
 	}
 	for _, t := range extraTools {
-		if t != nil {
+		if !tool.IsNilTool(t) {
 			merged[t.ID()] = t
 		}
 	}

@@ -26,7 +26,7 @@ func TestExecuteCommand_Success(t *testing.T) {
 		t.Fatalf("command failed: %v", err)
 	}
 
-	res := resAny.(exec.CommandOutput)
+	res := resAny.Data.(exec.CommandOutput)
 	if res.ExitCode != 0 {
 		t.Errorf("expected exit code 0, got %d", res.ExitCode)
 	}
@@ -50,7 +50,7 @@ func TestExecuteCommand_Failure(t *testing.T) {
 		t.Fatalf("expected non-nil result even on exit failure, got error: %v", err)
 	}
 
-	res := resAny.(exec.CommandOutput)
+	res := resAny.Data.(exec.CommandOutput)
 	if res.ExitCode == 0 {
 		t.Errorf("expected non-zero exit code for invalid command, got %d", res.ExitCode)
 	}
@@ -77,7 +77,7 @@ func TestExecuteCommand_Timeout(t *testing.T) {
 		t.Fatalf("expected timed out CommandOutput, got error: %v", err)
 	}
 
-	res := resAny.(exec.CommandOutput)
+	res := resAny.Data.(exec.CommandOutput)
 	if !res.TimedOut {
 		t.Errorf("expected TimedOut to be true, got false (duration: %v)", duration)
 	}
@@ -107,7 +107,7 @@ func TestExecuteCommand_TimeoutKillsChildProcesses(t *testing.T) {
 		t.Fatalf("expected timed out CommandOutput, got error: %v", err)
 	}
 
-	res := resAny.(exec.CommandOutput)
+	res := resAny.Data.(exec.CommandOutput)
 	if !res.TimedOut {
 		t.Errorf("expected TimedOut to be true after %v", elapsed)
 	}

@@ -33,7 +33,7 @@ func TestAskUserTool_CustomPromptHandler(t *testing.T) {
 		t.Fatalf("execute failed: %v", err)
 	}
 
-	res := resAny.(hitl.AskUserOutput)
+	res := resAny.Data.(hitl.AskUserOutput)
 	if res.Answer != "Tomato" {
 		t.Errorf("expected Tomato, got %s", res.Answer)
 	}
@@ -60,7 +60,7 @@ func TestAskUserTool_ReaderStream(t *testing.T) {
 		t.Fatalf("execute failed: %v", err)
 	}
 
-	res := resAny.(hitl.AskUserOutput)
+	res := resAny.Data.(hitl.AskUserOutput)
 	if res.Answer != "Yes, proceed" {
 		t.Errorf("expected 'Yes, proceed', got %s", res.Answer)
 	}
