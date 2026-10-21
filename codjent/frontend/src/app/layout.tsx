@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Codjent",
-  description: "A coding agent built on gojent.",
+  title: "codjent",
+  description: "A local coding agent built on gojent.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -23,8 +23,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
-        <div className="root flex flex-1 flex-col">{children}</div>
+      <body className="h-full overflow-hidden bg-app text-ink">
+        <div className="root flex h-full flex-col">{children}</div>
       </body>
     </html>
   );

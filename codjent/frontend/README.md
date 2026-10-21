@@ -1,36 +1,55 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Codjent frontend
 
-## Getting Started
+The Next.js frontend for [Codjent](../README.md). It is a static export: the Go
+backend serves the built files and the API from the same origin in production.
 
-First, run the development server:
+## Development
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
+Run the backend and the Next.js dev server side by side:
+
+```sh
+# repository root
+just codjent
+
+# codjent/frontend
+pnpm install
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open <http://localhost:3000>. When the UI is served from port 3000 it calls the
+backend at `http://127.0.0.1:8787`. For any other origin, set
+`NEXT_PUBLIC_CODJENT_API_URL` before starting the dev server or building.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Build
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```sh
+pnpm build
+```
 
-## Learn More
+The export is written to `out/`. Run it with the backend from the repository
+root:
 
-To learn more about Next.js, take a look at the following resources:
+```sh
+go run ./codjent/cmd/codjent --frontend-dir codjent/frontend/out
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+See the [main README](../README.md) for configuration, the HTTP API, and the
+full run instructions.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Layout
 
-## Deploy on Vercel
+- `src/app` — app shell, theme tokens, and static entry points.
+- `src/components` — sidebar, transcript, composer, settings, and tool/approval
+  cards.
+- `src/hooks/use-codjent.ts` — thread state, run lifecycle, SSE replay, and
+  approvals.
+- `src/lib/api.ts` — the browser/API boundary.
+- `src/lib/types.ts` — API wire types shared by the UI.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Checks
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```sh
+pnpm lint
+pnpm exec tsc --noEmit
+pnpm build
+```
