@@ -40,7 +40,6 @@ func run() error {
 	// 2. Configure an autonomous Agent powered by Gemini
 	geminiAgent, err := agent.New(agent.Config{
 		ID:           "gemini-assistant",
-		Name:         "Gemini Assistant",
 		Instructions: "You are a concise, helpful assistant powered by Google Gemini.",
 		Model:        geminiModel,
 	})

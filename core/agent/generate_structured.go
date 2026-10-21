@@ -3,8 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-
-	"github.com/ijaidev/gojent/core/llm"
 )
 
 // GenerateStructured runs the agent with a string prompt and structured output
@@ -15,16 +13,6 @@ import (
 func GenerateStructured[T any](ctx context.Context, a *Agent, prompt string, opts ...GenerateOption) (T, *Response, error) {
 	allOpts := append([]GenerateOption{WithOutputSchema[T]()}, opts...)
 	res, err := a.Generate(ctx, prompt, allOpts...)
-	return decodeStructured[T](res, err)
-}
-
-// GenerateMessagesStructured runs the agent with explicit chat messages and
-// structured output conforming to Go type T. It configures the response schema
-// from T, unmarshals the model output, and returns both the decoded value and
-// the agent response.
-func GenerateMessagesStructured[T any](ctx context.Context, a *Agent, messages []llm.Message, opts ...GenerateOption) (T, *Response, error) {
-	allOpts := append([]GenerateOption{WithOutputSchema[T]()}, opts...)
-	res, err := a.GenerateMessages(ctx, messages, allOpts...)
 	return decodeStructured[T](res, err)
 }
 

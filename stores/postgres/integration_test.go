@@ -38,7 +38,7 @@ func newIntegrationStore(t *testing.T, dsn string) *postgres.Store {
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
-	_, dropErr := db.ExecContext(context.Background(), "DROP TABLE IF EXISTS messages, thread_state, threads CASCADE")
+	_, dropErr := db.ExecContext(context.Background(), "DROP TABLE IF EXISTS messages, threads CASCADE")
 	if closeErr := db.Close(); dropErr != nil || closeErr != nil {
 		t.Fatalf("failed to reset database: drop err=%v, close err=%v", dropErr, closeErr)
 	}

@@ -130,7 +130,6 @@ func run() error {
 	// Create Agent with registered tools
 	calcBot, err := agent.New(agent.Config{
 		ID:           "math-assistant",
-		Name:         "Math Assistant",
 		Instructions: "You are a helpful math assistant with access to a calculator tool.",
 		Model:        mockCalc,
 		Tools:        []tool.Tool{calcTool},
@@ -217,7 +216,6 @@ func run() error {
 
 	weatherBot, err := agent.New(agent.Config{
 		ID:           "weather-assistant",
-		Name:         "Weather Assistant",
 		Instructions: "You are a helpful assistant with weather lookup capabilities.",
 		Model:        mockStream,
 		Tools:        []tool.Tool{weatherTool},

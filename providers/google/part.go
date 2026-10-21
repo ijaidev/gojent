@@ -2,7 +2,6 @@ package google
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/ijaidev/gojent/core/llm"
@@ -21,18 +20,6 @@ func convertPartToGemini(p llm.Part) (*genai.Part, error) {
 
 	case llm.PartTypeImage:
 		mimeType := p.MIMEType
-		data := p.Data
-		if len(data) == 0 && p.Path != "" {
-			var err error
-			data, err = os.ReadFile(p.Path)
-			if err != nil {
-				return nil, fmt.Errorf("google: failed to read image from %q: %w", p.Path, err)
-			}
-			if mimeType == "" {
-				mimeType = detectMIMEType(p.Path, data)
-			}
-		}
-
 		if mimeType != "" && !isSupportedImageMIME(mimeType) {
 			return nil, fmt.Errorf("google: unsupported image MIME type %q: %w", mimeType, llm.ErrUnsupportedMIMEType)
 		}
@@ -40,8 +27,8 @@ func convertPartToGemini(p llm.Part) (*genai.Part, error) {
 			mimeType = "image/png"
 		}
 
-		if len(data) > 0 {
-			return genai.NewPartFromBytes(data, mimeType), nil
+		if len(p.Data) > 0 {
+			return genai.NewPartFromBytes(p.Data, mimeType), nil
 		}
 
 		if p.URL != "" {
@@ -51,22 +38,10 @@ func convertPartToGemini(p llm.Part) (*genai.Part, error) {
 			return nil, fmt.Errorf("google: direct HTTP/HTTPS URL %q not supported by Gemini API (upload via Files API or provide inline bytes): %w", p.URL, llm.ErrUnsupportedPart)
 		}
 
-		return nil, fmt.Errorf("google: image part must provide Data, URL, or Path: %w", llm.ErrInvalidPart)
+		return nil, fmt.Errorf("google: image part must provide Data or URL: %w", llm.ErrInvalidPart)
 
 	case llm.PartTypeAudio:
 		mimeType := p.MIMEType
-		data := p.Data
-		if len(data) == 0 && p.Path != "" {
-			var err error
-			data, err = os.ReadFile(p.Path)
-			if err != nil {
-				return nil, fmt.Errorf("google: failed to read audio from %q: %w", p.Path, err)
-			}
-			if mimeType == "" {
-				mimeType = detectMIMEType(p.Path, data)
-			}
-		}
-
 		if mimeType != "" && !isSupportedAudioMIME(mimeType) {
 			return nil, fmt.Errorf("google: unsupported audio MIME type %q: %w", mimeType, llm.ErrUnsupportedMIMEType)
 		}
@@ -74,28 +49,16 @@ func convertPartToGemini(p llm.Part) (*genai.Part, error) {
 			mimeType = "audio/wav"
 		}
 
-		if len(data) > 0 {
-			return genai.NewPartFromBytes(data, mimeType), nil
+		if len(p.Data) > 0 {
+			return genai.NewPartFromBytes(p.Data, mimeType), nil
 		}
 		if p.URL != "" {
 			return genai.NewPartFromURI(p.URL, mimeType), nil
 		}
-		return nil, fmt.Errorf("google: audio part must provide Data, URL, or Path: %w", llm.ErrInvalidPart)
+		return nil, fmt.Errorf("google: audio part must provide Data or URL: %w", llm.ErrInvalidPart)
 
 	case llm.PartTypeVideo:
 		mimeType := p.MIMEType
-		data := p.Data
-		if len(data) == 0 && p.Path != "" {
-			var err error
-			data, err = os.ReadFile(p.Path)
-			if err != nil {
-				return nil, fmt.Errorf("google: failed to read video from %q: %w", p.Path, err)
-			}
-			if mimeType == "" {
-				mimeType = detectMIMEType(p.Path, data)
-			}
-		}
-
 		if mimeType != "" && !isSupportedVideoMIME(mimeType) {
 			return nil, fmt.Errorf("google: unsupported video MIME type %q: %w", mimeType, llm.ErrUnsupportedMIMEType)
 		}
@@ -103,28 +66,16 @@ func convertPartToGemini(p llm.Part) (*genai.Part, error) {
 			mimeType = "video/mp4"
 		}
 
-		if len(data) > 0 {
-			return genai.NewPartFromBytes(data, mimeType), nil
+		if len(p.Data) > 0 {
+			return genai.NewPartFromBytes(p.Data, mimeType), nil
 		}
 		if p.URL != "" {
 			return genai.NewPartFromURI(p.URL, mimeType), nil
 		}
-		return nil, fmt.Errorf("google: video part must provide Data, URL, or Path: %w", llm.ErrInvalidPart)
+		return nil, fmt.Errorf("google: video part must provide Data or URL: %w", llm.ErrInvalidPart)
 
-	case llm.PartTypeDocument, llm.PartTypeFile:
+	case llm.PartTypeDocument:
 		mimeType := p.MIMEType
-		data := p.Data
-		if len(data) == 0 && p.Path != "" {
-			var err error
-			data, err = os.ReadFile(p.Path)
-			if err != nil {
-				return nil, fmt.Errorf("google: failed to read document from %q: %w", p.Path, err)
-			}
-			if mimeType == "" {
-				mimeType = detectMIMEType(p.Path, data)
-			}
-		}
-
 		if mimeType != "" && !isSupportedDocMIME(mimeType) {
 			return nil, fmt.Errorf("google: unsupported document MIME type %q: %w", mimeType, llm.ErrUnsupportedMIMEType)
 		}
@@ -132,13 +83,13 @@ func convertPartToGemini(p llm.Part) (*genai.Part, error) {
 			mimeType = "application/pdf"
 		}
 
-		if len(data) > 0 {
-			return genai.NewPartFromBytes(data, mimeType), nil
+		if len(p.Data) > 0 {
+			return genai.NewPartFromBytes(p.Data, mimeType), nil
 		}
 		if p.URL != "" {
 			return genai.NewPartFromURI(p.URL, mimeType), nil
 		}
-		return nil, fmt.Errorf("google: document part must provide Data, URL, or Path: %w", llm.ErrInvalidPart)
+		return nil, fmt.Errorf("google: document part must provide Data or URL: %w", llm.ErrInvalidPart)
 
 	default:
 		return nil, fmt.Errorf("google: unsupported part type %q: %w", p.Type, llm.ErrUnsupportedPartType)
@@ -152,23 +103,11 @@ func convertToolPartToGemini(p llm.Part) (*genai.FunctionResponsePart, error) {
 	}
 
 	mimeType := p.MIMEType
-	data := p.Data
-	if len(data) == 0 && p.Path != "" {
-		var err error
-		data, err = os.ReadFile(p.Path)
-		if err != nil {
-			return nil, fmt.Errorf("google: failed to read tool artifact from %q: %w", p.Path, err)
-		}
-		if mimeType == "" {
-			mimeType = detectMIMEType(p.Path, data)
-		}
-	}
-
 	if mimeType == "" {
 		switch p.Type {
 		case llm.PartTypeImage:
 			mimeType = "image/png"
-		case llm.PartTypeDocument, llm.PartTypeFile:
+		case llm.PartTypeDocument:
 			mimeType = "application/pdf"
 		case llm.PartTypeAudio:
 			mimeType = "audio/wav"
@@ -179,11 +118,11 @@ func convertToolPartToGemini(p llm.Part) (*genai.FunctionResponsePart, error) {
 		}
 	}
 
-	if len(data) > 0 {
-		return genai.NewFunctionResponsePartFromBytes(data, mimeType), nil
+	if len(p.Data) > 0 {
+		return genai.NewFunctionResponsePartFromBytes(p.Data, mimeType), nil
 	}
 	if p.URL != "" {
 		return genai.NewFunctionResponsePartFromURI(p.URL, mimeType), nil
 	}
-	return nil, fmt.Errorf("google: tool part must provide Data, URL, or Path: %w", llm.ErrInvalidPart)
+	return nil, fmt.Errorf("google: tool part must provide Data or URL: %w", llm.ErrInvalidPart)
 }

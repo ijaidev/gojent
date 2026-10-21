@@ -95,10 +95,10 @@ type StrictMapInput struct {
 	Values map[string]int `json:"values"`
 }
 
-func TestGenerateSchemaWithOptions_NestedAndStrict(t *testing.T) {
-	schema, err := tool.GenerateSchemaE[ComplexPost](tool.WithStrictSchema(true))
+func TestGenerateSchema_NestedAndStrict(t *testing.T) {
+	schema, err := tool.GenerateSchema[ComplexPost](tool.WithStrictSchema(true))
 	if err != nil {
-		t.Fatalf("GenerateSchemaE failed: %v", err)
+		t.Fatalf("GenerateSchema failed: %v", err)
 	}
 
 	if schema["type"] != "object" {
@@ -177,7 +177,10 @@ func TestGenerateSchemaWithOptions_NestedAndStrict(t *testing.T) {
 }
 
 func TestGenerateSchema_RecursiveSafety(t *testing.T) {
-	schema := tool.GenerateSchema[RecursiveNode]()
+	schema, err := tool.GenerateSchema[RecursiveNode]()
+	if err != nil {
+		t.Fatalf("GenerateSchema failed: %v", err)
+	}
 	if schema["type"] != "object" {
 		t.Fatalf("expected object, got %v", schema["type"])
 	}
@@ -189,9 +192,9 @@ func TestGenerateSchema_RecursiveSafety(t *testing.T) {
 }
 
 func TestGenerateSchema_RecursiveStrictPlaceholder(t *testing.T) {
-	schema, err := tool.GenerateSchemaE[RecursiveNode](tool.WithStrictSchema(true))
+	schema, err := tool.GenerateSchema[RecursiveNode](tool.WithStrictSchema(true))
 	if err != nil {
-		t.Fatalf("GenerateSchemaE failed: %v", err)
+		t.Fatalf("GenerateSchema failed: %v", err)
 	}
 	props := schema["properties"].(map[string]any)
 	next := props["next"].(map[string]any)
@@ -200,23 +203,20 @@ func TestGenerateSchema_RecursiveStrictPlaceholder(t *testing.T) {
 	}
 }
 
-func TestGenerateSchema_WrapperFunctions(t *testing.T) {
-	if schema := tool.GenerateSchemaWithOptions[WeatherInput](tool.WithStrictSchema(true)); len(schema) == 0 {
-		t.Error("expected GenerateSchemaWithOptions to return a schema")
+func TestGenerateSchema_EntryPoints(t *testing.T) {
+	if schema, err := tool.GenerateSchema[WeatherInput](tool.WithStrictSchema(true)); err != nil || len(schema) == 0 {
+		t.Errorf("expected GenerateSchema to return a schema, got %v (err: %v)", schema, err)
 	}
 	inputType := reflect.TypeOf(WeatherInput{})
-	if schema := tool.GenerateSchemaFromType(inputType); len(schema) == 0 {
-		t.Error("expected GenerateSchemaFromType to return a schema")
-	}
-	if schema := tool.GenerateSchemaFromTypeWithOptions(inputType, tool.WithStrictSchema(true)); len(schema) == 0 {
-		t.Error("expected GenerateSchemaFromTypeWithOptions to return a schema")
+	if schema, err := tool.GenerateSchemaFromType(inputType); err != nil || len(schema) == 0 {
+		t.Errorf("expected GenerateSchemaFromType to return a schema, got %v (err: %v)", schema, err)
 	}
 }
 
 func TestGenerateSchema_EnumScalarKinds(t *testing.T) {
-	schema, err := tool.GenerateSchemaE[EnumKindsInput]()
+	schema, err := tool.GenerateSchema[EnumKindsInput]()
 	if err != nil {
-		t.Fatalf("GenerateSchemaE failed: %v", err)
+		t.Fatalf("GenerateSchema failed: %v", err)
 	}
 	props := schema["properties"].(map[string]any)
 
@@ -247,9 +247,9 @@ func TestGenerateSchema_EnumScalarKinds(t *testing.T) {
 }
 
 func TestGenerateSchema_CommonJSONTypes(t *testing.T) {
-	schema, err := tool.GenerateSchemaE[CommonTypesInput]()
+	schema, err := tool.GenerateSchema[CommonTypesInput]()
 	if err != nil {
-		t.Fatalf("GenerateSchemaE failed: %v", err)
+		t.Fatalf("GenerateSchema failed: %v", err)
 	}
 
 	props := schema["properties"].(map[string]any)
@@ -312,9 +312,9 @@ func TestGenerateSchema_CommonJSONTypes(t *testing.T) {
 }
 
 func TestGenerateSchema_PointerEmbeddedFieldsAreOptional(t *testing.T) {
-	schema, err := tool.GenerateSchemaE[PointerEmbeddedInput]()
+	schema, err := tool.GenerateSchema[PointerEmbeddedInput]()
 	if err != nil {
-		t.Fatalf("GenerateSchemaE failed: %v", err)
+		t.Fatalf("GenerateSchema failed: %v", err)
 	}
 	props := schema["properties"].(map[string]any)
 	if _, ok := props["id"]; !ok {
@@ -327,9 +327,9 @@ func TestGenerateSchema_PointerEmbeddedFieldsAreOptional(t *testing.T) {
 }
 
 func TestGenerateSchema_NamedTimeTypes(t *testing.T) {
-	schema, err := tool.GenerateSchemaE[NamedTimeInput]()
+	schema, err := tool.GenerateSchema[NamedTimeInput]()
 	if err != nil {
-		t.Fatalf("GenerateSchemaE failed: %v", err)
+		t.Fatalf("GenerateSchema failed: %v", err)
 	}
 	props := schema["properties"].(map[string]any)
 	at := props["at"].(map[string]any)
@@ -339,9 +339,9 @@ func TestGenerateSchema_NamedTimeTypes(t *testing.T) {
 }
 
 func TestGenerateSchema_EnumValuesMatchFieldType(t *testing.T) {
-	schema, err := tool.GenerateSchemaE[NumericEnumInput]()
+	schema, err := tool.GenerateSchema[NumericEnumInput]()
 	if err != nil {
-		t.Fatalf("GenerateSchemaE failed: %v", err)
+		t.Fatalf("GenerateSchema failed: %v", err)
 	}
 	props := schema["properties"].(map[string]any)
 
@@ -362,9 +362,9 @@ func TestGenerateSchema_EnumValuesMatchFieldType(t *testing.T) {
 }
 
 func TestGenerateSchema_CustomMarshalerIsPermissive(t *testing.T) {
-	schema, err := tool.GenerateSchemaE[CustomMarshalerInput]()
+	schema, err := tool.GenerateSchema[CustomMarshalerInput]()
 	if err != nil {
-		t.Fatalf("GenerateSchemaE failed: %v", err)
+		t.Fatalf("GenerateSchema failed: %v", err)
 	}
 	props := schema["properties"].(map[string]any)
 	value := props["value"].(map[string]any)
@@ -374,21 +374,18 @@ func TestGenerateSchema_CustomMarshalerIsPermissive(t *testing.T) {
 }
 
 func TestGenerateSchema_ErrorsForUnsupportedTypes(t *testing.T) {
-	if _, err := tool.GenerateSchemaE[UnsupportedInput](); err == nil {
+	if _, err := tool.GenerateSchema[UnsupportedInput](); err == nil {
 		t.Error("expected an error for chan fields")
 	}
-	if _, err := tool.GenerateSchemaE[InvalidEnumInput](); err == nil {
+	if _, err := tool.GenerateSchema[InvalidEnumInput](); err == nil {
 		t.Error("expected an error for enum on an unsupported field type")
-	}
-	if schema := tool.GenerateSchema[UnsupportedInput](); len(schema) != 0 {
-		t.Errorf("expected best-effort wrapper to return an empty schema, got %+v", schema)
 	}
 }
 
 func TestGenerateSchema_StrictMapUsesValueSchema(t *testing.T) {
-	schema, err := tool.GenerateSchemaE[StrictMapInput](tool.WithStrictSchema(true))
+	schema, err := tool.GenerateSchema[StrictMapInput](tool.WithStrictSchema(true))
 	if err != nil {
-		t.Fatalf("GenerateSchemaE failed: %v", err)
+		t.Fatalf("GenerateSchema failed: %v", err)
 	}
 	props := schema["properties"].(map[string]any)
 	values := props["values"].(map[string]any)
@@ -399,25 +396,25 @@ func TestGenerateSchema_StrictMapUsesValueSchema(t *testing.T) {
 }
 
 func TestGenerateSchema_TopLevelAndNilTypes(t *testing.T) {
-	bytesSchema, err := tool.GenerateSchemaE[[]byte]()
+	bytesSchema, err := tool.GenerateSchema[[]byte]()
 	if err != nil {
-		t.Fatalf("GenerateSchemaE bytes failed: %v", err)
+		t.Fatalf("GenerateSchema bytes failed: %v", err)
 	}
 	if bytesSchema["type"] != "string" || bytesSchema["contentEncoding"] != "base64" {
 		t.Errorf("unexpected []byte schema: %+v", bytesSchema)
 	}
 
-	intsSchema, err := tool.GenerateSchemaE[[]int]()
+	intsSchema, err := tool.GenerateSchema[[]int]()
 	if err != nil {
-		t.Fatalf("GenerateSchemaE ints failed: %v", err)
+		t.Fatalf("GenerateSchema ints failed: %v", err)
 	}
 	if intsSchema["type"] != "array" || intsSchema["items"].(map[string]any)["type"] != "integer" {
 		t.Errorf("unexpected []int schema: %+v", intsSchema)
 	}
 
-	anySchema, err := tool.GenerateSchemaE[any]()
+	anySchema, err := tool.GenerateSchema[any]()
 	if err != nil {
-		t.Fatalf("GenerateSchemaE any failed: %v", err)
+		t.Fatalf("GenerateSchema any failed: %v", err)
 	}
 	if len(anySchema) != 0 {
 		t.Errorf("expected empty schema for any, got %+v", anySchema)

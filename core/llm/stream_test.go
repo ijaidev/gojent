@@ -25,26 +25,6 @@ func TestSliceStream_Close(t *testing.T) {
 	}
 }
 
-func TestStreamAll_Iterator(t *testing.T) {
-	stream := llm.NewSliceStream(context.Background(), []*llm.StreamChunk{
-		{Delta: "a"},
-		{Delta: "b"},
-		{Delta: "c"},
-	})
-
-	var result string
-	for chunk, err := range llm.StreamAll(stream) {
-		if err != nil {
-			t.Fatalf("unexpected iterator error: %v", err)
-		}
-		result += chunk.Delta
-	}
-
-	if result != "abc" {
-		t.Errorf("expected 'abc', got '%s'", result)
-	}
-}
-
 func TestChannelStream(t *testing.T) {
 	ch := make(chan *llm.StreamChunk, 2)
 	errCh := make(chan error, 1)

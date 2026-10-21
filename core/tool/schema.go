@@ -11,10 +11,10 @@ import (
 )
 
 // SchemaOption configures schema generation options.
-type SchemaOption func(*SchemaConfig)
+type SchemaOption func(*schemaConfig)
 
-// SchemaConfig controls schema generation parameters.
-type SchemaConfig struct {
+// schemaConfig controls schema generation parameters.
+type schemaConfig struct {
 	// Strict disallows additional object properties and marks every field required.
 	Strict bool
 }
@@ -22,59 +22,22 @@ type SchemaConfig struct {
 // WithStrictSchema configures the generator for strict JSON schema providers.
 // It sets additionalProperties to false on objects and requires every field.
 func WithStrictSchema(strict bool) SchemaOption {
-	return func(cfg *SchemaConfig) {
+	return func(cfg *schemaConfig) {
 		cfg.Strict = strict
 	}
 }
 
-// GenerateSchema generates a JSON Schema map for a given Go type T.
-// It is a best-effort wrapper around GenerateSchemaE.
-func GenerateSchema[T any]() map[string]any {
-	schema, _ := GenerateSchemaE[T]()
-	if schema == nil {
-		return map[string]any{}
-	}
-	return schema
-}
-
-// GenerateSchemaE generates a JSON Schema map for T and reports unsupported
+// GenerateSchema generates a JSON Schema map for T and reports unsupported
 // types instead of silently emitting an incorrect schema.
-func GenerateSchemaE[T any](opts ...SchemaOption) (map[string]any, error) {
+func GenerateSchema[T any](opts ...SchemaOption) (map[string]any, error) {
 	var zero T
-	return GenerateSchemaFromTypeE(reflect.TypeOf(zero), opts...)
+	return GenerateSchemaFromType(reflect.TypeOf(zero), opts...)
 }
 
-// GenerateSchemaWithOptions generates a JSON Schema map for T with custom options.
-// It is a best-effort wrapper around GenerateSchemaE.
-func GenerateSchemaWithOptions[T any](opts ...SchemaOption) map[string]any {
-	schema, _ := GenerateSchemaE[T](opts...)
-	if schema == nil {
-		return map[string]any{}
-	}
-	return schema
-}
-
-// GenerateSchemaFromType generates a JSON Schema map for a given reflect.Type.
-// It is a best-effort wrapper around GenerateSchemaFromTypeE.
-func GenerateSchemaFromType(t reflect.Type) map[string]any {
-	return GenerateSchemaFromTypeWithOptions(t)
-}
-
-// GenerateSchemaFromTypeWithOptions generates a JSON Schema map for a given
-// reflect.Type with custom options. It is a best-effort wrapper around
-// GenerateSchemaFromTypeE.
-func GenerateSchemaFromTypeWithOptions(t reflect.Type, opts ...SchemaOption) map[string]any {
-	schema, _ := GenerateSchemaFromTypeE(t, opts...)
-	if schema == nil {
-		return map[string]any{}
-	}
-	return schema
-}
-
-// GenerateSchemaFromTypeE generates a JSON Schema map for a given reflect.Type
+// GenerateSchemaFromType generates a JSON Schema map for a given reflect.Type
 // and reports unsupported types.
-func GenerateSchemaFromTypeE(t reflect.Type, opts ...SchemaOption) (map[string]any, error) {
-	cfg := SchemaConfig{}
+func GenerateSchemaFromType(t reflect.Type, opts ...SchemaOption) (map[string]any, error) {
+	cfg := schemaConfig{}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&cfg)
@@ -88,7 +51,7 @@ func GenerateSchemaFromTypeE(t reflect.Type, opts ...SchemaOption) (map[string]a
 }
 
 type schemaGenerator struct {
-	cfg     SchemaConfig
+	cfg     schemaConfig
 	visited map[reflect.Type]bool
 }
 

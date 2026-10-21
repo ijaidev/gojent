@@ -542,7 +542,7 @@ func TestHooks_StreamLifecycle(t *testing.T) {
 		t.Fatalf("Stream failed: %v", err)
 	}
 
-	res, err := stream.Drain()
+	res, err := drainStream(t, stream)
 	if err != nil {
 		t.Fatalf("Drain failed: %v", err)
 	}
@@ -658,7 +658,7 @@ func TestHooks_StreamError(t *testing.T) {
 	})
 }
 
-func TestHooks_PerCallMergeAndOverride(t *testing.T) {
+func TestHooks_PerCallReplacesAgentHooks(t *testing.T) {
 	mock := toolCallingMock("echo", "done")
 
 	agentBeforeModel := 0
@@ -703,26 +703,20 @@ func TestHooks_PerCallMergeAndOverride(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	// The per-call AfterModel overrides the agent-level one...
 	if callAfterModel != 2 {
 		t.Errorf("expected per-call AfterModel on both steps, got %d", callAfterModel)
-	}
-	if agentAfterModel != 0 {
-		t.Errorf("expected agent-level AfterModel to be overridden, got %d calls", agentAfterModel)
-	}
-	// ...while uncovered agent-level hooks still fire.
-	if agentBeforeModel != 2 {
-		t.Errorf("expected agent-level BeforeModel on both steps, got %d", agentBeforeModel)
-	}
-	if agentAfterTool != 1 {
-		t.Errorf("expected agent-level AfterTool to still fire, got %d", agentAfterTool)
 	}
 	if callBeforeTool != 1 {
 		t.Errorf("expected per-call BeforeTool to fire, got %d", callBeforeTool)
 	}
+	// The per-call hook set replaces the agent-level set wholesale.
+	if agentAfterModel != 0 || agentBeforeModel != 0 || agentAfterTool != 0 {
+		t.Errorf("expected agent-level hooks to be replaced, got before=%d after=%d tool=%d",
+			agentBeforeModel, agentAfterModel, agentAfterTool)
+	}
 }
 
-func TestHooks_RepeatedWithHooksLayers(t *testing.T) {
+func TestHooks_RepeatedWithHooksReplaces(t *testing.T) {
 	mock := mockllm.New("ok")
 
 	a, err := agent.New(agent.Config{ID: "hooked-agent", Model: mock})
@@ -757,11 +751,8 @@ func TestHooks_RepeatedWithHooksLayers(t *testing.T) {
 	if second != 1 {
 		t.Errorf("expected second WithHooks AfterModel to win, got %d", second)
 	}
-	if first != 0 {
-		t.Errorf("expected first AfterModel to be overridden, got %d", first)
-	}
-	if firstBefore != 1 {
-		t.Errorf("expected first BeforeModel to be preserved by layering, got %d", firstBefore)
+	if first != 0 || firstBefore != 0 {
+		t.Errorf("expected first hook set to be replaced, got after=%d before=%d", first, firstBefore)
 	}
 }
 
@@ -779,27 +770,5 @@ func TestHooks_AgentAccessors(t *testing.T) {
 
 	if a.Hooks().AfterModel == nil {
 		t.Error("expected config hooks to be stored on the agent")
-	}
-
-	calls := 0
-	a.SetHooks(agent.Hooks{
-		BeforeModel: func(_ context.Context, _ *agent.ModelEvent) error {
-			calls++
-			return nil
-		},
-	})
-
-	if a.Hooks().BeforeModel == nil {
-		t.Fatal("expected SetHooks to replace hooks")
-	}
-	if a.Hooks().AfterModel != nil {
-		t.Error("expected SetHooks to replace the full hook set")
-	}
-
-	if _, err := a.Generate(context.Background(), "hi"); err != nil {
-		t.Fatalf("Generate failed: %v", err)
-	}
-	if calls != 1 {
-		t.Errorf("expected updated hooks to run, got %d calls", calls)
 	}
 }

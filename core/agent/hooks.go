@@ -12,9 +12,8 @@ import (
 // tracing, metrics, cost accounting, guardrails, and human approval gates
 // without wrapping the underlying model.
 //
-// Hooks can be configured on an Agent and overridden for a single run with
-// WithHooks. When both are set, non-nil per-call callbacks take precedence
-// field by field.
+// Hooks can be configured on an Agent and replaced for a single run with
+// WithHooks.
 type Hooks struct {
 	// BeforeModel is called before each model generation step, once per ReAct
 	// iteration. The event's Request may be mutated to adjust the outgoing
@@ -83,28 +82,6 @@ const (
 	opListMessages = "list_messages"
 	opSaveMessages = "save_messages"
 )
-
-// mergeHooks layers override callbacks over base callbacks field by field.
-// Non-nil override callbacks take precedence; nil fields fall back to base.
-func mergeHooks(base, override Hooks) Hooks {
-	merged := base
-	if override.BeforeModel != nil {
-		merged.BeforeModel = override.BeforeModel
-	}
-	if override.AfterModel != nil {
-		merged.AfterModel = override.AfterModel
-	}
-	if override.BeforeTool != nil {
-		merged.BeforeTool = override.BeforeTool
-	}
-	if override.AfterTool != nil {
-		merged.AfterTool = override.AfterTool
-	}
-	if override.OnStorageError != nil {
-		merged.OnStorageError = override.OnStorageError
-	}
-	return merged
-}
 
 // beforeModel notifies the BeforeModel hook, if configured.
 func (h Hooks) beforeModel(ctx context.Context, step int, req *llm.GenerateRequest) error {

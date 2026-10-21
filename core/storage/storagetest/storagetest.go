@@ -1,7 +1,6 @@
 // Package storagetest provides a shared conformance suite for
 // storage.Storage implementations. Backends run it to prove they honor the
-// same persistence contract for threads, messages, thread state, and
-// lifecycle behavior.
+// same persistence contract for threads, messages, and lifecycle behavior.
 package storagetest
 
 import (
@@ -27,7 +26,6 @@ func Run(t *testing.T, newStore Factory) {
 	t.Run("MessageListFilters", func(t *testing.T) { testMessageListFilters(t, newStore(t)) })
 	t.Run("MessageUpsert", func(t *testing.T) { testMessageUpsert(t, newStore(t)) })
 	t.Run("MultipartMessage", func(t *testing.T) { testMultipartMessage(t, newStore(t)) })
-	t.Run("ThreadStateLifecycle", func(t *testing.T) { testThreadStateLifecycle(t, newStore(t)) })
 	t.Run("CascadeDelete", func(t *testing.T) { testCascadeDelete(t, newStore(t)) })
 	t.Run("InvalidInput", func(t *testing.T) { testInvalidInput(t, newStore(t)) })
 	t.Run("ClosedStore", func(t *testing.T) { testClosedStore(t, newStore(t)) })

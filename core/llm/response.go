@@ -8,7 +8,6 @@ const (
 	FinishReasonStop   FinishReason = "stop"
 	FinishReasonLength FinishReason = "length"
 	FinishReasonTool   FinishReason = "tool_calls"
-	FinishReasonError  FinishReason = "error"
 )
 
 // Usage contains token consumption statistics for a generation request.

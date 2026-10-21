@@ -47,9 +47,6 @@ func testClosedStore(t *testing.T, store storage.Storage) {
 	if _, err := store.ListMessages(ctx, storage.MessageFilter{}); !errors.Is(err, storage.ErrClosed) {
 		t.Errorf("expected ErrClosed from ListMessages, got %v", err)
 	}
-	if _, err := store.GetThreadState(ctx, "th", "type"); !errors.Is(err, storage.ErrClosed) {
-		t.Errorf("expected ErrClosed from GetThreadState, got %v", err)
-	}
 }
 
 func testContextCancellation(t *testing.T, store storage.Storage) {
@@ -61,8 +58,5 @@ func testContextCancellation(t *testing.T, store storage.Storage) {
 	}
 	if _, err := store.ListMessages(ctx, storage.MessageFilter{}); !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled from ListMessages, got %v", err)
-	}
-	if _, err := store.GetThreadState(ctx, "th", "type"); !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled from GetThreadState, got %v", err)
 	}
 }

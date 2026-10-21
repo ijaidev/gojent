@@ -179,7 +179,6 @@ func Run(ctx context.Context, model llm.LLM, opts ...Option) error {
 
 	bot, err := agent.New(agent.Config{
 		ID:           cfg.AgentID,
-		Name:         cfg.AgentName,
 		Instructions: cfg.Instructions,
 		Model:        model,
 		Tools:        cfg.Tools,

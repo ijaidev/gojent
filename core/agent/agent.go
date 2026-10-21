@@ -16,10 +16,6 @@ const defaultMaxSteps = 5
 type Config struct {
 	// ID is the unique identifier for the agent (e.g. "chef-agent").
 	ID string
-	// Name is a human-readable display name for the agent.
-	Name string
-	// Description explains the agent's purpose and specialization.
-	Description string
 	// Instructions are the system instructions/prompt guiding agent behavior.
 	Instructions string
 	// Model is the swappable LLM instance that powers the agent.
@@ -41,8 +37,6 @@ type Config struct {
 type Agent struct {
 	mu           sync.RWMutex
 	id           string
-	name         string
-	description  string
 	instructions string
 	model        llm.LLM
 	storage      storage.Storage
@@ -60,11 +54,6 @@ func New(cfg Config) (*Agent, error) {
 	if cfg.Model == nil {
 		return nil, ErrModelRequired
 	}
-	name := cfg.Name
-	if name == "" {
-		name = cfg.ID
-	}
-
 	toolsMap := make(map[string]tool.Tool, len(cfg.Tools))
 	for _, t := range cfg.Tools {
 		if !tool.IsNilTool(t) {
@@ -79,8 +68,6 @@ func New(cfg Config) (*Agent, error) {
 
 	return &Agent{
 		id:           cfg.ID,
-		name:         name,
-		description:  cfg.Description,
 		instructions: cfg.Instructions,
 		model:        cfg.Model,
 		storage:      cfg.Storage,
@@ -96,20 +83,6 @@ func (a *Agent) ID() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.id
-}
-
-// Name returns the name of the agent.
-func (a *Agent) Name() string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.name
-}
-
-// Description returns the description of the agent.
-func (a *Agent) Description() string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.description
 }
 
 // Instructions returns the agent's system instructions.
@@ -133,16 +106,6 @@ func (a *Agent) MaxSteps() int {
 	return a.maxSteps
 }
 
-// SetMaxSteps updates the default maximum number of ReAct loop iterations for this agent.
-func (a *Agent) SetMaxSteps(n int) {
-	if n <= 0 {
-		n = defaultMaxSteps
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.maxSteps = n
-}
-
 // Thinking returns the default thinking configuration for this agent, or nil.
 func (a *Agent) Thinking() *llm.ThinkingConfig {
 	a.mu.RLock()
@@ -150,26 +113,11 @@ func (a *Agent) Thinking() *llm.ThinkingConfig {
 	return a.thinking.Clone()
 }
 
-// SetThinking updates the default thinking configuration for this agent at runtime.
-func (a *Agent) SetThinking(cfg *llm.ThinkingConfig) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.thinking = cfg.Clone()
-}
-
 // Hooks returns the lifecycle hooks configured on this agent.
 func (a *Agent) Hooks() Hooks {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.hooks
-}
-
-// SetHooks replaces the lifecycle hooks configured on this agent at runtime.
-// Per-call hooks supplied via WithHooks override matching callbacks per field.
-func (a *Agent) SetHooks(h Hooks) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.hooks = h
 }
 
 // SetModel swaps the LLM implementation for this agent at runtime.
@@ -183,23 +131,9 @@ func (a *Agent) SetModel(m llm.LLM) error {
 	return nil
 }
 
-// SetInstructions updates the system instructions for this agent at runtime.
-func (a *Agent) SetInstructions(instructions string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.instructions = instructions
-}
-
 // Storage returns the configured storage backend for this agent, or nil.
 func (a *Agent) Storage() storage.Storage {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.storage
-}
-
-// SetStorage sets or swaps the storage backend for this agent at runtime.
-func (a *Agent) SetStorage(s storage.Storage) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.storage = s
 }

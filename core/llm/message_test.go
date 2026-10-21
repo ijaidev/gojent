@@ -36,7 +36,7 @@ func TestMessage_MultipartConstructors(t *testing.T) {
 		t.Errorf("unexpected image part: %+v", imgPart)
 	}
 
-	userMsg := llm.UserMessageWithMedia("describe this", imgPart)
+	userMsg := llm.UserMessageWithParts(llm.TextPart("describe this"), imgPart)
 	if userMsg.Role != llm.RoleUser || len(userMsg.Content) != 2 {
 		t.Fatalf("expected 2 parts in user message, got %d", len(userMsg.Content))
 	}
@@ -45,11 +45,6 @@ func TestMessage_MultipartConstructors(t *testing.T) {
 	}
 	if userMsg.Content[1].Type != llm.PartTypeImage || len(userMsg.Content[1].Data) != 4 {
 		t.Errorf("unexpected second part: %+v", userMsg.Content[1])
-	}
-
-	toolMsg := llm.ToolResultMessageWithParts("call-99", "screenshot", llm.TextPart(`{"ok":true}`), imgPart)
-	if toolMsg.Role != llm.RoleTool || toolMsg.Name != "screenshot" || len(toolMsg.Content) != 2 {
-		t.Errorf("unexpected tool message: %+v", toolMsg)
 	}
 }
 

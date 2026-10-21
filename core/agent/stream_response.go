@@ -114,20 +114,6 @@ func (s *StreamResponse) Response() (*Response, error) {
 	}, nil
 }
 
-// Drain reads all remaining chunks until the stream terminates and returns the accumulated Response.
-func (s *StreamResponse) Drain() (*Response, error) {
-	for {
-		_, err := s.Recv()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-	return s.Response()
-}
-
 // All returns a range-over-func iterator for reading chunks using for ... range loops.
 func (s *StreamResponse) All() iter.Seq2[*llm.StreamChunk, error] {
 	return func(yield func(*llm.StreamChunk, error) bool) {

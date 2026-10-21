@@ -18,7 +18,6 @@ func TestAgent_Stream_WithMockLLM(t *testing.T) {
 
 	bot, err := agent.New(agent.Config{
 		ID:           "assistant",
-		Name:         "Assistant Agent",
 		Instructions: "You are a concise assistant.",
 		Model:        mock,
 	})
@@ -99,7 +98,7 @@ func TestAgent_Stream_Drain(t *testing.T) {
 		_ = stream.Close()
 	}()
 
-	res, err := stream.Drain()
+	res, err := drainStream(t, stream)
 	if err != nil {
 		t.Fatalf("drain returned error: %v", err)
 	}
@@ -221,7 +220,7 @@ func TestAgent_Stream_PerCallModelOverride(t *testing.T) {
 		_ = stream.Close()
 	}()
 
-	res, err := stream.Drain()
+	res, err := drainStream(t, stream)
 	if err != nil {
 		t.Fatalf("unexpected drain error: %v", err)
 	}
@@ -279,7 +278,7 @@ func TestAgent_Stream_MaxStepsDoesNotLeaveDanglingToolCalls(t *testing.T) {
 	}
 	defer func() { _ = stream.Close() }()
 
-	res, err := stream.Drain()
+	res, err := drainStream(t, stream)
 	if err != nil {
 		t.Fatalf("drain returned error: %v", err)
 	}

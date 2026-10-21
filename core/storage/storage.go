@@ -1,5 +1,5 @@
 // Package storage defines the persistence models, domain contracts, and interfaces
-// for managing conversation threads, messages, and durable thread state in Gojent.
+// for managing conversation threads and messages in Gojent.
 package storage
 
 import "context"
@@ -18,7 +18,7 @@ type ThreadStore interface {
 	// Returns ErrThreadNotFound if the thread does not exist.
 	UpdateThread(ctx context.Context, id string, input UpdateThreadInput) (*Thread, error)
 
-	// DeleteThread removes a conversation thread and cascades deletion to its messages and state.
+	// DeleteThread removes a conversation thread and cascades deletion to its messages.
 	// Returns ErrThreadNotFound if the thread does not exist.
 	DeleteThread(ctx context.Context, id string) error
 
@@ -42,30 +42,10 @@ type MessageStore interface {
 	DeleteMessages(ctx context.Context, ids []string) error
 }
 
-// ThreadStateStore defines persistence operations for durable, arbitrary thread state.
-//
-// State values are stored as JSON. Values must be JSON-serializable; when read
-// back, numbers are decoded as float64 and objects as map[string]any.
-type ThreadStateStore interface {
-	// GetThreadState retrieves the stored state value for a (threadID, stateType) pair.
-	// Returns ErrStateNotFound if no state has been set for that type.
-	GetThreadState(ctx context.Context, threadID string, stateType string) (any, error)
-
-	// SetThreadState sets or overwrites the state value for a (threadID, stateType) pair.
-	SetThreadState(ctx context.Context, threadID string, stateType string, value any) error
-
-	// DeleteThreadState removes the stored state value for a (threadID, stateType) pair.
-	DeleteThreadState(ctx context.Context, threadID string, stateType string) error
-
-	// ListThreadStates returns all state values recorded for a thread, mapped by state type.
-	ListThreadStates(ctx context.Context, threadID string) (map[string]any, error)
-}
-
 // Storage represents the complete swappable storage backend in Gojent.
-// It unites all storage domains (threads, messages, thread state) and lifecycle management.
+// It unites the thread and message stores with lifecycle management.
 type Storage interface {
 	ThreadStore
 	MessageStore
-	ThreadStateStore
 	Close() error
 }

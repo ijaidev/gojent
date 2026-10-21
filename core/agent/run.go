@@ -51,7 +51,10 @@ func (a *Agent) newRun(ctx context.Context, messages []llm.Message, opts []Gener
 		opt(cfg)
 	}
 
-	hooks := mergeHooks(agentHooks, cfg.Hooks)
+	hooks := agentHooks
+	if cfg.Hooks != nil {
+		hooks = *cfg.Hooks
+	}
 
 	if cfg.Model == nil {
 		return nil, ErrModelRequired

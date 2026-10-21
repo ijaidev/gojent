@@ -37,9 +37,6 @@ func TestStore_ClearAndDangerouslyClearAll(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("SaveMessages failed: %v", err)
 		}
-		if err := store.SetThreadState(ctx, th.ID, "k", "v"); err != nil {
-			t.Fatalf("SetThreadState failed: %v", err)
-		}
 	}
 	assertEmpty := func() {
 		t.Helper()
@@ -87,18 +84,6 @@ func TestStore_Concurrency(t *testing.T) {
 				_, err := store.SaveMessages(ctx, []*storage.Message{msg})
 				if err != nil {
 					t.Errorf("SaveMessages concurrent error: %v", err)
-				}
-
-				// Set and get state
-				stateKey := fmt.Sprintf("state-%d", workerID)
-				err = store.SetThreadState(ctx, th.ID, stateKey, j)
-				if err != nil {
-					t.Errorf("SetThreadState concurrent error: %v", err)
-				}
-
-				_, err = store.GetThreadState(ctx, th.ID, stateKey)
-				if err != nil {
-					t.Errorf("GetThreadState concurrent error: %v", err)
 				}
 
 				// Read messages

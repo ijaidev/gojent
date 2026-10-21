@@ -1,11 +1,6 @@
 package google
 
-import (
-	"mime"
-	"net/http"
-	"path/filepath"
-	"strings"
-)
+import "strings"
 
 func isSupportedImageMIME(m string) bool {
 	switch strings.ToLower(strings.TrimSpace(m)) {
@@ -41,17 +36,4 @@ func isSupportedDocMIME(m string) bool {
 	default:
 		return false
 	}
-}
-
-func detectMIMEType(path string, data []byte) string {
-	ext := filepath.Ext(path)
-	if ext != "" {
-		if m := mime.TypeByExtension(ext); m != "" {
-			return m
-		}
-	}
-	if len(data) > 0 {
-		return http.DetectContentType(data)
-	}
-	return "application/octet-stream"
 }

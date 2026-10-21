@@ -533,7 +533,7 @@ func TestGoogleProvider_Multipart_ErrorValidations(t *testing.T) {
 	// 1. Unsupported MIME type error
 	badMIMEReq := llm.GenerateRequest{
 		Messages: []llm.Message{
-			llm.UserMessageWithMedia("inspect", llm.Part{
+			llm.UserMessageWithParts(llm.TextPart("inspect"), llm.Part{
 				Type:     llm.PartTypeImage,
 				Data:     []byte{1, 2, 3},
 				MIMEType: "image/unsupported-xyz",
@@ -548,7 +548,7 @@ func TestGoogleProvider_Multipart_ErrorValidations(t *testing.T) {
 	// 2. Unsupported direct HTTP URL error
 	badURLReq := llm.GenerateRequest{
 		Messages: []llm.Message{
-			llm.UserMessageWithMedia("inspect", llm.Part{
+			llm.UserMessageWithParts(llm.TextPart("inspect"), llm.Part{
 				Type: llm.PartTypeImage,
 				URL:  "https://example.com/photo.jpg",
 			}),

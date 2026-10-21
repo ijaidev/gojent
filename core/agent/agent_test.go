@@ -35,7 +35,6 @@ func TestAgent_Generate_WithMockLLM(t *testing.T) {
 
 	chef, err := agent.New(agent.Config{
 		ID:           "chef-agent",
-		Name:         "Chef Agent",
 		Instructions: "You are a professional chef.",
 		Model:        mock,
 	})
@@ -577,27 +576,52 @@ func TestAgent_WithStorage_ConversationMemory(t *testing.T) {
 	}
 }
 
-func TestAgent_StorageGetterAndSetter(t *testing.T) {
+func TestAgent_GenerateParameterOptions(t *testing.T) {
+	mock := mockllm.New("ok")
+	a, err := agent.New(agent.Config{ID: "params-agent", Model: mock})
+	if err != nil {
+		t.Fatalf("failed to create agent: %v", err)
+	}
+
+	_, err = a.Generate(context.Background(), "hi",
+		agent.WithTemperature(0.2),
+		agent.WithMaxTokens(128),
+		agent.WithTopP(0.9),
+	)
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+
+	lastCall := mock.LastCall()
+	if lastCall == nil {
+		t.Fatal("expected a recorded model call")
+	}
+	if lastCall.Temperature == nil || *lastCall.Temperature != 0.2 {
+		t.Errorf("expected temperature 0.2, got %v", lastCall.Temperature)
+	}
+	if lastCall.MaxTokens == nil || *lastCall.MaxTokens != 128 {
+		t.Errorf("expected max tokens 128, got %v", lastCall.MaxTokens)
+	}
+	if lastCall.TopP == nil || *lastCall.TopP != 0.9 {
+		t.Errorf("expected top_p 0.9, got %v", lastCall.TopP)
+	}
+}
+
+func TestAgent_StorageGetter(t *testing.T) {
 	mock := mockllm.New("hello")
-	store1 := inmemory.New()
-	store2 := inmemory.New()
+	store := inmemory.New()
 
 	a, err := agent.New(agent.Config{
 		ID:      "test-agent",
 		Model:   mock,
-		Storage: store1,
+		Storage: store,
 	})
 	if err != nil {
 		t.Fatalf("failed to create agent: %v", err)
 	}
 
-	if a.Storage() != store1 {
-		t.Errorf("expected store1, got %v", a.Storage())
-	}
-
-	a.SetStorage(store2)
-	if a.Storage() != store2 {
-		t.Errorf("expected store2 after SetStorage, got %v", a.Storage())
+	if a.Storage() != store {
+		t.Errorf("expected configured store, got %v", a.Storage())
 	}
 }
 
@@ -622,7 +646,7 @@ func TestAgent_Stream_WithStorage(t *testing.T) {
 		t.Fatalf("Stream failed: %v", err)
 	}
 
-	res, err := stream.Drain()
+	res, err := drainStream(t, stream)
 	if err != nil {
 		t.Fatalf("Drain failed: %v", err)
 	}
@@ -868,8 +892,8 @@ func TestAgent_ThinkingConfigurationAndOverride(t *testing.T) {
 		t.Errorf("expected reasoning tokens 15, got %d", res1.Usage.ReasoningTokens)
 	}
 
-	// 2. Generation with WithThinkingLevel override (generate message config)
-	_, err = a.Generate(ctx, "Calculate meaning", agent.WithThinkingLevel(llm.ThinkingLevelMedium))
+	// 2. Generation with a per-call thinking level override.
+	_, err = a.Generate(ctx, "Calculate meaning", agent.WithThinking(llm.ThinkingConfig{Level: llm.ThinkingLevelMedium}))
 	if err != nil {
 		t.Fatalf("Generate with option failed: %v", err)
 	}
@@ -877,8 +901,9 @@ func TestAgent_ThinkingConfigurationAndOverride(t *testing.T) {
 		t.Errorf("expected request thinking level medium, got %+v", recordedReq.Thinking)
 	}
 
-	// 3. Generation with WithThinkingBudget override
-	_, err = a.Generate(ctx, "Hard problem", agent.WithThinkingBudget(2048))
+	// 3. Generation with a per-call thinking budget override.
+	budget2048 := 2048
+	_, err = a.Generate(ctx, "Hard problem", agent.WithThinking(llm.ThinkingConfig{BudgetTokens: &budget2048}))
 	if err != nil {
 		t.Fatalf("Generate with budget option failed: %v", err)
 	}
@@ -927,12 +952,12 @@ func TestAgent_StreamThinking(t *testing.T) {
 		t.Fatalf("failed to create agent: %v", err)
 	}
 
-	stream, err := a.Stream(ctx, "Solve puzzle", agent.WithThinkingLevel(llm.ThinkingLevelHigh))
+	stream, err := a.Stream(ctx, "Solve puzzle", agent.WithThinking(llm.ThinkingConfig{Level: llm.ThinkingLevelHigh}))
 	if err != nil {
 		t.Fatalf("Stream failed: %v", err)
 	}
 
-	res, err := stream.Drain()
+	res, err := drainStream(t, stream)
 	if err != nil {
 		t.Fatalf("Drain failed: %v", err)
 	}

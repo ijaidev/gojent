@@ -4,8 +4,6 @@ package llm
 type ThinkingLevel string
 
 const (
-	// ThinkingLevelUnspecified indicates no preference; provider default is used.
-	ThinkingLevelUnspecified ThinkingLevel = ""
 	// ThinkingLevelNone explicitly disables internal model reasoning/thinking.
 	ThinkingLevelNone ThinkingLevel = "none"
 	// ThinkingLevelMinimal requests minimal reasoning steps for lower latency and cost.
@@ -63,8 +61,6 @@ type ResponseFormat struct {
 	Type ResponseFormatType `json:"type"`
 	// Name optionally specifies the schema identifier (required by some providers like OpenAI).
 	Name string `json:"name,omitempty"`
-	// Description optionally explains the purpose of the output schema.
-	Description string `json:"description,omitempty"`
 	// Schema is the JSON Schema definition (typically a map[string]any or a struct).
 	Schema any `json:"schema,omitempty"`
 	// Strict indicates whether the provider should enforce strict schema adherence.

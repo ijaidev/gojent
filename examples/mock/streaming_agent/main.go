@@ -23,7 +23,6 @@ func run() error {
 	// 2. Initialize an Agent configured with system instructions
 	bot, err := agent.New(agent.Config{
 		ID:           "stream-bot",
-		Name:         "Streaming Assistant",
 		Instructions: "You are a concise, helpful assistant demonstrating streaming in Go.",
 		Model:        mockLLM,
 	})

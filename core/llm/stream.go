@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"iter"
 	"sync"
 )
 
@@ -37,25 +36,6 @@ type Stream interface {
 	Recv() (*StreamChunk, error)
 	// Close releases any resources associated with the stream.
 	Close() error
-}
-
-// StreamAll returns a range-over-func iterator for reading chunks from any Stream.
-func StreamAll(s Stream) iter.Seq2[*StreamChunk, error] {
-	return func(yield func(*StreamChunk, error) bool) {
-		for {
-			chunk, err := s.Recv()
-			if errors.Is(err, io.EOF) {
-				return
-			}
-			if err != nil {
-				yield(nil, err)
-				return
-			}
-			if !yield(chunk, nil) {
-				return
-			}
-		}
-	}
 }
 
 // sliceStream is an in-memory implementation of Stream backed by a slice of chunks.

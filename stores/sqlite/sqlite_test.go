@@ -293,60 +293,6 @@ func TestStore_MessageOperations(t *testing.T) {
 	}
 }
 
-func TestStore_ThreadState(t *testing.T) {
-	ctx := context.Background()
-	store, err := sqlite.New(":memory:")
-	if err != nil {
-		t.Fatalf("sqlite.New failed: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	threadID := "th-state-test"
-
-	// Set state for "task"
-	taskData := map[string]any{"task_id": "1", "status": "running"}
-	err = store.SetThreadState(ctx, threadID, "task", taskData)
-	if err != nil {
-		t.Fatalf("SetThreadState task failed: %v", err)
-	}
-
-	// Set state for "goal"
-	goalData := "Achieve 100% test coverage"
-	err = store.SetThreadState(ctx, threadID, "goal", goalData)
-	if err != nil {
-		t.Fatalf("SetThreadState goal failed: %v", err)
-	}
-
-	// Get state
-	gotTask, err := store.GetThreadState(ctx, threadID, "task")
-	if err != nil {
-		t.Fatalf("GetThreadState failed: %v", err)
-	}
-	m, ok := gotTask.(map[string]any)
-	if !ok || m["task_id"] != "1" {
-		t.Errorf("unexpected task state: %+v", gotTask)
-	}
-
-	// List states
-	states, err := store.ListThreadStates(ctx, threadID)
-	if err != nil {
-		t.Fatalf("ListThreadStates failed: %v", err)
-	}
-	if len(states) != 2 || states["goal"] != goalData {
-		t.Errorf("unexpected state list: %+v", states)
-	}
-
-	// Delete state
-	err = store.DeleteThreadState(ctx, threadID, "task")
-	if err != nil {
-		t.Fatalf("DeleteThreadState failed: %v", err)
-	}
-	_, err = store.GetThreadState(ctx, threadID, "task")
-	if !errors.Is(err, storage.ErrStateNotFound) {
-		t.Errorf("expected ErrStateNotFound after delete, got %v", err)
-	}
-}
-
 func TestStore_CascadeDelete(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.New(":memory:")
@@ -368,11 +314,6 @@ func TestStore_CascadeDelete(t *testing.T) {
 		t.Fatalf("SaveMessages failed: %v", err)
 	}
 
-	err = store.SetThreadState(ctx, th.ID, "task", "important task")
-	if err != nil {
-		t.Fatalf("SetThreadState failed: %v", err)
-	}
-
 	// Delete thread
 	err = store.DeleteThread(ctx, th.ID)
 	if err != nil {
@@ -386,12 +327,6 @@ func TestStore_CascadeDelete(t *testing.T) {
 	}
 	if len(msgs) != 0 {
 		t.Errorf("expected 0 messages after cascade, got %d", len(msgs))
-	}
-
-	// Check thread state cascaded
-	_, err = store.GetThreadState(ctx, th.ID, "task")
-	if !errors.Is(err, storage.ErrStateNotFound) {
-		t.Errorf("expected ErrStateNotFound after cascade, got %v", err)
 	}
 }
 
@@ -407,7 +342,6 @@ func TestStore_ClearAndDangerouslyClearAll(t *testing.T) {
 	_, _ = store.SaveMessages(ctx, []*storage.Message{
 		storage.NewMessage(th.ID, llm.RoleUser, "msg"),
 	})
-	_ = store.SetThreadState(ctx, th.ID, "k", "v")
 
 	store.DangerouslyClearAll()
 
@@ -418,10 +352,6 @@ func TestStore_ClearAndDangerouslyClearAll(t *testing.T) {
 	msgs, _ := store.ListMessages(ctx, storage.MessageFilter{})
 	if len(msgs) != 0 {
 		t.Errorf("expected 0 messages after clear, got %d", len(msgs))
-	}
-	states, _ := store.ListThreadStates(ctx, th.ID)
-	if len(states) != 0 {
-		t.Errorf("expected 0 states after clear, got %d", len(states))
 	}
 }
 
@@ -453,18 +383,6 @@ func TestStore_Concurrency(t *testing.T) {
 				_, err := store.SaveMessages(ctx, []*storage.Message{msg})
 				if err != nil {
 					t.Errorf("SaveMessages concurrent error: %v", err)
-				}
-
-				// Set and get state
-				stateKey := fmt.Sprintf("state-%d", workerID)
-				err = store.SetThreadState(ctx, th.ID, stateKey, j)
-				if err != nil {
-					t.Errorf("SetThreadState concurrent error: %v", err)
-				}
-
-				_, err = store.GetThreadState(ctx, th.ID, stateKey)
-				if err != nil {
-					t.Errorf("GetThreadState concurrent error: %v", err)
 				}
 
 				// Read messages
@@ -508,18 +426,6 @@ func TestStore_ClosedAndInvalidInput(t *testing.T) {
 	if _, err := store.SaveMessages(ctx, []*storage.Message{{Role: llm.RoleUser}}); err == nil {
 		t.Errorf("expected error for message without threadID")
 	}
-	if _, err := store.GetThreadState(ctx, "", "type"); err == nil {
-		t.Errorf("expected error for empty threadID in GetThreadState")
-	}
-	if err := store.SetThreadState(ctx, "th", "", "val"); err == nil {
-		t.Errorf("expected error for empty stateType in SetThreadState")
-	}
-	if err := store.DeleteThreadState(ctx, "", "type"); err == nil {
-		t.Errorf("expected error for empty threadID in DeleteThreadState")
-	}
-	if _, err := store.ListThreadStates(ctx, ""); err == nil {
-		t.Errorf("expected error for empty threadID in ListThreadStates")
-	}
 
 	// Close store
 	err = store.Close()
@@ -558,18 +464,6 @@ func TestStore_ClosedAndInvalidInput(t *testing.T) {
 	}
 	if err := store.DeleteMessages(ctx, []string{"id"}); !errors.Is(err, storage.ErrClosed) {
 		t.Errorf("expected ErrClosed for DeleteMessages, got %v", err)
-	}
-	if _, err := store.GetThreadState(ctx, "th", "type"); !errors.Is(err, storage.ErrClosed) {
-		t.Errorf("expected ErrClosed for GetThreadState, got %v", err)
-	}
-	if err := store.SetThreadState(ctx, "th", "type", "val"); !errors.Is(err, storage.ErrClosed) {
-		t.Errorf("expected ErrClosed for SetThreadState, got %v", err)
-	}
-	if err := store.DeleteThreadState(ctx, "th", "type"); !errors.Is(err, storage.ErrClosed) {
-		t.Errorf("expected ErrClosed for DeleteThreadState, got %v", err)
-	}
-	if _, err := store.ListThreadStates(ctx, "th"); !errors.Is(err, storage.ErrClosed) {
-		t.Errorf("expected ErrClosed for ListThreadStates, got %v", err)
 	}
 	if err := store.Clear(ctx); !errors.Is(err, storage.ErrClosed) {
 		t.Errorf("expected ErrClosed for Clear, got %v", err)
@@ -651,11 +545,6 @@ func TestStore_FilePersistence(t *testing.T) {
 		t.Fatalf("SaveMessages failed: %v", err)
 	}
 
-	err = store1.SetThreadState(ctx, th.ID, "goal", "persistent goal")
-	if err != nil {
-		t.Fatalf("SetThreadState failed: %v", err)
-	}
-
 	// Close store1
 	if err := store1.Close(); err != nil {
 		t.Fatalf("failed to close store1: %v", err)
@@ -682,14 +571,6 @@ func TestStore_FilePersistence(t *testing.T) {
 	}
 	if len(msgs) != 1 || msgs[0].Text() != "persistent message" {
 		t.Errorf("expected 1 persistent message, got %+v", msgs)
-	}
-
-	goalVal, err := store2.GetThreadState(ctx, "persistent-th", "goal")
-	if err != nil {
-		t.Fatalf("GetThreadState in store2 failed: %v", err)
-	}
-	if goalVal != "persistent goal" {
-		t.Errorf("expected 'persistent goal', got %v", goalVal)
 	}
 }
 
@@ -763,18 +644,6 @@ func TestStore_ContextCancellation(t *testing.T) {
 	}
 	if err := store.DeleteMessages(ctx, []string{"id"}); !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled for DeleteMessages, got %v", err)
-	}
-	if _, err := store.GetThreadState(ctx, "th", "type"); !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled for GetThreadState, got %v", err)
-	}
-	if err := store.SetThreadState(ctx, "th", "type", "val"); !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled for SetThreadState, got %v", err)
-	}
-	if err := store.DeleteThreadState(ctx, "th", "type"); !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled for DeleteThreadState, got %v", err)
-	}
-	if _, err := store.ListThreadStates(ctx, "th"); !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled for ListThreadStates, got %v", err)
 	}
 	if err := store.Clear(ctx); !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled for Clear, got %v", err)

@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"reflect"
@@ -19,24 +18,22 @@ import (
 )
 
 // Store implements the storage.Storage interface in-memory.
-// It holds maps for conversation threads, messages, and arbitrary thread state.
+// It holds maps for conversation threads and messages.
 // All operations are safe for concurrent use across goroutines.
 type Store struct {
-	mu           sync.RWMutex
-	closed       bool
-	threads      map[string]*storage.Thread
-	messages     map[string]*storage.Message
-	threadMsgs   map[string][]string
-	threadStates map[string]map[string]json.RawMessage
+	mu         sync.RWMutex
+	closed     bool
+	threads    map[string]*storage.Thread
+	messages   map[string]*storage.Message
+	threadMsgs map[string][]string
 }
 
 // New creates and initializes a new in-memory Store.
 func New() *Store {
 	return &Store{
-		threads:      make(map[string]*storage.Thread),
-		messages:     make(map[string]*storage.Message),
-		threadMsgs:   make(map[string][]string),
-		threadStates: make(map[string]map[string]json.RawMessage),
+		threads:    make(map[string]*storage.Thread),
+		messages:   make(map[string]*storage.Message),
+		threadMsgs: make(map[string][]string),
 	}
 }
 
@@ -125,9 +122,6 @@ func (s *Store) UpdateThread(ctx context.Context, id string, input storage.Updat
 	if input.Title != nil {
 		th.Title = *input.Title
 	}
-	if input.ResourceID != nil {
-		th.ResourceID = *input.ResourceID
-	}
 	if input.Metadata != nil {
 		if th.Metadata == nil {
 			th.Metadata = make(map[string]any, len(input.Metadata))
@@ -139,7 +133,7 @@ func (s *Store) UpdateThread(ctx context.Context, id string, input storage.Updat
 	return th.Clone(), nil
 }
 
-// DeleteThread removes a conversation thread and cascades deletion to all associated messages and state.
+// DeleteThread removes a conversation thread and cascades deletion to all associated messages.
 func (s *Store) DeleteThread(ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -165,7 +159,6 @@ func (s *Store) DeleteThread(ctx context.Context, id string) error {
 		}
 		delete(s.threadMsgs, id)
 	}
-	delete(s.threadStates, id)
 
 	return nil
 }
@@ -409,137 +402,16 @@ func (s *Store) DeleteMessages(ctx context.Context, ids []string) error {
 	return nil
 }
 
-// GetThreadState retrieves the durable state value for a (threadID, stateType) pair.
-func (s *Store) GetThreadState(ctx context.Context, threadID, stateType string) (any, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if threadID == "" || stateType == "" {
-		return nil, fmt.Errorf("%w: threadID and stateType cannot be empty", storage.ErrInvalidInput)
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.closed {
-		return nil, storage.ErrClosed
-	}
-
-	byType, ok := s.threadStates[threadID]
-	if !ok {
-		return nil, storage.ErrStateNotFound
-	}
-	raw, ok := byType[stateType]
-	if !ok {
-		return nil, storage.ErrStateNotFound
-	}
-	return decodeThreadState(raw)
-}
-
-// SetThreadState sets or overwrites the durable state value for a (threadID, stateType) pair.
-func (s *Store) SetThreadState(ctx context.Context, threadID, stateType string, value any) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if threadID == "" || stateType == "" {
-		return fmt.Errorf("%w: threadID and stateType cannot be empty", storage.ErrInvalidInput)
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return storage.ErrClosed
-	}
-
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return fmt.Errorf("%w: failed to marshal state value: %w", storage.ErrInvalidInput, err)
-	}
-
-	byType, ok := s.threadStates[threadID]
-	if !ok {
-		byType = make(map[string]json.RawMessage)
-		s.threadStates[threadID] = byType
-	}
-	byType[stateType] = json.RawMessage(raw)
-	return nil
-}
-
-// DeleteThreadState removes the durable state value for a (threadID, stateType) pair.
-func (s *Store) DeleteThreadState(ctx context.Context, threadID, stateType string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if threadID == "" || stateType == "" {
-		return fmt.Errorf("%w: threadID and stateType cannot be empty", storage.ErrInvalidInput)
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return storage.ErrClosed
-	}
-
-	if byType, ok := s.threadStates[threadID]; ok {
-		delete(byType, stateType)
-		if len(byType) == 0 {
-			delete(s.threadStates, threadID)
-		}
-	}
-	return nil
-}
-
-// ListThreadStates returns all state values recorded for a thread, mapped by state type.
-func (s *Store) ListThreadStates(ctx context.Context, threadID string) (map[string]any, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if threadID == "" {
-		return nil, fmt.Errorf("%w: threadID cannot be empty", storage.ErrInvalidInput)
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.closed {
-		return nil, storage.ErrClosed
-	}
-
-	byType, ok := s.threadStates[threadID]
-	if !ok {
-		return make(map[string]any), nil
-	}
-	res := make(map[string]any, len(byType))
-	for k, raw := range byType {
-		value, err := decodeThreadState(raw)
-		if err != nil {
-			return nil, fmt.Errorf("inmemory: failed to decode state %q: %w", k, err)
-		}
-		res[k] = value
-	}
-	return res, nil
-}
-
-func decodeThreadState(raw json.RawMessage) (any, error) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil, nil
-	}
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal state value: %w", err)
-	}
-	return value, nil
-}
-
-// Clear removes all stored threads, messages, and state. Useful in testing.
+// Clear removes all stored threads and messages. Useful in testing.
 func (s *Store) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.threads = make(map[string]*storage.Thread)
 	s.messages = make(map[string]*storage.Message)
 	s.threadMsgs = make(map[string][]string)
-	s.threadStates = make(map[string]map[string]json.RawMessage)
 }
 
-// DangerouslyClearAll removes all stored threads, messages, and state.
+// DangerouslyClearAll removes all stored threads and messages.
 func (s *Store) DangerouslyClearAll() {
 	s.Clear()
 }
@@ -554,8 +426,7 @@ func (s *Store) Close() error {
 
 // Ensure Store satisfies Storage and all domain store interfaces at compile time.
 var (
-	_ storage.Storage          = (*Store)(nil)
-	_ storage.ThreadStore      = (*Store)(nil)
-	_ storage.MessageStore     = (*Store)(nil)
-	_ storage.ThreadStateStore = (*Store)(nil)
+	_ storage.Storage      = (*Store)(nil)
+	_ storage.ThreadStore  = (*Store)(nil)
+	_ storage.MessageStore = (*Store)(nil)
 )

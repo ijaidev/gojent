@@ -153,9 +153,6 @@ func (s *Store) UpdateThread(ctx context.Context, id string, input storage.Updat
 	if input.Title != nil {
 		th.Title = *input.Title
 	}
-	if input.ResourceID != nil {
-		th.ResourceID = *input.ResourceID
-	}
 	if input.Metadata != nil {
 		if th.Metadata == nil {
 			th.Metadata = make(map[string]any, len(input.Metadata))
@@ -186,7 +183,7 @@ func (s *Store) UpdateThread(ctx context.Context, id string, input storage.Updat
 	return &th, nil
 }
 
-// DeleteThread removes a conversation thread and cascades deletion to all messages and thread state.
+// DeleteThread removes a conversation thread and cascades deletion to all messages.
 func (s *Store) DeleteThread(ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -219,10 +216,6 @@ func (s *Store) DeleteThread(ctx context.Context, id string) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM messages WHERE thread_id = $1", id); err != nil {
 		return fmt.Errorf("postgres: failed to cascade delete messages: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM thread_state WHERE thread_id = $1", id); err != nil {
-		return fmt.Errorf("postgres: failed to cascade delete thread_state: %w", err)
-	}
-
 	return tx.Commit()
 }
 

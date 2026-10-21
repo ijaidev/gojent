@@ -192,42 +192,14 @@ func TestGenerateStructured_UnmarshalError(t *testing.T) {
 	}
 }
 
-func TestGenerateMessagesStructured_EndToEnd(t *testing.T) {
-	mock := mockllm.New(`{"city":"Paris","temperature":21.0,"condition":"sunny"}`)
-	a, err := agent.New(agent.Config{
-		ID:    "messages-agent",
-		Model: mock,
-	})
-	if err != nil {
-		t.Fatalf("failed to create agent: %v", err)
-	}
-
-	report, _, err := agent.GenerateMessagesStructured[WeatherReport](
-		context.Background(),
-		a,
-		[]llm.Message{llm.UserMessage("Get Paris weather")},
-	)
-	if err != nil {
-		t.Fatalf("GenerateMessagesStructured failed: %v", err)
-	}
-	if report.City != "Paris" || report.Temperature != 21.0 || report.Condition != "sunny" {
-		t.Errorf("unexpected structured data: %+v", report)
-	}
-
-	lastCall := mock.LastCall()
-	if lastCall == nil || lastCall.ResponseFormat == nil || lastCall.ResponseFormat.Name != "WeatherReport" {
-		t.Errorf("expected WeatherReport response format, got %+v", lastCall)
-	}
-}
-
-func TestWithJSONOutput_Option(t *testing.T) {
+func TestWithResponseFormat_JSONOption(t *testing.T) {
 	mock := mockllm.New(`{"custom":"json"}`)
 	a, _ := agent.New(agent.Config{
 		ID:    "json-agent",
 		Model: mock,
 	})
 
-	res, err := a.Generate(context.Background(), "give json", agent.WithJSONOutput())
+	res, err := a.Generate(context.Background(), "give json", agent.WithResponseFormat(&llm.ResponseFormat{Type: llm.ResponseFormatJSON}))
 	if err != nil {
 		t.Fatalf("Generate with JSON output failed: %v", err)
 	}

@@ -166,11 +166,10 @@ func TestModel_Stream_CustomHandler(t *testing.T) {
 func TestModel_RecordsResponseFormat(t *testing.T) {
 	strict := true
 	rf := &llm.ResponseFormat{
-		Type:        llm.ResponseFormatJSONSchema,
-		Name:        "TestSchema",
-		Description: "A test schema",
-		Schema:      map[string]any{"type": "object"},
-		Strict:      &strict,
+		Type:   llm.ResponseFormatJSONSchema,
+		Name:   "TestSchema",
+		Schema: map[string]any{"type": "object"},
+		Strict: &strict,
 	}
 
 	mock := mockllm.New(`{"name":"Gojent"}`)

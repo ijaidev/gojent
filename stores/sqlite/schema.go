@@ -40,16 +40,6 @@ CREATE INDEX IF NOT EXISTS idx_messages_resource_id ON messages(resource_id);
 CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_thread_created ON messages(thread_id, created_at);
-
-CREATE TABLE IF NOT EXISTS thread_state (
-    thread_id TEXT NOT NULL,
-    type TEXT NOT NULL,
-    value TEXT NOT NULL DEFAULT '',
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (thread_id, type)
-);
-
-CREATE INDEX IF NOT EXISTS idx_thread_state_thread_id ON thread_state(thread_id);
 `
 
 // Migrate ensures required database tables and indexes exist.

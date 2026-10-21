@@ -22,6 +22,3 @@ type LLM interface {
 	// ModelID returns the identifier of the model (e.g. "gpt-4o", "claude-3-5-sonnet", "mock-llm").
 	ModelID() string
 }
-
-// Model is an alias for LLM.
-type Model = LLM

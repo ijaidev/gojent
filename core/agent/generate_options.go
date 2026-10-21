@@ -23,7 +23,7 @@ type GenerateConfig struct {
 	Media          []llm.Part
 	Tools          []tool.Tool
 	MaxSteps       *int
-	Hooks          Hooks
+	Hooks          *Hooks
 }
 
 // GenerateOption allows customizing an individual Generate call.
@@ -64,39 +64,10 @@ func WithThinking(cfg llm.ThinkingConfig) GenerateOption {
 	}
 }
 
-// WithThinkingLevel configures the qualitative thinking level for a generation.
-func WithThinkingLevel(level llm.ThinkingLevel) GenerateOption {
-	return func(c *GenerateConfig) {
-		if c.Thinking == nil {
-			c.Thinking = &llm.ThinkingConfig{}
-		}
-		c.Thinking.Level = level
-	}
-}
-
-// WithThinkingBudget configures an explicit token budget for thinking.
-func WithThinkingBudget(tokens int) GenerateOption {
-	return func(c *GenerateConfig) {
-		if c.Thinking == nil {
-			c.Thinking = &llm.ThinkingConfig{}
-		}
-		c.Thinking.BudgetTokens = &tokens
-	}
-}
-
 // WithResponseFormat configures structured output constraints directly using an llm.ResponseFormat.
 func WithResponseFormat(rf *llm.ResponseFormat) GenerateOption {
 	return func(cfg *GenerateConfig) {
 		cfg.ResponseFormat = rf.Clone()
-	}
-}
-
-// WithJSONOutput instructs the agent to return valid JSON output without a constrained schema.
-func WithJSONOutput() GenerateOption {
-	return func(cfg *GenerateConfig) {
-		cfg.ResponseFormat = &llm.ResponseFormat{
-			Type: llm.ResponseFormatJSON,
-		}
 	}
 }
 
@@ -105,7 +76,10 @@ func WithOutputSchema[T any](opts ...tool.SchemaOption) GenerateOption {
 	return func(cfg *GenerateConfig) {
 		schemaOpts := append([]tool.SchemaOption(nil), opts...)
 		schemaOpts = append(schemaOpts, tool.WithStrictSchema(true))
-		schema := tool.GenerateSchemaWithOptions[T](schemaOpts...)
+		schema, _ := tool.GenerateSchema[T](schemaOpts...)
+		if schema == nil {
+			schema = map[string]any{}
+		}
 		var zero T
 		t := reflect.TypeOf(zero)
 		for t != nil && t.Kind() == reflect.Pointer {
@@ -139,10 +113,10 @@ func WithMaxTokens(n int) GenerateOption {
 	}
 }
 
-// WithAdditionalMessages appends conversation messages before the user prompt.
-func WithAdditionalMessages(msgs ...llm.Message) GenerateOption {
+// WithTopP overrides the nucleus sampling probability for a generation.
+func WithTopP(p float64) GenerateOption {
 	return func(cfg *GenerateConfig) {
-		cfg.Messages = append(cfg.Messages, msgs...)
+		cfg.TopP = &p
 	}
 }
 
@@ -167,11 +141,10 @@ func WithMaxSteps(n int) GenerateOption {
 	}
 }
 
-// WithHooks supplies per-call lifecycle hooks for this generation.
-// Non-nil callbacks override matching agent-level hooks for the duration of the
-// run. Repeated WithHooks options layer on top of each other.
+// WithHooks replaces the agent-level lifecycle hooks for this generation.
+// A later WithHooks option replaces an earlier one wholesale.
 func WithHooks(h Hooks) GenerateOption {
 	return func(cfg *GenerateConfig) {
-		cfg.Hooks = mergeHooks(cfg.Hooks, h)
+		cfg.Hooks = &h
 	}
 }

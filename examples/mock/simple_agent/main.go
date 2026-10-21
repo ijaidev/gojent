@@ -20,7 +20,6 @@ func main() {
 	// 2. Initialize an Agent injecting the mock LLM
 	bot, err := agent.New(agent.Config{
 		ID:           "assistant",
-		Name:         "Helpful Assistant",
 		Instructions: "You are a helpful, concise AI assistant.",
 		Model:        mockLLM,
 	})

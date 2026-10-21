@@ -37,11 +37,6 @@ func (r Result) Parts() ([]llm.Part, error) {
 	return []llm.Part{llm.TextPart(string(encoded))}, nil
 }
 
-// NewTextResult creates a tool result with text content.
-func NewTextResult(text string) Result {
-	return Result{Content: []llm.Part{llm.TextPart(text)}}
-}
-
 // NewImageResult creates a tool result with optional text and a media part.
 func NewImageResult(text string, part llm.Part) Result {
 	parts := make([]llm.Part, 0, 2)
@@ -50,11 +45,6 @@ func NewImageResult(text string, part llm.Part) Result {
 	}
 	parts = append(parts, part)
 	return Result{Content: parts}
-}
-
-// NewResult creates a tool result from multiple parts.
-func NewResult(parts ...llm.Part) Result {
-	return Result{Content: append([]llm.Part(nil), parts...)}
 }
 
 func normalizeResult(result Result) (Result, error) {

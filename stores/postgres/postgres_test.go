@@ -152,9 +152,6 @@ func TestStore_ThreadLifecycle(t *testing.T) {
 	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM messages WHERE thread_id = $1")).
 		WithArgs("th-1").
 		WillReturnResult(sqlmock.NewResult(0, 5))
-	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM thread_state WHERE thread_id = $1")).
-		WithArgs("th-1").
-		WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectCommit()
 
 	if err := store.DeleteThread(ctx, "th-1"); err != nil {
@@ -437,97 +434,6 @@ func TestStore_MessageOperations(t *testing.T) {
 	}
 }
 
-func TestStore_ThreadState(t *testing.T) {
-	ctx := context.Background()
-	store, mock := newMockStore(t)
-	defer func() { _ = store.Close() }()
-
-	// 1. GetThreadState (validation)
-	_, err := store.GetThreadState(ctx, "", "task")
-	if !errors.Is(err, storage.ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got: %v", err)
-	}
-
-	// 2. GetThreadState (success)
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT value FROM thread_state WHERE thread_id = $1 AND type = $2")).
-		WithArgs("th-1", "task").
-		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow(`{"status":"in_progress","steps":[1,2]}`))
-
-	val, err := store.GetThreadState(ctx, "th-1", "task")
-	if err != nil {
-		t.Fatalf("GetThreadState failed: %v", err)
-	}
-	valMap, ok := val.(map[string]any)
-	if !ok || valMap["status"] != "in_progress" {
-		t.Errorf("unexpected state value: %v", val)
-	}
-
-	// 3. GetThreadState (not found)
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT value FROM thread_state WHERE thread_id = $1 AND type = $2")).
-		WithArgs("th-1", "goal").
-		WillReturnError(sql.ErrNoRows)
-
-	_, err = store.GetThreadState(ctx, "th-1", "goal")
-	if !errors.Is(err, storage.ErrStateNotFound) {
-		t.Errorf("expected ErrStateNotFound, got: %v", err)
-	}
-
-	// 4. GetThreadState (null value)
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT value FROM thread_state WHERE thread_id = $1 AND type = $2")).
-		WithArgs("th-1", "empty").
-		WillReturnRows(sqlmock.NewRows([]string{"value"}).AddRow("null"))
-
-	val, err = store.GetThreadState(ctx, "th-1", "empty")
-	if err != nil || val != nil {
-		t.Errorf("expected nil value, got %v (err: %v)", val, err)
-	}
-
-	// 5. SetThreadState (success)
-	mock.ExpectExec("INSERT INTO thread_state").
-		WithArgs("th-1", "task", `{"status":"completed"}`, sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = store.SetThreadState(ctx, "th-1", "task", map[string]any{"status": "completed"})
-	if err != nil {
-		t.Fatalf("SetThreadState failed: %v", err)
-	}
-
-	// 6. DeleteThreadState (success)
-	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM thread_state WHERE thread_id = $1 AND type = $2")).
-		WithArgs("th-1", "task").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err = store.DeleteThreadState(ctx, "th-1", "task")
-	if err != nil {
-		t.Fatalf("DeleteThreadState failed: %v", err)
-	}
-
-	// 7. ListThreadStates (success)
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT type, value FROM thread_state WHERE thread_id = $1")).
-		WithArgs("th-1").
-		WillReturnRows(sqlmock.NewRows([]string{"type", "value"}).
-			AddRow("task", `{"id":1}`).
-			AddRow("note", `"remember this"`))
-
-	states, err := store.ListThreadStates(ctx, "th-1")
-	if err != nil {
-		t.Fatalf("ListThreadStates failed: %v", err)
-	}
-	if len(states) != 2 || states["note"] != "remember this" {
-		t.Errorf("unexpected thread states: %+v", states)
-	}
-
-	// 8. ListThreadStates (empty threadID)
-	_, err = store.ListThreadStates(ctx, "")
-	if !errors.Is(err, storage.ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got: %v", err)
-	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("unfulfilled mock expectations: %v", err)
-	}
-}
-
 func TestStore_ClearAndDangerouslyClearAll(t *testing.T) {
 	ctx := context.Background()
 	store, mock := newMockStore(t)
@@ -535,7 +441,6 @@ func TestStore_ClearAndDangerouslyClearAll(t *testing.T) {
 
 	// 1. Clear
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM thread_state")).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM messages")).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM threads")).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
@@ -546,7 +451,6 @@ func TestStore_ClearAndDangerouslyClearAll(t *testing.T) {
 
 	// 2. DangerouslyClearAll
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM thread_state")).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM messages")).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM threads")).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
@@ -618,18 +522,6 @@ func TestStore_ClosedAndInvalidInput(t *testing.T) {
 	if err := store.DeleteMessages(ctx, []string{"msg-1"}); !errors.Is(err, storage.ErrClosed) {
 		t.Errorf("expected ErrClosed, got %v", err)
 	}
-	if _, err := store.GetThreadState(ctx, "th-1", "task"); !errors.Is(err, storage.ErrClosed) {
-		t.Errorf("expected ErrClosed, got %v", err)
-	}
-	if err := store.SetThreadState(ctx, "th-1", "task", "val"); !errors.Is(err, storage.ErrClosed) {
-		t.Errorf("expected ErrClosed, got %v", err)
-	}
-	if err := store.DeleteThreadState(ctx, "th-1", "task"); !errors.Is(err, storage.ErrClosed) {
-		t.Errorf("expected ErrClosed, got %v", err)
-	}
-	if _, err := store.ListThreadStates(ctx, "th-1"); !errors.Is(err, storage.ErrClosed) {
-		t.Errorf("expected ErrClosed, got %v", err)
-	}
 	if err := store.Clear(ctx); !errors.Is(err, storage.ErrClosed) {
 		t.Errorf("expected ErrClosed, got %v", err)
 	}
@@ -684,18 +576,6 @@ func TestStore_ContextCancellation(t *testing.T) {
 	if err := store.DeleteMessages(ctx, []string{"msg-1"}); !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
-	if _, err := store.GetThreadState(ctx, "th-1", "task"); !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled, got %v", err)
-	}
-	if err := store.SetThreadState(ctx, "th-1", "task", "val"); !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled, got %v", err)
-	}
-	if err := store.DeleteThreadState(ctx, "th-1", "task"); !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled, got %v", err)
-	}
-	if _, err := store.ListThreadStates(ctx, "th-1"); !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled, got %v", err)
-	}
 	if err := store.Clear(ctx); !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
@@ -741,7 +621,6 @@ func TestStore_Concurrency(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, _ = store.GetThreadByID(ctx, "")
-			_, _ = store.GetThreadState(ctx, "", "")
 			_ = store.DeleteMessages(ctx, []string{})
 			_, _ = store.SaveMessages(ctx, []*storage.Message{})
 		}()

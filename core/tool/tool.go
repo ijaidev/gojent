@@ -80,7 +80,7 @@ func New[In any, Out any](cfg Config[In, Out]) (*BaseTool[In, Out], error) {
 
 	var params map[string]any
 	if cfg.Parameters == nil {
-		generated, err := GenerateSchemaE[In](cfg.SchemaOptions...)
+		generated, err := GenerateSchema[In](cfg.SchemaOptions...)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrInvalidSchema, err)
 		}
@@ -173,15 +173,6 @@ func (t *BaseTool[In, Out]) Execute(ctx context.Context, input []byte) (Result, 
 		return Result{}, fmt.Errorf("tool %s: %w", t.id, err)
 	}
 	return result, nil
-}
-
-// ExecuteTyped runs the tool with strongly-typed input directly.
-func (t *BaseTool[In, Out]) ExecuteTyped(ctx context.Context, input In) (Out, error) {
-	var zero Out
-	if t == nil || t.execute == nil {
-		return zero, ErrExecuteRequired
-	}
-	return t.execute(ctx, input)
 }
 
 // IsNilTool reports whether t is nil or wraps a typed nil implementation.

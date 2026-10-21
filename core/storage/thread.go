@@ -39,8 +39,6 @@ func (t *Thread) Clone() *Thread {
 type UpdateThreadInput struct {
 	// Title if non-nil updates the thread's title.
 	Title *string `json:"title,omitempty"`
-	// ResourceID if non-nil updates the thread's resource owner.
-	ResourceID *string `json:"resource_id,omitempty"`
 	// Metadata if non-nil merges its keys into the thread's existing metadata.
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
@@ -55,7 +53,7 @@ type ThreadFilter struct {
 	Limit int `json:"limit,omitempty"`
 	// Offset is the number of initial records to skip for pagination.
 	Offset int `json:"offset,omitempty"`
-	// SortBy selects the field to sort by (defaults to ThreadSortCreatedAt).
+	// SortBy selects the field to sort by (defaults to creation time).
 	SortBy ThreadSortField `json:"sort_by,omitempty"`
 	// SortOrder selects the order of sorting (defaults to SortAsc).
 	SortOrder SortOrder `json:"sort_order,omitempty"`

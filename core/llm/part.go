@@ -16,8 +16,6 @@ const (
 	PartTypeVideo PartType = "video"
 	// PartTypeDocument represents document files (PDF, TXT, CSV, etc.).
 	PartTypeDocument PartType = "document"
-	// PartTypeFile represents arbitrary binary files.
-	PartTypeFile PartType = "file"
 )
 
 // Part represents an individual multimodal component of a message (text, image, audio, video, or document).
@@ -27,8 +25,6 @@ type Part struct {
 	MIMEType string   `json:"mime_type,omitempty"`
 	Data     []byte   `json:"data,omitempty"`
 	URL      string   `json:"url,omitempty"`
-	Path     string   `json:"path,omitempty"`
-	Detail   string   `json:"detail,omitempty"`
 }
 
 // Validate checks that the part contains valid data for its declared type.
@@ -39,9 +35,9 @@ func (p Part) Validate() error {
 			return fmt.Errorf("%w: text part cannot be empty", ErrInvalidPart)
 		}
 		return nil
-	case PartTypeImage, PartTypeAudio, PartTypeVideo, PartTypeDocument, PartTypeFile:
-		if len(p.Data) == 0 && p.URL == "" && p.Path == "" {
-			return fmt.Errorf("%w: %s part must provide Data, URL, or Path", ErrInvalidPart, p.Type)
+	case PartTypeImage, PartTypeAudio, PartTypeVideo, PartTypeDocument:
+		if len(p.Data) == 0 && p.URL == "" {
+			return fmt.Errorf("%w: %s part must provide Data or URL", ErrInvalidPart, p.Type)
 		}
 		return nil
 	case "":
@@ -79,13 +75,4 @@ func VideoFromBytes(data []byte, mimeType string) Part {
 // DocumentFromBytes creates a document part from raw bytes and MIME type.
 func DocumentFromBytes(data []byte, mimeType string) Part {
 	return Part{Type: PartTypeDocument, Data: data, MIMEType: mimeType}
-}
-
-// PartFromURI creates a media part pointing to a URI (e.g. gs://, https://, or Files API URI).
-func PartFromURI(partType PartType, uri, mimeType string) Part {
-	return Part{
-		Type:     partType,
-		URL:      uri,
-		MIMEType: mimeType,
-	}
 }

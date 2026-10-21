@@ -233,7 +233,7 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// Clear removes all rows from threads, messages, and thread_state.
+// Clear removes all rows from threads and messages.
 func (s *Store) Clear(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -248,9 +248,6 @@ func (s *Store) Clear(ctx context.Context) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, "DELETE FROM thread_state"); err != nil {
-		return err
-	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM messages"); err != nil {
 		return err
 	}
@@ -261,15 +258,14 @@ func (s *Store) Clear(ctx context.Context) error {
 	return tx.Commit()
 }
 
-// DangerouslyClearAll removes all stored threads, messages, and state using a background context.
+// DangerouslyClearAll removes all stored threads and messages using a background context.
 func (s *Store) DangerouslyClearAll() {
 	_ = s.Clear(context.Background())
 }
 
 // Compile-time checks that Store implements storage.Storage and all domain store interfaces.
 var (
-	_ storage.Storage          = (*Store)(nil)
-	_ storage.ThreadStore      = (*Store)(nil)
-	_ storage.MessageStore     = (*Store)(nil)
-	_ storage.ThreadStateStore = (*Store)(nil)
+	_ storage.Storage      = (*Store)(nil)
+	_ storage.ThreadStore  = (*Store)(nil)
+	_ storage.MessageStore = (*Store)(nil)
 )

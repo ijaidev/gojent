@@ -47,7 +47,6 @@ func run() error {
 	// 2. Configure Agent
 	charAgent, err := agent.New(agent.Config{
 		ID:           "character-creator",
-		Name:         "Character Creator",
 		Instructions: "You are a creative tabletop RPG dungeon master specializing in character creation.",
 		Model:        geminiModel,
 	})

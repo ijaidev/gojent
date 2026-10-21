@@ -14,8 +14,7 @@ const (
 type ThreadSortField string
 
 const (
-	// ThreadSortCreatedAt sorts threads by their creation timestamp.
-	ThreadSortCreatedAt ThreadSortField = "created_at"
 	// ThreadSortUpdatedAt sorts threads by their last update timestamp.
+	// The zero value sorts by creation timestamp.
 	ThreadSortUpdatedAt ThreadSortField = "updated_at"
 )

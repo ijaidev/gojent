@@ -30,11 +30,10 @@ func TestThinkingConfig_Clone(t *testing.T) {
 func TestResponseFormat_Clone(t *testing.T) {
 	strict := true
 	rf := &llm.ResponseFormat{
-		Type:        llm.ResponseFormatJSONSchema,
-		Name:        "TestSchema",
-		Description: "A test schema",
-		Schema:      map[string]any{"type": "object"},
-		Strict:      &strict,
+		Type:   llm.ResponseFormatJSONSchema,
+		Name:   "TestSchema",
+		Schema: map[string]any{"type": "object"},
+		Strict: &strict,
 	}
 
 	cloned := rf.Clone()

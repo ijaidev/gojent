@@ -122,7 +122,6 @@ func run() error {
 	// 3. Configure autonomous Agent equipped with tools
 	toolAgent, err := agent.New(agent.Config{
 		ID:           "gemini-tool-assistant",
-		Name:         "Gemini Tool Assistant",
 		Instructions: "You are a concise, helpful assistant with access to real-time tools. When asked for weather or currency exchange rates, always use the tools provided.",
 		Model:        geminiModel,
 		Tools:        []tool.Tool{weatherTool, exchangeTool},

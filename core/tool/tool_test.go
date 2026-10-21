@@ -46,7 +46,7 @@ func (t customTool) Parameters() map[string]any {
 	return map[string]any{"type": "object"}
 }
 func (t customTool) Execute(_ context.Context, _ []byte) (tool.Result, error) {
-	return tool.NewTextResult("custom result"), nil
+	return tool.Result{Content: []llm.Part{llm.TextPart("custom result")}}, nil
 }
 
 func TestTool_Validation(t *testing.T) {
@@ -306,12 +306,12 @@ func TestTool_Execute(t *testing.T) {
 		t.Errorf("expected JSON text content, got %q", result.Text())
 	}
 
-	typedOut, err := weatherTool.ExecuteTyped(ctx, WeatherInput{Location: "Berlin"})
+	typedOut, err := weatherTool.Execute(ctx, []byte(`{"location":"Berlin","units":"celsius"}`))
 	if err != nil {
-		t.Fatalf("ExecuteTyped failed: %v", err)
+		t.Fatalf("Execute failed: %v", err)
 	}
-	if typedOut.Condition != "Sunny in Berlin" {
-		t.Errorf("unexpected condition: %s", typedOut.Condition)
+	if typedOut.Text() == "" {
+		t.Error("expected non-empty output for Berlin")
 	}
 }
 
@@ -683,7 +683,7 @@ func TestTool_MultipartResult(t *testing.T) {
 }
 
 func TestTool_ResultConstructors(t *testing.T) {
-	textResult := tool.NewTextResult("hello")
+	textResult := tool.Result{Content: []llm.Part{llm.TextPart("hello")}}
 	if textResult.Text() != "hello" {
 		t.Errorf("unexpected text result: %+v", textResult)
 	}
@@ -692,13 +692,6 @@ func TestTool_ResultConstructors(t *testing.T) {
 	imageResult := tool.NewImageResult("caption", imgPart)
 	if len(imageResult.Content) != 2 || imageResult.Text() != "caption" {
 		t.Errorf("unexpected image result: %+v", imageResult)
-	}
-
-	parts := []llm.Part{llm.TextPart("one"), llm.TextPart("two")}
-	multipart := tool.NewResult(parts...)
-	parts[0] = llm.TextPart("changed")
-	if multipart.Text() != "one\ntwo" {
-		t.Errorf("expected NewResult to copy parts, got %q", multipart.Text())
 	}
 
 	dataResult := tool.Result{Data: map[string]any{"ok": true}}
@@ -724,15 +717,8 @@ func TestTool_NilAndZeroValue(t *testing.T) {
 	if _, err := nilTool.Execute(context.Background(), nil); !errors.Is(err, tool.ErrExecuteRequired) {
 		t.Errorf("expected ErrExecuteRequired for nil tool, got %v", err)
 	}
-	if _, err := nilTool.ExecuteTyped(context.Background(), ""); !errors.Is(err, tool.ErrExecuteRequired) {
-		t.Errorf("expected ErrExecuteRequired for nil ExecuteTyped, got %v", err)
-	}
-
 	var zero tool.BaseTool[string, string]
 	if _, err := zero.Execute(context.Background(), nil); !errors.Is(err, tool.ErrExecuteRequired) {
 		t.Errorf("expected ErrExecuteRequired for zero tool, got %v", err)
-	}
-	if _, err := zero.ExecuteTyped(context.Background(), ""); !errors.Is(err, tool.ErrExecuteRequired) {
-		t.Errorf("expected ErrExecuteRequired for zero ExecuteTyped, got %v", err)
 	}
 }
