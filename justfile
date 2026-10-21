@@ -1,6 +1,6 @@
 # Run all unit tests across the whole package
 test:
-    go test -v ./... ./providers/google/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/...
+    go test -v ./... ./providers/google/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/... ./codjent/...
 
 # Run the database integration tests (requires GOJENT_TEST_POSTGRES_DSN)
 test-integration:
@@ -8,7 +8,11 @@ test-integration:
 
 # Run static analysis and linting across all packages
 lint:
-    golangci-lint run ./... ./providers/google/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/...
+    golangci-lint run ./... ./providers/google/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/... ./codjent/...
+
+# Run codjent's local backend
+codjent:
+    go run ./codjent/cmd/codjent
 
 # Format all Go source files according to standard Go formatting
 fmt:
@@ -36,7 +40,10 @@ check: fmt-check tidy-check lint test
 tidy:
     #!/usr/bin/env bash
     set -e
-    go mod tidy
+    for dir in . providers/google examples/google stores/sqlite stores/postgres codjent; do
+        echo "== $dir =="
+        (cd "$dir" && go mod tidy)
+    done
     go work sync
     echo "Workspace and modules tidied successfully."
 
@@ -44,12 +51,14 @@ tidy:
 tidy-check:
     #!/usr/bin/env bash
     set -e
-    root_diff=$(go mod tidy -diff 2>&1 || true)
-    if [ -n "$root_diff" ]; then
-        echo "[ERROR] Root module is not tidy:"
-        echo "$root_diff"
-        exit 1
-    fi
+    for dir in . providers/google examples/google stores/sqlite stores/postgres codjent; do
+        diff=$(cd "$dir" && go mod tidy -diff 2>&1 || true)
+        if [ -n "$diff" ]; then
+            echo "[ERROR] Module $dir is not tidy:"
+            echo "$diff"
+            exit 1
+        fi
+    done
     go work sync
     sync_diff=$(git diff --name-only "*go.mod" "*go.sum" "go.work.sum")
     if [ -n "$sync_diff" ]; then

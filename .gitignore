@@ -24,3 +24,9 @@ Thumbs.db
 # Env
 .env*
 !.env.example
+
+# Local runtime data
+.local/
+*.db
+*.db-shm
+*.db-wal

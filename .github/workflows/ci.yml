@@ -22,7 +22,7 @@ jobs:
 
       - name: Vet and test all modules
         run: |
-          for dir in . providers/google examples/google stores/sqlite stores/postgres; do
+          for dir in . providers/google examples/google stores/sqlite stores/postgres codjent; do
             echo "== $dir =="
             (cd "$dir" && go vet ./... && go test -race ./...)
           done
@@ -31,7 +31,7 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.8.0
-          args: ./... ./providers/google/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/...
+          args: ./... ./providers/google/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/... ./codjent/...
 
   postgres-integration:
     name: PostgreSQL integration

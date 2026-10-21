@@ -1,0 +1,565 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/ijaidev/gojent/core/agent"
+	"github.com/ijaidev/gojent/core/llm"
+)
+
+// RunStatus is the lifecycle state of an agent run.
+type RunStatus string
+
+// Run lifecycle states.
+const (
+	RunStarting        RunStatus = "starting"
+	RunRunning         RunStatus = "running"
+	RunWaitingApproval RunStatus = "waiting_approval"
+	RunCompleted       RunStatus = "completed"
+	RunFailed          RunStatus = "failed"
+	RunCanceled        RunStatus = "canceled"
+)
+
+// PendingApproval is a tool call waiting for an allow/deny decision.
+type PendingApproval struct {
+	ID         string    `json:"id"`
+	ToolCallID string    `json:"tool_call_id"`
+	ToolName   string    `json:"tool_name"`
+	Arguments  string    `json:"arguments"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// ApprovalDecision is the client's response to a pending approval.
+type ApprovalDecision struct {
+	Allow bool   `json:"allow"`
+	Note  string `json:"note,omitempty"`
+}
+
+// RunInfo is the API-facing snapshot of a run.
+type RunInfo struct {
+	ID              string           `json:"id"`
+	ThreadID        string           `json:"thread_id"`
+	Status          RunStatus        `json:"status"`
+	Error           string           `json:"error,omitempty"`
+	PendingApproval *PendingApproval `json:"pending_approval,omitempty"`
+	Usage           llm.Usage        `json:"usage"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
+}
+
+type run struct {
+	id       string
+	threadID string
+	thread   *Thread
+	history  []*Message
+	user     *Message
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	bus    *eventBus
+
+	mu        sync.Mutex
+	status    RunStatus
+	err       error
+	pending   *pendingApproval
+	usage     llm.Usage
+	createdAt time.Time
+	updatedAt time.Time
+}
+
+type pendingApproval struct {
+	request  PendingApproval
+	decision chan ApprovalDecision
+}
+
+func newRun(ctx context.Context, thread *Thread, history []*Message, user *Message) *run {
+	cancelCtx, cancel := context.WithCancel(ctx)
+	now := nowUTC()
+	id := newID("run")
+	return &run{
+		id:        id,
+		threadID:  thread.ID,
+		thread:    thread,
+		history:   history,
+		user:      user,
+		ctx:       cancelCtx,
+		cancel:    cancel,
+		bus:       newEventBus(id),
+		status:    RunStarting,
+		createdAt: now,
+		updatedAt: now,
+	}
+}
+
+func (r *run) info() *RunInfo {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	info := &RunInfo{
+		ID:        r.id,
+		ThreadID:  r.threadID,
+		Status:    r.status,
+		Usage:     r.usage,
+		CreatedAt: r.createdAt,
+		UpdatedAt: r.updatedAt,
+	}
+	if r.err != nil {
+		info.Error = r.err.Error()
+	}
+	if r.pending != nil {
+		pending := r.pending.request
+		info.PendingApproval = &pending
+	}
+	return info
+}
+
+func (r *run) emit(eventType string, data any) {
+	r.bus.emit(eventType, data)
+}
+
+func (r *run) setStatus(status RunStatus) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.status = status
+	r.updatedAt = nowUTC()
+}
+
+func (r *run) finish(status RunStatus, err error) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.terminalLocked() {
+		return false
+	}
+	r.status = status
+	r.err = err
+	r.pending = nil
+	r.updatedAt = nowUTC()
+	return true
+}
+
+func (r *run) terminalLocked() bool {
+	return r.status == RunCompleted || r.status == RunFailed || r.status == RunCanceled
+}
+
+func (r *run) complete(resp *agent.Response, messageIDs []string) {
+	r.mu.Lock()
+	if r.terminalLocked() {
+		r.mu.Unlock()
+		return
+	}
+	r.status = RunCompleted
+	r.usage = resp.Usage
+	r.err = nil
+	r.pending = nil
+	r.updatedAt = nowUTC()
+	r.mu.Unlock()
+
+	r.emit(EventRunCompleted, RunCompletedEvent{
+		Usage:        resp.Usage,
+		FinishReason: resp.FinishReason,
+		MessageIDs:   messageIDs,
+	})
+}
+
+func (r *run) fail(err error) {
+	if !r.finish(RunFailed, err) {
+		return
+	}
+	r.emit(EventRunFailed, RunFailedEvent{Error: err.Error()})
+}
+
+func (r *run) canceled() {
+	if !r.finish(RunCanceled, nil) {
+		return
+	}
+	r.emit(EventRunCanceled, RunCanceledEvent{Reason: "run canceled"})
+}
+
+func (r *run) terminal() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.terminalLocked()
+}
+
+func (r *run) resolveApproval(approvalID string, decision ApprovalDecision) error {
+	r.mu.Lock()
+	if r.status != RunWaitingApproval {
+		r.mu.Unlock()
+		return ErrRunFinished
+	}
+	pending := r.pending
+	if pending == nil || pending.request.ID != approvalID {
+		r.mu.Unlock()
+		return ErrApprovalNotFound
+	}
+	r.pending = nil
+	r.mu.Unlock()
+
+	pending.decision <- decision
+	return nil
+}
+
+func (r *run) awaitApproval(ctx context.Context, req PendingApproval) (ApprovalDecision, error) {
+	pending := &pendingApproval{
+		request:  req,
+		decision: make(chan ApprovalDecision, 1),
+	}
+
+	r.mu.Lock()
+	r.pending = pending
+	r.status = RunWaitingApproval
+	r.updatedAt = nowUTC()
+	r.mu.Unlock()
+
+	r.emit(EventApprovalRequired, ApprovalRequiredEvent{Approval: req})
+
+	select {
+	case decision := <-pending.decision:
+		r.mu.Lock()
+		if r.pending == pending {
+			r.pending = nil
+		}
+		r.status = RunRunning
+		r.updatedAt = nowUTC()
+		r.mu.Unlock()
+		r.emit(EventApprovalResolved, ApprovalResolvedEvent{
+			ApprovalID: req.ID,
+			Allow:      decision.Allow,
+			Note:       decision.Note,
+		})
+		return decision, nil
+	case <-ctx.Done():
+		r.mu.Lock()
+		if r.pending == pending {
+			r.pending = nil
+		}
+		r.updatedAt = nowUTC()
+		r.mu.Unlock()
+		r.emit(EventApprovalResolved, ApprovalResolvedEvent{
+			ApprovalID: req.ID,
+			Allow:      false,
+			Note:       "run canceled",
+		})
+		return ApprovalDecision{}, ctx.Err()
+	}
+}
+
+func (r *run) subscribe(after int64) (backlog []Event, live <-chan Event, cancel func()) {
+	return r.bus.subscribe(after)
+}
+
+// StartMessage persists a user message and starts an agent run for the thread.
+// The returned run streams through Subscribe; the caller does not need to keep
+// the request context alive.
+func (s *Service) StartMessage(ctx context.Context, threadID, content string) (*RunInfo, error) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil, fmt.Errorf("%w: message content is required", ErrInvalidInput)
+	}
+
+	thread, err := s.store.GetThread(ctx, threadID)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, ErrClosed
+	}
+	s.clearFinishedActiveLocked(threadID)
+	if s.activeByThread[threadID] != "" {
+		s.mu.Unlock()
+		return nil, ErrThreadBusy
+	}
+	history, err := s.store.ListMessages(ctx, threadID)
+	if err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
+	user := userMessage(thread.ID, content, nowUTC())
+	r := newRun(s.ctx, thread, history, user)
+	s.runs[r.id] = r
+	s.activeByThread[threadID] = r.id
+	s.wg.Add(1)
+	s.mu.Unlock()
+
+	if err := s.store.AppendMessages(ctx, user); err != nil {
+		s.discardRun(r)
+		return nil, err
+	}
+
+	if thread.Title == defaultThreadTitle {
+		thread.Title = truncateTitle(content)
+		thread.UpdatedAt = nowUTC()
+		if err := s.store.UpdateThread(ctx, thread); err != nil {
+			// A title is cosmetic; the run should still proceed.
+			thread.Title = defaultThreadTitle
+		}
+	}
+
+	go s.execute(r)
+	return r.info(), nil
+}
+
+func (s *Service) execute(r *run) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			s.failRun(r, fmt.Errorf("run panicked: %v", recovered))
+		}
+		s.removeRun(r)
+		r.bus.close()
+	}()
+
+	r.setStatus(RunRunning)
+	r.emit(EventRunStarted, RunStartedEvent{
+		ThreadID:   r.thread.ID,
+		Provider:   r.thread.Provider,
+		Model:      r.thread.Model,
+		AccessMode: r.thread.AccessMode,
+	})
+
+	model, err := s.models.NewModel(r.ctx, r.thread.Provider, r.thread.Model)
+	if err != nil {
+		s.failRun(r, fmt.Errorf("create model: %w", err))
+		return
+	}
+
+	a, err := agent.New(agent.Config{
+		ID:           "codjent",
+		Instructions: s.instructions,
+		Model:        model,
+		Tools:        s.tools,
+		MaxSteps:     s.maxSteps,
+		Hooks: agent.Hooks{
+			BeforeTool: func(ctx context.Context, ev *agent.ToolEvent) error {
+				return s.beforeTool(r, ctx, ev)
+			},
+			AfterTool: func(_ context.Context, ev *agent.ToolEvent) {
+				afterTool(r, ev)
+			},
+		},
+	})
+	if err != nil {
+		s.failRun(r, fmt.Errorf("create agent: %w", err))
+		return
+	}
+
+	input := make([]llm.Message, 0, len(r.history)+1)
+	for _, message := range r.history {
+		input = append(input, message.ToLLM())
+	}
+	input = append(input, r.user.ToLLM())
+
+	stream, err := a.StreamMessages(r.ctx, input)
+	if err != nil {
+		s.failRun(r, fmt.Errorf("start stream: %w", err))
+		return
+	}
+	defer func() { _ = stream.Close() }()
+
+	for {
+		chunk, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			resp, responseErr := stream.Response()
+			if responseErr != nil {
+				s.failRun(r, fmt.Errorf("read response: %w", responseErr))
+				return
+			}
+			messageIDs, persistErr := s.persistResponse(r, resp)
+			if persistErr != nil {
+				s.failRun(r, fmt.Errorf("persist response: %w", persistErr))
+				return
+			}
+			r.complete(resp, messageIDs)
+			return
+		}
+		if recvErr != nil {
+			s.failRun(r, fmt.Errorf("stream: %w", recvErr))
+			return
+		}
+
+		if chunk.Delta != "" {
+			r.emit(EventTextDelta, TextDeltaEvent{Text: chunk.Delta})
+		}
+		if chunk.ThinkingDelta != "" {
+			r.emit(EventThinkingDelta, ThinkingDeltaEvent{Text: chunk.ThinkingDelta})
+		}
+	}
+}
+
+func (s *Service) beforeTool(r *run, ctx context.Context, ev *agent.ToolEvent) error {
+	if ev.Call == nil {
+		return nil
+	}
+	call := *ev.Call
+	r.emit(EventToolCall, ToolCallEvent{
+		ID:        call.ID,
+		Name:      call.Name,
+		Arguments: call.Arguments,
+	})
+
+	if r.thread.AccessMode == AccessFull || !requiresApproval(call.Name) {
+		return nil
+	}
+
+	decision, err := r.awaitApproval(ctx, PendingApproval{
+		ID:         newID("apr"),
+		ToolCallID: call.ID,
+		ToolName:   call.Name,
+		Arguments:  call.Arguments,
+		CreatedAt:  nowUTC(),
+	})
+	if err != nil {
+		return fmt.Errorf("approval interrupted: %w", err)
+	}
+	if !decision.Allow {
+		if decision.Note != "" {
+			return fmt.Errorf("tool %q denied by user: %s", call.Name, decision.Note)
+		}
+		return fmt.Errorf("tool %q denied by user", call.Name)
+	}
+	return nil
+}
+
+func afterTool(r *run, ev *agent.ToolEvent) {
+	if ev.Call == nil {
+		return
+	}
+	data := ToolResultEvent{
+		ID:      ev.Call.ID,
+		Name:    ev.Call.Name,
+		Output:  ev.Output,
+		Skipped: ev.Skipped,
+	}
+	if ev.Err != nil {
+		data.Error = ev.Err.Error()
+	}
+	r.emit(EventToolResult, data)
+}
+
+func (s *Service) persistResponse(r *run, resp *agent.Response) ([]string, error) {
+	offset := len(r.history) + 1
+	if s.instructions != "" {
+		offset++
+	}
+	if len(resp.Messages) < offset {
+		return nil, fmt.Errorf("unexpected response transcript length %d (want at least %d)", len(resp.Messages), offset)
+	}
+
+	now := nowUTC()
+	messages := make([]*Message, 0, len(resp.Messages)-offset)
+	for i := offset; i < len(resp.Messages); i++ {
+		message := &resp.Messages[i]
+		if message.Role == llm.RoleSystem {
+			continue
+		}
+		if converted := messageFromLLM(r.threadID, message, now); converted != nil {
+			messages = append(messages, converted)
+		}
+	}
+	if len(messages) == 0 {
+		return nil, nil
+	}
+	if err := s.store.AppendMessages(r.ctx, messages...); err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, len(messages))
+	for i, message := range messages {
+		ids[i] = message.ID
+	}
+	return ids, nil
+}
+
+func requiresApproval(toolName string) bool {
+	return toolName == "execute_command"
+}
+
+// GetRun returns a snapshot of a run.
+func (s *Service) GetRun(runID string) (*RunInfo, error) {
+	s.mu.RLock()
+	r := s.runs[runID]
+	s.mu.RUnlock()
+	if r == nil {
+		return nil, ErrRunNotFound
+	}
+	return r.info(), nil
+}
+
+// ResolveApproval resolves a pending tool approval.
+func (s *Service) ResolveApproval(runID, approvalID string, decision ApprovalDecision) error {
+	s.mu.RLock()
+	r := s.runs[runID]
+	s.mu.RUnlock()
+	if r == nil {
+		return ErrRunNotFound
+	}
+	return r.resolveApproval(approvalID, decision)
+}
+
+// CancelRun cancels an active run.
+func (s *Service) CancelRun(runID string) error {
+	s.mu.RLock()
+	r := s.runs[runID]
+	s.mu.RUnlock()
+	if r == nil {
+		return ErrRunNotFound
+	}
+	r.mu.Lock()
+	finished := r.status == RunCompleted || r.status == RunFailed || r.status == RunCanceled
+	r.mu.Unlock()
+	if finished {
+		return ErrRunFinished
+	}
+	r.cancel()
+	return nil
+}
+
+// Subscribe returns replayable events and a live event channel for a run.
+func (s *Service) Subscribe(runID string, after int64) (backlog []Event, live <-chan Event, cancel func(), err error) {
+	s.mu.RLock()
+	r := s.runs[runID]
+	s.mu.RUnlock()
+	if r == nil {
+		return nil, nil, nil, ErrRunNotFound
+	}
+	backlog, live, cancel = r.subscribe(after)
+	return backlog, live, cancel, nil
+}
+
+func (s *Service) removeRun(r *run) {
+	s.mu.Lock()
+	if s.activeByThread[r.threadID] == r.id {
+		delete(s.activeByThread, r.threadID)
+	}
+	s.mu.Unlock()
+	r.cancel()
+	s.wg.Done()
+}
+
+func (s *Service) discardRun(r *run) {
+	s.mu.Lock()
+	delete(s.runs, r.id)
+	if s.activeByThread[r.threadID] == r.id {
+		delete(s.activeByThread, r.threadID)
+	}
+	s.mu.Unlock()
+	r.cancel()
+	s.wg.Done()
+	r.bus.close()
+}
+
+func (s *Service) failRun(r *run, err error) {
+	if r.ctx.Err() != nil {
+		r.canceled()
+		return
+	}
+	r.fail(err)
+}
