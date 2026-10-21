@@ -1,13 +1,16 @@
 # Codjent
 
-Codjent is a local coding-agent backend built on the [gojent](../README.md)
-agent loop. It exposes threads, persisted transcripts, streaming runs, tool
-approvals, and a provider registry over JSON and server-sent events. The
-Next.js frontend lives in [`frontend/`](frontend).
+Codjent is a local coding agent built on the [gojent](../README.md) agent
+loop. It pairs a Go backend with a Next.js frontend: persistent threads,
+streaming runs, tool calls, approval prompts, and a provider registry. The
+frontend lives in [`frontend/`](frontend) and is designed to feel like
+[T3 Code](https://t3.codes).
 
 ## Current scope
 
 - Multiple persistent threads backed by SQLite.
+- A responsive web UI with a thread sidebar, live transcript, tool cards,
+  approval cards, cancellation, and per-thread settings.
 - Google Gemini as the only provider (the provider seam is ready for more).
 - File read/write/edit/list tools sandboxed to one workspace.
 - `execute_command` requires approval in `ask` mode and runs without prompts in
@@ -42,8 +45,42 @@ go run ./codjent/cmd/codjent \
   --workspace /path/to/repo \
   --data-dir .local/codjent \
   --model gemini-3.8-flash \
-  --access-mode ask
+  --access-mode ask \
+  --frontend-dir codjent/frontend/out
 ```
+
+## Frontend
+
+The frontend is a static Next.js export. For development, run the backend and
+Next's dev server together; the UI calls `http://127.0.0.1:8787` when it is
+served from port 3000.
+
+```sh
+# terminal 1
+just codjent
+
+# terminal 2
+cd codjent/frontend
+pnpm install
+pnpm dev
+```
+
+Then open <http://localhost:3000>.
+
+For a single-process build, export the frontend and point the backend at it:
+
+```sh
+cd codjent/frontend
+pnpm build
+cd ../..
+go run ./codjent/cmd/codjent \
+  --workspace . \
+  --frontend-dir codjent/frontend/out
+```
+
+Open <http://127.0.0.1:8787>. The backend serves the static files and the API
+from the same origin. Set `NEXT_PUBLIC_CODJENT_API_URL` before `pnpm build` to
+point the UI at a different API origin.
 
 ## Configuration
 
@@ -58,6 +95,7 @@ go run ./codjent/cmd/codjent \
 | `CODJENT_ACCESS_MODE` | `ask` | `ask` or `full` |
 | `CODJENT_MAX_STEPS` | `20` | ReAct step limit per run |
 | `CODJENT_ALLOWED_ORIGINS` | localhost:3000 origins | Browser CORS allowlist |
+| `CODJENT_FRONTEND_DIR` | unset | Built frontend directory to serve |
 
 The default SQLite location follows OS conventions:
 
@@ -139,8 +177,13 @@ The backend follows a deep-module layout:
 - `internal/store/sqlite` is the SQLite implementation of `app.Store`.
 - `internal/provider` is the provider registry seam; `internal/provider/google`
   adapts gojent's Gemini provider.
-- `internal/httpapi` is a thin JSON/SSE adapter over `app.Service`.
-- `cmd/codjent` wires configuration, storage, providers, and the HTTP server.
+- `internal/httpapi` is a thin JSON/SSE adapter over `app.Service`; it can also
+  serve the exported frontend from `--frontend-dir`.
+- `frontend` is a static Next.js export. `lib/api.ts` is the browser boundary,
+  `hooks/use-codjent.ts` owns thread state and SSE resumption, and
+  `components/` renders the T3-inspired interface.
+- `cmd/codjent` wires configuration, storage, providers, HTTP, and static
+  frontend serving.
 
 The browser boundary uses an origin allowlist, and the server binds to loopback
 by default because full-access mode can execute arbitrary commands. There is no
@@ -152,4 +195,8 @@ authentication layer yet; do not expose the listener to an untrusted network.
 cd codjent
 go test -race ./...
 golangci-lint run ./...
+
+cd frontend
+pnpm lint
+pnpm build
 ```

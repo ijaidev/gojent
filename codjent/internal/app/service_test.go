@@ -330,6 +330,16 @@ func TestCancelRun(t *testing.T) {
 		return event.Type == EventApprovalRequired
 	})
 
+	detail, err := svc.GetThread(context.Background(), thread.ID)
+	if err != nil {
+		t.Fatalf("GetThread: %v", err)
+	}
+	if detail.ActiveRun == nil || detail.ActiveRun.ID != run.ID ||
+		detail.ActiveRun.Status != RunWaitingApproval ||
+		detail.ActiveRun.PendingApproval == nil {
+		t.Fatalf("active run = %+v", detail.ActiveRun)
+	}
+
 	if err := svc.CancelRun(run.ID); err != nil {
 		t.Fatalf("CancelRun: %v", err)
 	}

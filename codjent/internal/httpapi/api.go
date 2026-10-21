@@ -23,6 +23,13 @@ type api struct {
 
 // New returns the codjent HTTP handler.
 func New(service *app.Service, allowedOrigins []string) http.Handler {
+	return NewWithStatic(service, allowedOrigins, "")
+}
+
+// NewWithStatic returns the codjent HTTP handler. When frontendDir is not
+// empty, non-API GET requests are served from that directory, with an
+// index.html fallback for client-side routes.
+func NewWithStatic(service *app.Service, allowedOrigins []string, frontendDir string) http.Handler {
 	a := &api{
 		service: service,
 		origins: make(map[string]struct{}, len(allowedOrigins)),
@@ -44,6 +51,9 @@ func New(service *app.Service, allowedOrigins []string) http.Handler {
 	mux.HandleFunc("GET /api/runs/{runID}/events", a.streamRun)
 	mux.HandleFunc("POST /api/runs/{runID}/approvals/{approvalID}", a.resolveApproval)
 	mux.HandleFunc("POST /api/runs/{runID}/cancel", a.cancelRun)
+	if frontendDir != "" {
+		mux.Handle("GET /", frontendHandler(frontendDir))
+	}
 
 	return securityHeaders(a.cors(mux))
 }

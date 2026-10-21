@@ -225,7 +225,17 @@ func (s *Service) GetThread(ctx context.Context, id string) (*ThreadDetail, erro
 	if err != nil {
 		return nil, err
 	}
-	return &ThreadDetail{Thread: thread, Messages: messages}, nil
+	detail := &ThreadDetail{Thread: thread, Messages: messages}
+
+	s.mu.RLock()
+	if runID := s.activeByThread[id]; runID != "" {
+		if active := s.runs[runID]; active != nil {
+			detail.ActiveRun = active.info()
+		}
+	}
+	s.mu.RUnlock()
+
+	return detail, nil
 }
 
 // UpdateThread applies a partial update to a thread.

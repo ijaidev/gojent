@@ -36,6 +36,7 @@ type Config struct {
 	MaxSteps       int
 	AccessMode     app.AccessMode
 	AllowedOrigins []string
+	FrontendDir    string
 }
 
 // Load reads configuration from the environment and applies defaults.
@@ -55,6 +56,7 @@ func Load() (Config, error) {
 		MaxSteps:       DefaultMaxSteps,
 		AccessMode:     app.AccessMode(envOr("CODJENT_ACCESS_MODE", string(app.DefaultAccessMode))),
 		AllowedOrigins: splitCSV(envOr("CODJENT_ALLOWED_ORIGINS", defaultAllowedOrigins())),
+		FrontendDir:    strings.TrimSpace(os.Getenv("CODJENT_FRONTEND_DIR")),
 	}
 
 	if raw := strings.TrimSpace(os.Getenv("CODJENT_MAX_STEPS")); raw != "" {
@@ -92,6 +94,7 @@ func Parse(args []string, output io.Writer) (Config, error) {
 	fs.IntVar(&cfg.MaxSteps, "max-steps", cfg.MaxSteps, "maximum ReAct steps per run")
 	fs.StringVar(&accessMode, "access-mode", accessMode, "default access mode: ask or full")
 	fs.StringVar(&origins, "allowed-origins", origins, "comma-separated browser origins allowed by CORS")
+	fs.StringVar(&cfg.FrontendDir, "frontend-dir", cfg.FrontendDir, "directory containing the built frontend (optional)")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err

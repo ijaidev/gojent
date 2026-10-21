@@ -14,6 +14,11 @@ lint:
 codjent:
     go run ./codjent/cmd/codjent
 
+# Build the static frontend and serve it from codjent
+codjent-web:
+    cd codjent/frontend && pnpm build
+    go run ./codjent/cmd/codjent --workspace . --frontend-dir codjent/frontend/out
+
 # Format all Go source files according to standard Go formatting
 fmt:
     gofmt -s -w .

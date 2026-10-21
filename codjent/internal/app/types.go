@@ -115,8 +115,9 @@ type UpdateThreadInput struct {
 
 // ThreadDetail is a thread with its full transcript.
 type ThreadDetail struct {
-	Thread   *Thread    `json:"thread"`
-	Messages []*Message `json:"messages"`
+	Thread    *Thread    `json:"thread"`
+	Messages  []*Message `json:"messages"`
+	ActiveRun *RunInfo   `json:"active_run,omitempty"`
 }
 
 func messageFromLLM(threadID string, m *llm.Message, now time.Time) *Message {

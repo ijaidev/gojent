@@ -94,6 +94,7 @@ func TestParseFlagsOverrideEnvironment(t *testing.T) {
 	t.Setenv("CODJENT_DATA_DIR", t.TempDir())
 	t.Setenv("CODJENT_MAX_STEPS", "4")
 	t.Setenv("CODJENT_ACCESS_MODE", "ask")
+	t.Setenv("CODJENT_FRONTEND_DIR", "/tmp/codjent-env-frontend")
 
 	cfg, err := Parse([]string{
 		"--addr", "127.0.0.1:2222",
@@ -102,12 +103,16 @@ func TestParseFlagsOverrideEnvironment(t *testing.T) {
 		"--access-mode", "full",
 		"--google-models", "a,b",
 		"--allowed-origins", "http://one.test,http://two.test",
+		"--frontend-dir", "/tmp/codjent-flags-frontend",
 	}, io.Discard)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 	if cfg.Addr != "127.0.0.1:2222" || cfg.DataDir != "/tmp/codjent-flags" {
 		t.Fatalf("config = %+v", cfg)
+	}
+	if cfg.FrontendDir != "/tmp/codjent-flags-frontend" {
+		t.Fatalf("frontend dir = %q", cfg.FrontendDir)
 	}
 	if cfg.MaxSteps != 9 || cfg.AccessMode != app.AccessFull {
 		t.Fatalf("steps/access = %d/%q", cfg.MaxSteps, cfg.AccessMode)

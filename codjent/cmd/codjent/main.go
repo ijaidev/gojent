@@ -5,10 +5,13 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -33,6 +36,18 @@ func run() error {
 	}
 	if err != nil {
 		return err
+	}
+
+	frontendDir := strings.TrimSpace(cfg.FrontendDir)
+	if frontendDir != "" {
+		index := filepath.Join(frontendDir, "index.html")
+		info, statErr := os.Stat(index)
+		if statErr != nil {
+			return fmt.Errorf("frontend: %q does not contain index.html: %w", frontendDir, statErr)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("frontend: %q is a directory", index)
+		}
 	}
 
 	store, err := sqlite.New(context.Background(), cfg.DatabasePath())
@@ -64,7 +79,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.New(service, cfg.AllowedOrigins),
+		Handler:           httpapi.NewWithStatic(service, cfg.AllowedOrigins, frontendDir),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -80,6 +95,11 @@ func run() error {
 	log.Printf("codjent listening on http://%s", cfg.Addr)
 	log.Printf("database: %s", cfg.DatabasePath())
 	log.Printf("workspace: %s", service.Workspace())
+	if frontendDir != "" {
+		log.Printf("frontend: %s", frontendDir)
+	} else {
+		log.Printf("frontend: API only (pass --frontend-dir to serve the built UI)")
+	}
 	if os.Getenv("GEMINI_API_KEY") == "" && os.Getenv("GOOGLE_API_KEY") == "" {
 		log.Printf("warning: GEMINI_API_KEY or GOOGLE_API_KEY is not set; model runs will fail until configured")
 	}
