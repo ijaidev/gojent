@@ -523,6 +523,41 @@ func TestAgent_WithMaxStepsOption(t *testing.T) {
 	}
 }
 
+func TestAgent_ToolEncodeFailureEmitsOneToolEnd(t *testing.T) {
+	model := &scriptModel{steps: []step{
+		toolCallStep(llm.ToolCall{ID: "call-1", Name: "bad", Arguments: `{"value":"x"}`}),
+		finalText("done"),
+	}}
+	bad := tool.MustNew(tool.Config[echoInput, tool.Result]{
+		ID: "bad",
+		Execute: func(context.Context, echoInput) (tool.Result, error) {
+			return tool.Result{
+				Content: []llm.Part{llm.TextPart("ok")},
+				Data:    make(chan int),
+			}, nil
+		},
+	})
+	a := mustAgent(t, agent.Config{Name: "encode", Model: model, Tools: []tool.Tool{bad}})
+	sink := &eventRecorder{}
+
+	if _, err := a.GenerateWith(context.Background(), "go", agent.RunOptions{Sink: sink}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	var toolEnds []agent.ToolEnd
+	for _, event := range sink.Events() {
+		if typed, ok := event.(agent.ToolEnd); ok {
+			toolEnds = append(toolEnds, typed)
+		}
+	}
+	if len(toolEnds) != 1 {
+		t.Fatalf("ToolEnd events = %d, want 1", len(toolEnds))
+	}
+	if !errors.Is(toolEnds[0].Err, tool.ErrOutputEncode) {
+		t.Errorf("ToolEnd err = %v, want ErrOutputEncode", toolEnds[0].Err)
+	}
+}
+
 func TestAgent_ToolPanicIsContained(t *testing.T) {
 	model := &scriptModel{steps: []step{
 		toolCallStep(llm.ToolCall{ID: "boom", Name: "boom", Arguments: `{}`}),

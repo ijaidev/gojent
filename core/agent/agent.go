@@ -128,8 +128,8 @@ func (a *Agent) Tool(name string) (tool.Tool, bool) {
 	return candidate, ok
 }
 
-// mergeTools builds a name-indexed tool registry from the agent and per-run
-// tools. Later entries with the same name replace earlier ones.
+// toolRegistry indexes the agent and per-run tools by name. Later entries
+// with the same name replace earlier ones.
 type toolRegistry struct {
 	ordered []tool.Tool
 	byName  map[string]tool.Tool

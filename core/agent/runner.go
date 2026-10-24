@@ -551,7 +551,6 @@ func (r *runner) runTools(ctx context.Context, calls []llm.ToolCall, step int) (
 
 		message, encodeErr := resultMessage(call, result)
 		if encodeErr != nil {
-			safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Result: &result, Err: encodeErr})
 			message = toolErrorMessage(call, encodeErr)
 		}
 		safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Result: &result, Message: &message, Err: encodeErr})
