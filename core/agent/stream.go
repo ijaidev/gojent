@@ -66,6 +66,7 @@ func (r *Run) Close() error {
 
 // start begins the execution asynchronously.
 func (r *runner) start(ctx context.Context, input ...llm.Message) (*Run, error) {
+	input = cloneMessages(input)
 	runCtx, cancel := context.WithCancelCause(ctx)
 	queue := newEventQueue(runCtx)
 	r.opts.Sink = multiSink{r.opts.Sink, queue}

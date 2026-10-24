@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"runtime/debug"
+	"slices"
 	"time"
 
 	"github.com/ijaidev/gojent/core/llm"
@@ -84,6 +85,7 @@ func newRunner(a *Agent, opts RunOptions) (*runner, error) {
 	if a == nil {
 		return nil, ErrAgentRequired
 	}
+	opts = opts.snapshot()
 	if opts.optionErr != nil {
 		return nil, opts.optionErr
 	}
@@ -113,6 +115,20 @@ func newRunner(a *Agent, opts RunOptions) (*runner, error) {
 		tools:      newToolRegistry(a.Tools(), opts.Tools),
 		usedCallID: make(map[string]bool),
 	}, nil
+}
+
+// snapshot copies the mutable parts of the configuration so a run is isolated
+// from changes made by the caller after it starts.
+func (o RunOptions) snapshot() RunOptions {
+	o.Session = cloneSession(o.Session)
+	o.Tools = slices.Clone(o.Tools)
+	o.Thinking = o.Thinking.Clone()
+	o.ResponseFormat = o.ResponseFormat.Clone()
+	o.Temperature = cloneFloat(o.Temperature)
+	o.MaxTokens = cloneInt(o.MaxTokens)
+	o.TopP = cloneFloat(o.TopP)
+	o.Media = cloneParts(o.Media)
+	return o
 }
 
 func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response, err error) {
