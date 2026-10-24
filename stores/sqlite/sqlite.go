@@ -1,5 +1,8 @@
-// Package sqlite provides a thread-safe, ACID-compliant SQLite implementation of the Gojent storage interfaces.
-// It supports in-memory databases, file-based databases, automatic migrations, transactions, and concurrent access.
+// Package sqlite provides a durable session.Store backed by SQLite.
+//
+// The store is deliberately small: it persists whole messages as JSON and
+// exposes Load and atomic Append. Conversation metadata, search, and
+// migrations beyond the single schema below belong outside the core.
 package sqlite
 
 import (
@@ -10,121 +13,94 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ijaidev/gojent/core/storage"
-	_ "github.com/mattn/go-sqlite3" // Register sqlite3 driver for database/sql.
+	"github.com/ijaidev/gojent/core/session"
+
+	_ "github.com/mattn/go-sqlite3" // Register the sqlite3 driver.
 )
 
-// DefaultDriverName is the default SQL driver registered for SQLite.
+// DefaultDriverName is the SQL driver registered by go-sqlite3.
 const DefaultDriverName = "sqlite3"
 
-// Store implements storage.Storage using SQLite as the persistence backend.
-type Store struct {
-	mu     sync.RWMutex
-	closed bool
-	db     *sql.DB
-}
+// Option configures a Store.
+type Option func(*options)
 
 type options struct {
 	driverName      string
 	maxOpenConns    int
 	maxIdleConns    int
 	connMaxLifetime time.Duration
-	connMaxIdleTime time.Duration
 	busyTimeout     time.Duration
 	autoMigrate     bool
 }
 
-// Option configures Store settings.
-type Option func(*options)
-
-// WithDriverName configures a custom SQL driver name (defaults to "sqlite3").
-func WithDriverName(driverName string) Option {
+// WithDriverName configures a custom registered SQL driver.
+func WithDriverName(name string) Option {
 	return func(o *options) {
-		if driverName != "" {
-			o.driverName = driverName
+		if name != "" {
+			o.driverName = name
 		}
 	}
 }
 
-// WithMaxOpenConns sets the maximum number of open connections to the database.
+// WithMaxOpenConns sets the maximum number of open connections.
 func WithMaxOpenConns(n int) Option {
-	return func(o *options) {
-		o.maxOpenConns = n
-	}
+	return func(o *options) { o.maxOpenConns = n }
 }
 
-// WithMaxIdleConns sets the maximum number of idle connections in the pool.
+// WithMaxIdleConns sets the maximum number of idle connections.
 func WithMaxIdleConns(n int) Option {
-	return func(o *options) {
-		o.maxIdleConns = n
-	}
+	return func(o *options) { o.maxIdleConns = n }
 }
 
-// WithConnMaxLifetime sets the maximum amount of time a connection may be reused.
+// WithConnMaxLifetime bounds connection reuse.
 func WithConnMaxLifetime(d time.Duration) Option {
-	return func(o *options) {
-		o.connMaxLifetime = d
-	}
+	return func(o *options) { o.connMaxLifetime = d }
 }
 
-// WithConnMaxIdleTime sets the maximum amount of time a connection may be idle.
-func WithConnMaxIdleTime(d time.Duration) Option {
-	return func(o *options) {
-		o.connMaxIdleTime = d
-	}
-}
-
-// WithBusyTimeout sets the SQLite busy_timeout duration (defaults to 5s).
+// WithBusyTimeout configures SQLite's busy timeout. Zero uses five seconds.
 func WithBusyTimeout(d time.Duration) Option {
-	return func(o *options) {
-		o.busyTimeout = d
-	}
+	return func(o *options) { o.busyTimeout = d }
 }
 
-// WithAutoMigrate enables or disables automatic database migration on startup (defaults to true).
-func WithAutoMigrate(autoMigrate bool) Option {
-	return func(o *options) {
-		o.autoMigrate = autoMigrate
-	}
+// WithAutoMigrate controls whether New applies the schema. It defaults to true.
+func WithAutoMigrate(enabled bool) Option {
+	return func(o *options) { o.autoMigrate = enabled }
 }
 
-// New creates and initializes a new SQLite Store from a connection DSN.
-// If dsn is empty, an in-memory database (":memory:") is used.
+// Store implements session.Store using SQLite.
+type Store struct {
+	mu     sync.RWMutex
+	closed bool
+	db     *sql.DB
+}
+
+// New opens a SQLite database and applies the schema when configured. An empty
+// DSN uses an in-memory database.
 func New(dsn string, opts ...Option) (*Store, error) {
 	if dsn == "" {
 		dsn = ":memory:"
 	}
-
-	cfg := &options{
-		driverName:  DefaultDriverName,
-		busyTimeout: 5 * time.Second,
-		autoMigrate: true,
-	}
+	cfg := defaultOptions()
 	for _, opt := range opts {
 		opt(cfg)
 	}
 
-	// For in-memory databases, restrict connection pool to 1 by default so that
-	// separate queries share the exact same in-memory state.
 	isMemory := dsn == ":memory:" || strings.Contains(dsn, "mode=memory")
-
-	busyTimeoutMs := int(cfg.busyTimeout.Milliseconds())
-	if busyTimeoutMs <= 0 {
-		busyTimeoutMs = 5000
+	busyTimeoutMS := int(cfg.busyTimeout.Milliseconds())
+	if busyTimeoutMS <= 0 {
+		busyTimeoutMS = 5000
 	}
-
-	// database/sql pools connections, so PRAGMAs executed once after opening
-	// only configure whichever connection the pool happened to hand out.
-	// Encode them in the DSN so every connection is configured identically.
 	if cfg.driverName == DefaultDriverName {
-		dsn = dsnWithPragmas(dsn, busyTimeoutMs, !isMemory)
+		dsn = withPragmas(dsn, busyTimeoutMS, !isMemory)
 	}
 
 	db, err := sql.Open(cfg.driverName, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("sqlite: failed to open database: %w", err)
+		return nil, fmt.Errorf("sqlite: open: %w", err)
 	}
+
 	if isMemory && cfg.maxOpenConns == 0 {
+		// A pooled :memory: database would give each connection its own state.
 		db.SetMaxOpenConns(1)
 	} else if cfg.maxOpenConns > 0 {
 		db.SetMaxOpenConns(cfg.maxOpenConns)
@@ -135,46 +111,54 @@ func New(dsn string, opts ...Option) (*Store, error) {
 	if cfg.connMaxLifetime > 0 {
 		db.SetConnMaxLifetime(cfg.connMaxLifetime)
 	}
-	if cfg.connMaxIdleTime > 0 {
-		db.SetConnMaxIdleTime(cfg.connMaxIdleTime)
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	// Custom drivers may not understand the DSN pragma parameters above;
-	// configure the pooled connection as a best-effort fallback.
-	if cfg.driverName != DefaultDriverName {
-		pragmaSQL := fmt.Sprintf(`
-			PRAGMA busy_timeout = %d;
-			PRAGMA foreign_keys = ON;
-			PRAGMA synchronous = NORMAL;
-		`, busyTimeoutMs)
-		if !isMemory {
-			pragmaSQL += "PRAGMA journal_mode = WAL;\n"
-		}
-		if _, err := db.ExecContext(ctx, pragmaSQL); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("sqlite: failed to set pragmas: %w", err)
-		}
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite: ping: %w", err)
 	}
 
 	store := &Store{db: db}
-
 	if cfg.autoMigrate {
 		if err := store.Migrate(ctx); err != nil {
 			_ = db.Close()
-			return nil, fmt.Errorf("sqlite: failed to apply migrations: %w", err)
+			return nil, fmt.Errorf("sqlite: migrate: %w", err)
 		}
 	}
-
 	return store, nil
 }
 
-// dsnWithPragmas appends go-sqlite3 DSN parameters so that database/sql opens
-// every pooled connection with the pragmas already applied.
-func dsnWithPragmas(dsn string, busyTimeoutMs int, wal bool) string {
-	params := fmt.Sprintf("_busy_timeout=%d&_foreign_keys=on&_synchronous=NORMAL", busyTimeoutMs)
+// NewWithDB wraps an existing database handle.
+func NewWithDB(db *sql.DB, opts ...Option) (*Store, error) {
+	if db == nil {
+		return nil, fmt.Errorf("sqlite: db is nil")
+	}
+	cfg := defaultOptions()
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	store := &Store{db: db}
+	if cfg.autoMigrate {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := store.Migrate(ctx); err != nil {
+			return nil, fmt.Errorf("sqlite: migrate: %w", err)
+		}
+	}
+	return store, nil
+}
+
+func defaultOptions() *options {
+	return &options{
+		driverName:  DefaultDriverName,
+		busyTimeout: 5 * time.Second,
+		autoMigrate: true,
+	}
+}
+
+func withPragmas(dsn string, busyTimeoutMS int, wal bool) string {
+	params := fmt.Sprintf("_busy_timeout=%d&_foreign_keys=on&_synchronous=NORMAL", busyTimeoutMS)
 	if wal {
 		params += "&_journal_mode=WAL"
 	}
@@ -185,44 +169,12 @@ func dsnWithPragmas(dsn string, busyTimeoutMs int, wal bool) string {
 	return dsn + separator + params
 }
 
-// NewWithDB creates a Store wrapping an existing *sql.DB instance.
-func NewWithDB(db *sql.DB, opts ...Option) (*Store, error) {
-	if db == nil {
-		return nil, fmt.Errorf("%w: db cannot be nil", storage.ErrInvalidInput)
-	}
-
-	cfg := &options{
-		autoMigrate: true,
-	}
-	for _, opt := range opts {
-		opt(cfg)
-	}
-
-	store := &Store{db: db}
-
-	if cfg.autoMigrate {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := store.Migrate(ctx); err != nil {
-			return nil, fmt.Errorf("sqlite: failed to apply migrations: %w", err)
-		}
-	}
-
-	return store, nil
-}
-
-// DB returns the underlying *sql.DB handle.
+// DB returns the underlying database handle.
 func (s *Store) DB() *sql.DB {
 	return s.db
 }
 
-func (s *Store) isClosed() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.closed
-}
-
-// Close closes the database connection pool. Subsequent operations return storage.ErrClosed.
+// Close closes the database. It is safe to call more than once.
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -233,39 +185,11 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// Clear removes all rows from threads and messages.
-func (s *Store) Clear(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
+func (s *Store) available() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return session.ErrClosed
 	}
-	if s.isClosed() {
-		return storage.ErrClosed
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, "DELETE FROM messages"); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM threads"); err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	return nil
 }
-
-// DangerouslyClearAll removes all stored threads and messages using a background context.
-func (s *Store) DangerouslyClearAll() {
-	_ = s.Clear(context.Background())
-}
-
-// Compile-time checks that Store implements storage.Storage and all domain store interfaces.
-var (
-	_ storage.Storage      = (*Store)(nil)
-	_ storage.ThreadStore  = (*Store)(nil)
-	_ storage.MessageStore = (*Store)(nil)
-)

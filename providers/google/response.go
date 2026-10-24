@@ -44,48 +44,6 @@ func extractCandidateTextAndThinking(candidates []*genai.Candidate) (text, think
 	return textSb.String(), thinkSb.String()
 }
 
-// extractRawGeminiContent attempts to retrieve the original *genai.Content from a raw response payload,
-// filtering out any empty parts that lack initialized 'data' fields required by the Gemini API.
-func extractRawGeminiContent(raw any) *genai.Content {
-	if raw == nil {
-		return nil
-	}
-	var rawParts []*genai.Part
-	var role string
-	switch r := raw.(type) {
-	case *genai.GenerateContentResponse:
-		if len(r.Candidates) > 0 && r.Candidates[0].Content != nil {
-			role = r.Candidates[0].Content.Role
-			rawParts = r.Candidates[0].Content.Parts
-		}
-	case *genai.Content:
-		role = r.Role
-		rawParts = r.Parts
-	}
-
-	if len(rawParts) == 0 {
-		return nil
-	}
-
-	var validParts []*genai.Part
-	for _, p := range rawParts {
-		if isPartValid(p) {
-			validParts = append(validParts, p)
-		}
-	}
-	if len(validParts) == 0 {
-		return nil
-	}
-
-	if role == "" {
-		role = genai.RoleModel
-	}
-	return &genai.Content{
-		Role:  role,
-		Parts: validParts,
-	}
-}
-
 // isPartValid returns true if the Part contains an initialized payload for the 'data' oneof.
 func isPartValid(p *genai.Part) bool {
 	if p == nil {

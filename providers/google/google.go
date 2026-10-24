@@ -72,7 +72,8 @@ type Config struct {
 	ThinkingBudget *int32
 }
 
-// Model implements the llm.LLM interface using Google's Gen AI SDK.
+// Model implements the llm.Model and llm.Streamer interfaces using Google's
+// Gen AI SDK.
 type Model struct {
 	modelID        string
 	client         *genai.Client
@@ -149,7 +150,7 @@ func (m *Model) ModelID() string {
 
 // resolveThinking resolves the effective thinking config taking into account request-level
 // configuration and provider-level defaults.
-func (m *Model) resolveThinking(req llm.GenerateRequest) *llm.ThinkingConfig {
+func (m *Model) resolveThinking(req *llm.Request) *llm.ThinkingConfig {
 	// 1. Request-level thinking configuration
 	if req.Thinking != nil {
 		return req.Thinking

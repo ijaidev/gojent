@@ -8,7 +8,41 @@ import (
 	"google.golang.org/genai"
 )
 
-// convertMessages translates Gojent messages to Google Gen AI contents and extracts system instructions.
+const providerName = "google"
+
+// providerDataFromContent serializes replay-critical Gemini content, including
+// thought signatures.
+func providerDataFromContent(content *genai.Content) *llm.ProviderData {
+	if content == nil || len(content.Parts) == 0 {
+		return nil
+	}
+	encoded, err := json.Marshal(content)
+	if err != nil {
+		return nil
+	}
+	return &llm.ProviderData{Provider: providerName, Version: 1, Data: encoded}
+}
+
+// decodeProviderData restores Gemini content saved by providerDataFromContent.
+func decodeProviderData(data *llm.ProviderData) *genai.Content {
+	if data == nil || data.Provider != providerName || len(data.Data) == 0 {
+		return nil
+	}
+	var content genai.Content
+	if err := json.Unmarshal(data.Data, &content); err != nil {
+		return nil
+	}
+	if len(content.Parts) == 0 {
+		return nil
+	}
+	if content.Role == "" {
+		content.Role = genai.RoleModel
+	}
+	return &content
+}
+
+// convertMessages translates canonical messages into Gemini contents and a
+// system instruction.
 func convertMessages(messages []llm.Message) (contents []*genai.Content, systemInstruction *genai.Content, err error) {
 	var systemParts []*genai.Part
 
@@ -16,49 +50,50 @@ func convertMessages(messages []llm.Message) (contents []*genai.Content, systemI
 		msg := &messages[i]
 		switch msg.Role {
 		case llm.RoleSystem:
-			for _, p := range msg.Content {
-				if p.Type == llm.PartTypeText {
-					systemParts = append(systemParts, genai.NewPartFromText(p.Text))
-				} else {
+			for _, part := range msg.Content {
+				if part.Type != llm.PartTypeText {
 					return nil, nil, fmt.Errorf("google: system message only supports text parts: %w", llm.ErrUnsupportedPartType)
 				}
-			}
-		case llm.RoleAssistant:
-			if rawContent := extractRawGeminiContent(msg.Raw); rawContent != nil {
-				contents = append(contents, rawContent)
-				continue
+				if part.Text != "" {
+					systemParts = append(systemParts, genai.NewPartFromText(part.Text))
+				}
 			}
 
-			var parts []*genai.Part
-			for _, p := range msg.Content {
-				gp, convErr := convertPartToGemini(p)
-				if convErr != nil {
-					return nil, nil, convErr
-				}
-				parts = append(parts, gp)
+		case llm.RoleAssistant:
+			if raw := decodeProviderData(msg.ProviderData); raw != nil {
+				contents = append(contents, raw)
+				continue
 			}
-			for _, tc := range msg.ToolCalls {
-				var argsMap map[string]any
-				if tc.Arguments != "" {
-					_ = json.Unmarshal([]byte(tc.Arguments), &argsMap)
+			var parts []*genai.Part
+			for _, part := range msg.Content {
+				if part.Type == llm.PartTypeText && part.Text == "" {
+					continue
 				}
-				if argsMap == nil {
-					argsMap = make(map[string]any)
+				converted, convertErr := convertPartToGemini(part)
+				if convertErr != nil {
+					return nil, nil, convertErr
+				}
+				parts = append(parts, converted)
+			}
+			for _, call := range msg.ToolCalls {
+				args := map[string]any{}
+				if call.Arguments != "" {
+					if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
+						return nil, nil, fmt.Errorf("google: invalid arguments for tool %q: %w", call.Name, err)
+					}
 				}
 				parts = append(parts, &genai.Part{
 					FunctionCall: &genai.FunctionCall{
-						ID:   tc.ID,
-						Name: tc.Name,
-						Args: argsMap,
+						ID:   call.ID,
+						Name: call.Name,
+						Args: args,
 					},
 				})
 			}
 			if len(parts) > 0 {
-				contents = append(contents, &genai.Content{
-					Role:  genai.RoleModel,
-					Parts: parts,
-				})
+				contents = append(contents, &genai.Content{Role: genai.RoleModel, Parts: parts})
 			}
+
 		case llm.RoleTool:
 			name := msg.Name
 			if name == "" {
@@ -66,74 +101,70 @@ func convertMessages(messages []llm.Message) (contents []*genai.Content, systemI
 			}
 
 			var functionResponseParts []*genai.FunctionResponsePart
-			var respMap map[string]any
-
-			for _, p := range msg.Content {
-				if p.Type == llm.PartTypeText {
-					if respMap == nil {
-						if err := json.Unmarshal([]byte(p.Text), &respMap); err != nil {
-							respMap = map[string]any{"output": p.Text}
+			var responseMap map[string]any
+			for _, part := range msg.Content {
+				if part.Type == llm.PartTypeText {
+					if part.Text == "" {
+						continue
+					}
+					if responseMap == nil {
+						if err := json.Unmarshal([]byte(part.Text), &responseMap); err != nil {
+							responseMap = map[string]any{"output": part.Text}
 						}
 					}
-				} else {
-					frp, convErr := convertToolPartToGemini(p)
-					if convErr != nil {
-						return nil, nil, convErr
-					}
-					functionResponseParts = append(functionResponseParts, frp)
+					continue
 				}
+				converted, convertErr := convertToolPartToGemini(part)
+				if convertErr != nil {
+					return nil, nil, convertErr
+				}
+				functionResponseParts = append(functionResponseParts, converted)
+			}
+			if responseMap == nil {
+				responseMap = map[string]any{"output": ""}
+			}
+			if msg.IsError {
+				responseMap["is_error"] = true
 			}
 
-			if respMap == nil {
-				respMap = map[string]any{"output": ""}
-			}
-
-			var part *genai.Part
+			var responsePart *genai.Part
 			if len(functionResponseParts) > 0 {
-				part = genai.NewPartFromFunctionResponseWithParts(name, respMap, functionResponseParts)
-				if part != nil && part.FunctionResponse != nil {
-					part.FunctionResponse.ID = msg.ToolCallID
-				}
+				responsePart = genai.NewPartFromFunctionResponseWithParts(name, responseMap, functionResponseParts)
 			} else {
-				part = genai.NewPartFromFunctionResponse(name, respMap)
-				if part != nil && part.FunctionResponse != nil {
-					part.FunctionResponse.ID = msg.ToolCallID
-				}
+				responsePart = genai.NewPartFromFunctionResponse(name, responseMap)
+			}
+			if responsePart != nil && responsePart.FunctionResponse != nil {
+				responsePart.FunctionResponse.ID = msg.ToolCallID
 			}
 
 			if len(contents) > 0 && contents[len(contents)-1].Role == genai.RoleUser &&
 				len(contents[len(contents)-1].Parts) > 0 &&
 				contents[len(contents)-1].Parts[0].FunctionResponse != nil {
-				contents[len(contents)-1].Parts = append(contents[len(contents)-1].Parts, part)
+				contents[len(contents)-1].Parts = append(contents[len(contents)-1].Parts, responsePart)
 			} else {
-				contents = append(contents, &genai.Content{
-					Role:  genai.RoleUser,
-					Parts: []*genai.Part{part},
-				})
+				contents = append(contents, &genai.Content{Role: genai.RoleUser, Parts: []*genai.Part{responsePart}})
 			}
+
 		default:
 			var parts []*genai.Part
-			for _, p := range msg.Content {
-				gp, convErr := convertPartToGemini(p)
-				if convErr != nil {
-					return nil, nil, convErr
+			for _, part := range msg.Content {
+				if part.Type == llm.PartTypeText && part.Text == "" {
+					continue
 				}
-				parts = append(parts, gp)
+				converted, convertErr := convertPartToGemini(part)
+				if convertErr != nil {
+					return nil, nil, convertErr
+				}
+				parts = append(parts, converted)
 			}
 			if len(parts) > 0 {
-				contents = append(contents, &genai.Content{
-					Role:  string(msg.Role),
-					Parts: parts,
-				})
+				contents = append(contents, &genai.Content{Role: string(msg.Role), Parts: parts})
 			}
 		}
 	}
 
 	if len(systemParts) > 0 {
-		systemInstruction = &genai.Content{
-			Parts: systemParts,
-		}
+		systemInstruction = &genai.Content{Parts: systemParts}
 	}
-
 	return contents, systemInstruction, nil
 }

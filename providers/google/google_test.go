@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -17,1043 +16,540 @@ import (
 	"google.golang.org/genai"
 )
 
-// Ensure Model implements the core llm.LLM interface.
-var _ llm.LLM = (*google.Model)(nil)
-
-func TestModel_ConfigValidation(t *testing.T) {
-	ctx := context.Background()
-
-	// Model is required; empty model must return ErrModelNotSet
-	_, err := google.New(ctx, google.Config{
-		APIKey: "test-api-key",
-	})
-	if !errors.Is(err, google.ErrModelNotSet) {
-		t.Fatalf("expected ErrModelNotSet when model is empty, got %v", err)
+func TestNew_Validation(t *testing.T) {
+	if _, err := google.New(context.Background(), google.Config{APIKey: "key"}); !errors.Is(err, google.ErrModelNotSet) {
+		t.Fatalf("expected ErrModelNotSet, got %v", err)
 	}
 
-	// Custom model
-	customModel, err := google.NewModel(ctx, google.Config{
-		Model:  "gemini-1.5-pro",
-		APIKey: "test-api-key",
-	})
+	client := &genai.Client{}
+	m, err := google.New(context.Background(), google.Config{Model: "gemini-test", Client: client})
 	if err != nil {
-		t.Fatalf("unexpected error creating custom model: %v", err)
+		t.Fatalf("New with client: %v", err)
 	}
-
-	if customModel.ModelID() != "gemini-1.5-pro" {
-		t.Errorf("expected custom model gemini-1.5-pro, got %s", customModel.ModelID())
+	if m.ModelID() != "gemini-test" {
+		t.Errorf("ModelID = %q", m.ModelID())
 	}
 }
 
-func TestModel_APIKeyFromEnv(t *testing.T) {
-	t.Setenv("GEMINI_API_KEY", "env-gemini-key")
-
-	ctx := context.Background()
-	m, err := google.New(ctx, google.Config{
-		Model: "gemini-2.5-flash",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error creating model from env: %v", err)
+func TestNew_DoesNotMutateCallerClientConfig(t *testing.T) {
+	cfg := &genai.ClientConfig{
+		APIKey:      "client-key",
+		HTTPOptions: genai.HTTPOptions{BaseURL: "https://example.invalid"},
 	}
-
-	if m.ModelID() != "gemini-2.5-flash" {
-		t.Errorf("expected gemini-2.5-flash, got %s", m.ModelID())
+	if _, err := google.New(context.Background(), google.Config{Model: "gemini-test", ClientConfig: cfg}); err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if cfg.APIKey != "client-key" || cfg.HTTPOptions.BaseURL != "https://example.invalid" {
+		t.Errorf("caller client config was mutated: %+v", cfg)
 	}
 }
 
-func TestModel_ContextCancellation(t *testing.T) {
+func TestGenerate_ContextCancellation(t *testing.T) {
+	m, err := google.New(context.Background(), google.Config{Model: "gemini-test", Client: &genai.Client{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // pre-cancel context
+	cancel()
 
-	m, err := google.New(context.Background(), google.Config{
-		Model:  "gemini-2.5-flash",
-		APIKey: "test-key",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if _, err := m.Generate(ctx, &llm.Request{}); !errors.Is(err, context.Canceled) {
+		t.Errorf("Generate err = %v, want context.Canceled", err)
 	}
-
-	_, err = m.Generate(ctx, llm.GenerateRequest{})
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled on Generate, got %v", err)
-	}
-
-	_, err = m.Stream(ctx, llm.GenerateRequest{})
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("expected context.Canceled on Stream, got %v", err)
+	if _, err := m.Stream(ctx, &llm.Request{}); !errors.Is(err, context.Canceled) {
+		t.Errorf("Stream err = %v, want context.Canceled", err)
 	}
 }
 
-func TestModel_Generate_EndToEndMockServer(t *testing.T) {
-	// Create a mock Gemini API HTTP server
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		resp := map[string]any{
+func newModel(t *testing.T, handler http.HandlerFunc) *google.Model {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	m, err := google.New(context.Background(), google.Config{
+		Model:  "gemini-test",
+		APIKey: "test-key",
+		ClientConfig: &genai.ClientConfig{
+			HTTPOptions: genai.HTTPOptions{BaseURL: server.URL},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return m
+}
+
+func writeJSON(t *testing.T, w http.ResponseWriter, value any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		t.Errorf("encode response: %v", err)
+	}
+}
+
+func TestGenerate_EndToEndAndRequestConversion(t *testing.T) {
+	var captured map[string]any
+	m := newModel(t, func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request: %v", err)
+		}
+		if err := json.Unmarshal(body, &captured); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		writeJSON(t, w, map[string]any{
 			"candidates": []map[string]any{
 				{
 					"content": map[string]any{
 						"role": "model",
 						"parts": []map[string]any{
-							{"text": "Gemini response from Gojent!"},
+							{"text": "reasoning", "thought": true},
+							{"text": "Gemini response"},
 						},
 					},
 					"finishReason": "STOP",
 				},
 			},
 			"usageMetadata": map[string]any{
-				"promptTokenCount":     15,
-				"candidatesTokenCount": 25,
-				"totalTokenCount":      40,
+				"promptTokenCount":        15,
+				"candidatesTokenCount":    25,
+				"totalTokenCount":         40,
+				"thoughtsTokenCount":      7,
+				"cachedContentTokenCount": 3,
 			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer ts.Close()
+		})
+	})
 
-	ctx := context.Background()
-	m, err := google.New(ctx, google.Config{
-		Model:  "gemini-2.5-flash",
-		APIKey: "test-key",
-		ClientConfig: &genai.ClientConfig{
-			HTTPOptions: genai.HTTPOptions{
-				BaseURL: ts.URL,
-			},
+	temperature := 0.7
+	topP := 0.9
+	maxTokens := 100
+	resp, err := m.Generate(context.Background(), &llm.Request{
+		Messages: []llm.Message{
+			llm.SystemMessage("You are helpful"),
+			llm.UserMessage("Hello"),
 		},
+		Tools: []llm.ToolDefinition{{
+			Name:        "lookup",
+			Description: "Look something up",
+			Parameters: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"query": map[string]any{"type": "string"}},
+				"required":   []string{"query"},
+			},
+		}},
+		ResponseFormat: &llm.ResponseFormat{
+			Type:   llm.ResponseFormatJSONSchema,
+			Name:   "Answer",
+			Schema: map[string]any{"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string"}}},
+			Strict: true,
+		},
+		Temperature: &temperature,
+		TopP:        &topP,
+		MaxTokens:   &maxTokens,
+		StopWords:   []string{"END"},
 	})
 	if err != nil {
-		t.Fatalf("failed to create model: %v", err)
+		t.Fatalf("Generate: %v", err)
 	}
 
-	temp := 0.7
-	maxTokens := 100
-	req := llm.GenerateRequest{
-		Messages: []llm.Message{
-			llm.SystemMessage("You are a helpful assistant."),
-			llm.UserMessage("Hello Gemini!"),
-		},
-		Temperature: &temp,
-		MaxTokens:   &maxTokens,
+	if resp.Message.Text() != "Gemini response" {
+		t.Errorf("text = %q", resp.Message.Text())
+	}
+	if resp.Message.Thinking != "reasoning" {
+		t.Errorf("thinking = %q", resp.Message.Thinking)
+	}
+	if resp.FinishReason != llm.FinishReasonStop {
+		t.Errorf("finish = %q", resp.FinishReason)
+	}
+	if resp.Usage != (llm.Usage{PromptTokens: 15, CompletionTokens: 25, TotalTokens: 40, ReasoningTokens: 7, CachedTokens: 3}) {
+		t.Errorf("usage = %+v", resp.Usage)
 	}
 
-	res, err := m.Generate(ctx, req)
-	if err != nil {
-		t.Fatalf("m.Generate failed: %v", err)
+	system, ok := captured["systemInstruction"].(map[string]any)
+	if !ok {
+		t.Fatalf("systemInstruction missing: %+v", captured)
+	}
+	systemParts := system["parts"].([]any)
+	if systemParts[0].(map[string]any)["text"] != "You are helpful" {
+		t.Errorf("unexpected system instruction: %+v", system)
+	}
+	contents := captured["contents"].([]any)
+	if len(contents) != 1 {
+		t.Fatalf("contents = %d, want 1 user message", len(contents))
+	}
+	if contents[0].(map[string]any)["role"] != "user" {
+		t.Errorf("unexpected user content: %+v", contents[0])
 	}
 
-	if res.Text != "Gemini response from Gojent!" {
-		t.Errorf("unexpected response text: %s", res.Text)
+	generation := captured["generationConfig"].(map[string]any)
+	if generation["temperature"] != 0.7 || generation["topP"] != 0.9 {
+		t.Errorf("sampling config = %+v", generation)
 	}
-	if res.FinishReason != llm.FinishReasonStop {
-		t.Errorf("expected finish reason stop, got %s", res.FinishReason)
+	if generation["maxOutputTokens"] != float64(100) {
+		t.Errorf("maxOutputTokens = %v", generation["maxOutputTokens"])
 	}
-	if res.Usage.TotalTokens != 40 {
-		t.Errorf("expected 40 total tokens, got %d", res.Usage.TotalTokens)
+	if generation["responseMimeType"] != "application/json" {
+		t.Errorf("responseMimeType = %v", generation["responseMimeType"])
 	}
-	if res.Usage.PromptTokens != 15 || res.Usage.CompletionTokens != 25 {
-		t.Errorf("unexpected token breakdown: %+v", res.Usage)
+	if generation["responseJsonSchema"] == nil {
+		t.Errorf("responseJsonSchema missing: %+v", generation)
+	}
+	stop := generation["stopSequences"].([]any)
+	if len(stop) != 1 || stop[0] != "END" {
+		t.Errorf("stopSequences = %+v", stop)
+	}
+
+	tools := captured["tools"].([]any)
+	decl := tools[0].(map[string]any)["functionDeclarations"].([]any)[0].(map[string]any)
+	if decl["name"] != "lookup" || decl["description"] != "Look something up" {
+		t.Errorf("unexpected function declaration: %+v", decl)
+	}
+	if decl["parametersJsonSchema"] == nil {
+		t.Errorf("parametersJsonSchema missing: %+v", decl)
 	}
 }
 
-func TestModel_Stream_EndToEndMockServer(t *testing.T) {
-	// Create a mock server that simulates Gemini server-sent stream
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		// The Gemini SDK expects a JSON array or chunked JSON objects
-		// In REST mode with SSE or streamGenerateContent, chunks are formatted as SSE: "data: {...}\n\n"
+func TestGenerate_ToolCalls(t *testing.T) {
+	m := newModel(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, map[string]any{
+			"candidates": []map[string]any{{
+				"content": map[string]any{
+					"role": "model",
+					"parts": []map[string]any{
+						{"functionCall": map[string]any{"id": "call-a", "name": "first", "args": map[string]any{"n": 1}}},
+						{"functionCall": map[string]any{"id": "call-b", "name": "second", "args": map[string]any{"s": "two"}}},
+					},
+				},
+				"finishReason": "STOP",
+			}},
+		})
+	})
+
+	resp, err := m.Generate(context.Background(), &llm.Request{Messages: []llm.Message{llm.UserMessage("go")}})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if resp.FinishReason != llm.FinishReasonTool {
+		t.Errorf("finish = %q, want tool_calls", resp.FinishReason)
+	}
+	if len(resp.Message.ToolCalls) != 2 {
+		t.Fatalf("tool calls = %d, want 2", len(resp.Message.ToolCalls))
+	}
+	if resp.Message.ToolCalls[0].ID != "call-a" || resp.Message.ToolCalls[0].Index != 0 {
+		t.Errorf("first call = %+v", resp.Message.ToolCalls[0])
+	}
+	if resp.Message.ToolCalls[1].ID != "call-b" || resp.Message.ToolCalls[1].Index != 1 {
+		t.Errorf("second call = %+v", resp.Message.ToolCalls[1])
+	}
+	var args map[string]any
+	if err := resp.Message.ToolCalls[0].UnmarshalArgs(&args); err != nil {
+		t.Fatalf("UnmarshalArgs: %v", err)
+	}
+	if args["n"] != float64(1) {
+		t.Errorf("args = %+v", args)
+	}
+	if resp.Message.ProviderData == nil || resp.Message.ProviderData.Provider != "google" {
+		t.Errorf("provider data missing: %+v", resp.Message.ProviderData)
+	}
+}
+
+func TestGenerate_ToolResultsUseUserRole(t *testing.T) {
+	var captured map[string]any
+	m := newModel(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &captured); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		writeJSON(t, w, map[string]any{
+			"candidates": []map[string]any{{
+				"content":      map[string]any{"role": "model", "parts": []map[string]any{{"text": "done"}}},
+				"finishReason": "STOP",
+			}},
+		})
+	})
+
+	_, err := m.Generate(context.Background(), &llm.Request{Messages: []llm.Message{
+		llm.UserMessage("weather?"),
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{
+			{ID: "call-1", Name: "weather", Arguments: `{"city":"Tokyo"}`},
+		}},
+		{Role: llm.RoleTool, Name: "weather", ToolCallID: "call-1", Content: []llm.Part{llm.TextPart(`{"temp":20}`)}},
+		{Role: llm.RoleTool, Name: "weather", ToolCallID: "call-2", Content: []llm.Part{llm.TextPart(`{"temp":21}`)}},
+	}})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	contents := captured["contents"].([]any)
+	if len(contents) != 3 {
+		t.Fatalf("contents = %d, want user, model, merged tool responses", len(contents))
+	}
+	if contents[1].(map[string]any)["role"] != "model" {
+		t.Errorf("assistant role = %v", contents[1].(map[string]any)["role"])
+	}
+	toolTurn := contents[2].(map[string]any)
+	if toolTurn["role"] != "user" {
+		t.Errorf("tool turn role = %v, want user", toolTurn["role"])
+	}
+	parts := toolTurn["parts"].([]any)
+	if len(parts) != 2 {
+		t.Fatalf("tool response parts = %d, want 2 merged responses", len(parts))
+	}
+	for i, raw := range parts {
+		response := raw.(map[string]any)["functionResponse"].(map[string]any)
+		if response["name"] != "weather" {
+			t.Errorf("response %d name = %v", i, response["name"])
+		}
+	}
+}
+
+func TestGenerate_MultipartValidation(t *testing.T) {
+	m, err := google.New(context.Background(), google.Config{Model: "gemini-test", Client: &genai.Client{}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = m.Generate(context.Background(), &llm.Request{Messages: []llm.Message{
+		llm.UserMessageWithParts(llm.TextPart("look"), llm.Part{Type: llm.PartTypeImage, Data: []byte{1}, MIMEType: "image/nope"}),
+	}})
+	if !errors.Is(err, llm.ErrUnsupportedMIMEType) {
+		t.Errorf("unsupported MIME err = %v", err)
+	}
+
+	_, err = m.Generate(context.Background(), &llm.Request{Messages: []llm.Message{
+		llm.UserMessageWithParts(llm.Part{Type: llm.PartTypeImage, URL: "https://example.com/x.png"}),
+	}})
+	if !errors.Is(err, llm.ErrUnsupportedPart) {
+		t.Errorf("direct URL err = %v", err)
+	}
+
+	_, err = m.Generate(context.Background(), &llm.Request{Messages: []llm.Message{
+		llm.UserMessageWithParts(llm.Part{Type: llm.PartTypeImage}),
+	}})
+	if !errors.Is(err, llm.ErrInvalidPart) {
+		t.Errorf("empty image err = %v", err)
+	}
+}
+
+func TestGenerate_BlockedPrompt(t *testing.T) {
+	m := newModel(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, map[string]any{
+			"promptFeedback": map[string]any{
+				"blockReason":        "SAFETY",
+				"blockReasonMessage": "blocked",
+			},
+		})
+	})
+
+	_, err := m.Generate(context.Background(), &llm.Request{Messages: []llm.Message{llm.UserMessage("bad")}})
+	if !errors.Is(err, google.ErrResponseBlocked) {
+		t.Fatalf("err = %v, want ErrResponseBlocked", err)
+	}
+}
+
+func TestStream_DeltasThinkingToolsAndProviderData(t *testing.T) {
+	m := newModel(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
 		flusher, ok := w.(http.Flusher)
 		if !ok {
-			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 			return
 		}
 
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-
-		chunk1 := map[string]any{
-			"candidates": []map[string]any{
-				{
-					"content": map[string]any{
-						"parts": []map[string]any{
-							{"text": "Chunk 1 "},
-						},
-					},
-				},
-			},
+		chunks := []map[string]any{
+			{"candidates": []map[string]any{{
+				"content": map[string]any{"role": "model", "parts": []map[string]any{{"text": "Chunk 1 "}}},
+			}}},
+			{"candidates": []map[string]any{{
+				"content": map[string]any{"role": "model", "parts": []map[string]any{{"text": "thinking", "thought": true}}},
+			}}},
+			{"candidates": []map[string]any{{
+				"content": map[string]any{"role": "model", "parts": []map[string]any{
+					{"functionCall": map[string]any{"id": "call-s", "name": "fetch", "args": map[string]any{"id": 42}}},
+				}},
+				"finishReason": "STOP",
+			}}, "usageMetadata": map[string]any{"promptTokenCount": 4, "candidatesTokenCount": 6, "totalTokenCount": 10}},
 		}
-		chunk2 := map[string]any{
-			"candidates": []map[string]any{
-				{
-					"content": map[string]any{
-						"parts": []map[string]any{
-							{"text": "Chunk 2"},
-						},
-					},
-					"finishReason": "STOP",
-				},
-			},
-			"usageMetadata": map[string]any{
-				"promptTokenCount":     5,
-				"candidatesTokenCount": 10,
-				"totalTokenCount":      15,
-			},
+		for _, chunk := range chunks {
+			encoded, _ := json.Marshal(chunk)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", encoded)
+			flusher.Flush()
 		}
-
-		c1Bytes, _ := json.Marshal(chunk1)
-		c2Bytes, _ := json.Marshal(chunk2)
-
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", c1Bytes)
-		flusher.Flush()
-
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", c2Bytes)
-		flusher.Flush()
-	}))
-	defer ts.Close()
-
-	ctx := context.Background()
-	m, err := google.New(ctx, google.Config{
-		Model:  "gemini-2.5-flash",
-		APIKey: "test-key",
-		ClientConfig: &genai.ClientConfig{
-			HTTPOptions: genai.HTTPOptions{
-				BaseURL: ts.URL,
-			},
-		},
 	})
-	if err != nil {
-		t.Fatalf("failed to create model: %v", err)
-	}
 
-	stream, err := m.Stream(ctx, llm.GenerateRequest{
-		Messages: []llm.Message{
-			llm.UserMessage("stream this"),
-		},
-	})
+	stream, err := m.Stream(context.Background(), &llm.Request{Messages: []llm.Message{llm.UserMessage("go")}})
 	if err != nil {
-		t.Fatalf("m.Stream failed: %v", err)
+		t.Fatalf("Stream: %v", err)
 	}
-	defer func() {
-		_ = stream.Close()
-	}()
+	defer func() { _ = stream.Close() }()
 
-	var accumulated strings.Builder
+	var text, thinking string
+	var calls []llm.ToolCall
+	var usage llm.Usage
+	var finish llm.FinishReason
+	var providerData *llm.ProviderData
 	for {
 		chunk, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			t.Fatalf("unexpected stream error: %v", err)
+			t.Fatalf("Recv: %v", err)
 		}
-		accumulated.WriteString(chunk.Delta)
+		text += chunk.Delta
+		thinking += chunk.ThinkingDelta
+		calls = append(calls, chunk.ToolCalls...)
+		if chunk.Usage != nil {
+			usage = usage.Add(*chunk.Usage)
+		}
+		if chunk.FinishReason != "" {
+			finish = chunk.FinishReason
+		}
+		if chunk.ProviderData != nil {
+			providerData = chunk.ProviderData
+		}
 	}
-
-	if accumulated.String() != "Chunk 1 Chunk 2" {
-		t.Errorf("expected 'Chunk 1 Chunk 2', got '%s'", accumulated.String())
+	if text != "Chunk 1 " {
+		t.Errorf("text = %q", text)
+	}
+	if thinking != "thinking" {
+		t.Errorf("thinking = %q", thinking)
+	}
+	if len(calls) != 1 || calls[0].ID != "call-s" || calls[0].Name != "fetch" {
+		t.Errorf("tool calls = %+v", calls)
+	}
+	if usage.TotalTokens != 10 {
+		t.Errorf("usage = %+v", usage)
+	}
+	if finish != llm.FinishReasonTool {
+		t.Errorf("finish = %q", finish)
+	}
+	if providerData == nil || providerData.Provider != "google" {
+		t.Errorf("provider data = %+v", providerData)
+	}
+	if !strings.Contains(string(providerData.Data), "call-s") {
+		t.Errorf("provider data does not preserve streamed parts: %s", providerData.Data)
 	}
 }
 
-func TestModel_Generate_FunctionCall(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		resp := map[string]any{
-			"candidates": []map[string]any{
-				{
-					"content": map[string]any{
-						"role": "model",
-						"parts": []map[string]any{
-							{
-								"functionCall": map[string]any{
-									"name": "get_weather",
-									"args": map[string]any{
-										"location": "San Francisco",
-									},
-								},
-							},
-						},
-					},
-					"finishReason": "STOP",
-				},
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer ts.Close()
-
-	ctx := context.Background()
-	m, err := google.New(ctx, google.Config{
-		Model:  "gemini-2.5-flash",
-		APIKey: "test-key",
-		ClientConfig: &genai.ClientConfig{
-			HTTPOptions: genai.HTTPOptions{
-				BaseURL: ts.URL,
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("failed to create model: %v", err)
-	}
-
-	req := llm.GenerateRequest{
-		Messages: []llm.Message{
-			llm.UserMessage("What is the weather in SF?"),
-			llm.ToolResultMessage("call-1", `{"temp":20}`),
-		},
-		Tools: []llm.ToolDefinition{
-			{Name: "get_weather", Description: "Fetches weather"},
-		},
-	}
-
-	res, err := m.Generate(ctx, req)
-	if err != nil {
-		t.Fatalf("Generate failed: %v", err)
-	}
-
-	if res.FinishReason != llm.FinishReasonTool {
-		t.Errorf("expected finish reason tool_calls, got %s", res.FinishReason)
-	}
-	if len(res.ToolCalls) != 1 {
-		t.Fatalf("expected 1 tool call, got %d", len(res.ToolCalls))
-	}
-	if res.ToolCalls[0].Name != "get_weather" {
-		t.Errorf("expected tool name 'get_weather', got %s", res.ToolCalls[0].Name)
-	}
-
-	var parsedArgs map[string]any
-	if err := res.ToolCalls[0].UnmarshalArgs(&parsedArgs); err != nil {
-		t.Fatalf("failed to unmarshal args: %v", err)
-	}
-	if parsedArgs["location"] != "San Francisco" {
-		t.Errorf("unexpected arg location: %v", parsedArgs["location"])
-	}
-}
-
-func TestModel_Stream_FunctionCall(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+func TestStream_BlockedPrompt(t *testing.T) {
+	m := newModel(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "streaming not supported", http.StatusInternalServerError)
-			return
-		}
-
+		flusher, _ := w.(http.Flusher)
 		chunk := map[string]any{
-			"candidates": []map[string]any{
-				{
-					"content": map[string]any{
-						"parts": []map[string]any{
-							{
-								"functionCall": map[string]any{
-									"id":   "call-stream-1",
-									"name": "fetch_data",
-									"args": map[string]any{
-										"id": 42,
-									},
-								},
-							},
-						},
-					},
-					"finishReason": "STOP",
-				},
-			},
+			"promptFeedback": map[string]any{"blockReason": "SAFETY"},
 		}
-
-		cBytes, _ := json.Marshal(chunk)
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", cBytes)
+		encoded, _ := json.Marshal(chunk)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", encoded)
 		flusher.Flush()
-	}))
-	defer ts.Close()
-
-	ctx := context.Background()
-	m, err := google.New(ctx, google.Config{
-		Model:  "gemini-2.5-flash",
-		APIKey: "test-key",
-		ClientConfig: &genai.ClientConfig{
-			HTTPOptions: genai.HTTPOptions{
-				BaseURL: ts.URL,
-			},
-		},
 	})
+
+	stream, err := m.Stream(context.Background(), &llm.Request{Messages: []llm.Message{llm.UserMessage("bad")}})
 	if err != nil {
-		t.Fatalf("failed to create model: %v", err)
-	}
-
-	stream, err := m.Stream(ctx, llm.GenerateRequest{
-		Messages: []llm.Message{llm.UserMessage("fetch 42")},
-		Tools: []llm.ToolDefinition{
-			{Name: "fetch_data", Description: "Fetches data by id"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Stream failed: %v", err)
-	}
-	defer func() {
-		_ = stream.Close()
-	}()
-
-	chunk, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("stream.Recv failed: %v", err)
-	}
-
-	if len(chunk.ToolCalls) != 1 {
-		t.Fatalf("expected 1 tool call in chunk, got %d", len(chunk.ToolCalls))
-	}
-	if chunk.ToolCalls[0].Name != "fetch_data" || chunk.ToolCalls[0].ID != "call-stream-1" {
-		t.Errorf("unexpected tool call: %+v", chunk.ToolCalls[0])
-	}
-	if chunk.FinishReason != llm.FinishReasonTool {
-		t.Errorf("expected finish reason tool_calls, got %s", chunk.FinishReason)
-	}
-}
-
-func TestModel_Generate_ToolResponseRole(t *testing.T) {
-	var capturedBody []byte
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		capturedBody = body
-		w.Header().Set("Content-Type", "application/json")
-		resp := map[string]any{
-			"candidates": []map[string]any{
-				{
-					"content": map[string]any{
-						"role": "model",
-						"parts": []map[string]any{
-							{"text": "The weather is 20C."},
-						},
-					},
-					"finishReason": "STOP",
-				},
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer ts.Close()
-
-	ctx := context.Background()
-	m, err := google.New(ctx, google.Config{
-		Model:  "gemini-2.5-flash",
-		APIKey: "test-key",
-		ClientConfig: &genai.ClientConfig{
-			HTTPOptions: genai.HTTPOptions{
-				BaseURL: ts.URL,
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("failed to create model: %v", err)
-	}
-
-	req := llm.GenerateRequest{
-		Messages: []llm.Message{
-			llm.UserMessage("Weather?"),
-			{
-				Role: llm.RoleAssistant,
-				ToolCalls: []llm.ToolCall{
-					{ID: "call-1", Name: "get_weather", Arguments: `{"location":"Tokyo"}`},
-				},
-				Raw: &genai.Content{
-					Role: "model",
-					Parts: []*genai.Part{
-						{
-							FunctionCall: &genai.FunctionCall{
-								Name: "get_weather",
-								Args: map[string]any{"location": "Tokyo"},
-							},
-							ThoughtSignature: []byte("opaque-signature-1234"),
-						},
-					},
-				},
-			},
-			{
-				Role:       llm.RoleTool,
-				Name:       "get_weather",
-				ToolCallID: "call-1",
-				Content:    []llm.Part{llm.TextPart(`{"temperature":20}`)},
-			},
-		},
-	}
-
-	res, err := m.Generate(ctx, req)
-	if err != nil {
-		t.Fatalf("Generate failed: %v", err)
-	}
-	if res.Text != "The weather is 20C." {
-		t.Errorf("unexpected text: %s", res.Text)
-	}
-
-	// Verify that the JSON request sent to Gemini uses role 'user' for function response
-	var reqJSON map[string]any
-	if err := json.Unmarshal(capturedBody, &reqJSON); err != nil {
-		t.Fatalf("failed to parse captured request body: %v", err)
-	}
-	contents, ok := reqJSON["contents"].([]any)
-	if !ok || len(contents) != 3 {
-		t.Fatalf("expected 3 contents, got %v", reqJSON["contents"])
-	}
-
-	// Verify model turn preserved thought signature
-	modelTurn, ok := contents[1].(map[string]any)
-	if !ok {
-		t.Fatalf("expected model turn map, got %v", contents[1])
-	}
-	modelParts, ok := modelTurn["parts"].([]any)
-	if !ok || len(modelParts) == 0 {
-		t.Fatalf("expected parts in model turn, got %v", modelTurn)
-	}
-	partMap, ok := modelParts[0].(map[string]any)
-	if !ok || partMap["thoughtSignature"] == nil {
-		t.Errorf("expected thoughtSignature preserved in model turn, got %v", modelParts[0])
-	}
-
-	toolTurn, ok := contents[2].(map[string]any)
-	if !ok {
-		t.Fatalf("expected tool turn map, got %v", contents[2])
-	}
-	if toolTurn["role"] != "user" {
-		t.Errorf("expected role 'user' for tool response content, got %v", toolTurn["role"])
-	}
-}
-
-func init() {
-	// Ensure tests do not fail on missing credentials when running in test environments
-	_ = os.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "false")
-}
-
-func TestGoogleProvider_Multipart_ErrorValidations(t *testing.T) {
-	ctx := context.Background()
-	m, err := google.New(ctx, google.Config{
-		Model:  "gemini-2.5-flash",
-		APIKey: "test-key",
-	})
-	if err != nil {
-		t.Fatalf("failed to create model: %v", err)
-	}
-
-	// 1. Unsupported MIME type error
-	badMIMEReq := llm.GenerateRequest{
-		Messages: []llm.Message{
-			llm.UserMessageWithParts(llm.TextPart("inspect"), llm.Part{
-				Type:     llm.PartTypeImage,
-				Data:     []byte{1, 2, 3},
-				MIMEType: "image/unsupported-xyz",
-			}),
-		},
-	}
-	_, err = m.Generate(ctx, badMIMEReq)
-	if !errors.Is(err, llm.ErrUnsupportedMIMEType) {
-		t.Errorf("expected ErrUnsupportedMIMEType, got: %v", err)
-	}
-
-	// 2. Unsupported direct HTTP URL error
-	badURLReq := llm.GenerateRequest{
-		Messages: []llm.Message{
-			llm.UserMessageWithParts(llm.TextPart("inspect"), llm.Part{
-				Type: llm.PartTypeImage,
-				URL:  "https://example.com/photo.jpg",
-			}),
-		},
-	}
-	_, err = m.Generate(ctx, badURLReq)
-	if !errors.Is(err, llm.ErrUnsupportedPart) {
-		t.Errorf("expected ErrUnsupportedPart for HTTP URL, got: %v", err)
-	}
-
-	// 3. Unsupported part type in system message
-	badSysReq := llm.GenerateRequest{
-		Messages: []llm.Message{
-			{
-				Role: llm.RoleSystem,
-				Content: []llm.Part{
-					llm.ImageFromBytes([]byte{1, 2}, "image/png"),
-				},
-			},
-		},
-	}
-	_, err = m.Generate(ctx, badSysReq)
-	if !errors.Is(err, llm.ErrUnsupportedPartType) {
-		t.Errorf("expected ErrUnsupportedPartType for non-text system part, got: %v", err)
-	}
-}
-
-func TestGoogleProvider_AvailableThinkingLevels(t *testing.T) {
-	levels := google.AvailableThinkingLevels()
-	if len(levels) != 4 {
-		t.Fatalf("expected 4 thinking levels, got %d", len(levels))
-	}
-	expected := []google.ThinkingLevel{
-		google.ThinkingLevelMinimal,
-		google.ThinkingLevelLow,
-		google.ThinkingLevelMedium,
-		google.ThinkingLevelHigh,
-	}
-	for i, l := range levels {
-		if l != expected[i] {
-			t.Errorf("level[%d]: expected %s, got %s", i, expected[i], l)
-		}
-	}
-}
-
-func TestGoogleProvider_ThinkingConfigurationAndOverride(t *testing.T) {
-	var capturedConfig map[string]any
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var reqMap map[string]any
-		_ = json.Unmarshal(body, &reqMap)
-		if genConfig, ok := reqMap["generationConfig"].(map[string]any); ok {
-			capturedConfig = genConfig
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		resp := map[string]any{
-			"candidates": []map[string]any{
-				{
-					"content": map[string]any{
-						"role": "model",
-						"parts": []map[string]any{
-							{"text": "Analyzing problem logically...", "thought": true},
-							{"text": "The solution is 42."},
-						},
-					},
-					"finishReason": "STOP",
-				},
-			},
-			"usageMetadata": map[string]any{
-				"promptTokenCount":     12,
-				"candidatesTokenCount": 20,
-				"totalTokenCount":      32,
-				"thoughtsTokenCount":   15,
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer ts.Close()
-
-	ctx := context.Background()
-
-	// 1. Provider-level default thinking
-	m, err := google.New(ctx, google.Config{
-		Model:         "gemini-2.5-flash",
-		APIKey:        "test-key",
-		ThinkingLevel: google.ThinkingLevelHigh,
-		ClientConfig: &genai.ClientConfig{
-			HTTPOptions: genai.HTTPOptions{
-				BaseURL: ts.URL,
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("failed to create model: %v", err)
-	}
-
-	res, err := m.Generate(ctx, llm.GenerateRequest{
-		Messages: []llm.Message{llm.UserMessage("Calculate meaning")},
-	})
-	if err != nil {
-		t.Fatalf("Generate failed: %v", err)
-	}
-
-	// Verify thought and answer separation!
-	if res.Text != "The solution is 42." {
-		t.Errorf("expected clean text 'The solution is 42.', got %q", res.Text)
-	}
-	if res.Thinking != "Analyzing problem logically..." {
-		t.Errorf("expected thinking 'Analyzing problem logically...', got %q", res.Thinking)
-	}
-	if res.Usage.ReasoningTokens != 15 {
-		t.Errorf("expected reasoning tokens 15, got %d", res.Usage.ReasoningTokens)
-	}
-
-	// Verify captured request had thinkingLevel HIGH
-	if capturedConfig == nil || capturedConfig["thinkingConfig"] == nil {
-		t.Fatalf("expected thinkingConfig in request, got %v", capturedConfig)
-	}
-	tConfig := capturedConfig["thinkingConfig"].(map[string]any)
-	if tConfig["thinkingLevel"] != "HIGH" {
-		t.Errorf("expected thinkingLevel HIGH, got %v", tConfig["thinkingLevel"])
-	}
-
-	// 2. Per-request override overrides provider default
-	_, err = m.Generate(ctx, llm.GenerateRequest{
-		Messages: []llm.Message{llm.UserMessage("Fast query")},
-		Thinking: &llm.ThinkingConfig{Level: llm.ThinkingLevelMinimal},
-	})
-	if err != nil {
-		t.Fatalf("Generate with per-request override failed: %v", err)
-	}
-
-	tConfigOverride := capturedConfig["thinkingConfig"].(map[string]any)
-	if tConfigOverride["thinkingLevel"] != "MINIMAL" {
-		t.Errorf("expected per-request override thinkingLevel MINIMAL, got %v", tConfigOverride["thinkingLevel"])
-	}
-}
-
-func TestGoogleProvider_StreamThinking(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "streaming not supported", http.StatusInternalServerError)
-			return
-		}
-
-		// Chunk 1: Thought delta
-		chunk1 := map[string]any{
-			"candidates": []map[string]any{
-				{
-					"content": map[string]any{
-						"parts": []map[string]any{
-							{"text": "Pondering the query...", "thought": true},
-						},
-					},
-				},
-			},
-		}
-		c1Bytes, _ := json.Marshal(chunk1)
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", c1Bytes)
-		flusher.Flush()
-
-		// Chunk 2: Answer delta
-		chunk2 := map[string]any{
-			"candidates": []map[string]any{
-				{
-					"content": map[string]any{
-						"parts": []map[string]any{
-							{"text": "42."},
-						},
-					},
-					"finishReason": "STOP",
-				},
-			},
-		}
-		c2Bytes, _ := json.Marshal(chunk2)
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", c2Bytes)
-		flusher.Flush()
-	}))
-	defer ts.Close()
-
-	ctx := context.Background()
-	m, err := google.New(ctx, google.Config{
-		Model:  "gemini-2.5-flash",
-		APIKey: "test-key",
-		ClientConfig: &genai.ClientConfig{
-			HTTPOptions: genai.HTTPOptions{
-				BaseURL: ts.URL,
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("failed to create model: %v", err)
-	}
-
-	stream, err := m.Stream(ctx, llm.GenerateRequest{
-		Messages: []llm.Message{llm.UserMessage("Calculate meaning")},
-	})
-	if err != nil {
-		t.Fatalf("Stream failed: %v", err)
+		t.Fatalf("Stream: %v", err)
 	}
 	defer func() { _ = stream.Close() }()
 
-	chunk1, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("recv chunk 1 failed: %v", err)
-	}
-	if chunk1.ThinkingDelta != "Pondering the query..." {
-		t.Errorf("expected chunk 1 ThinkingDelta, got %q", chunk1.ThinkingDelta)
-	}
-	if chunk1.Delta != "" {
-		t.Errorf("expected chunk 1 Delta empty, got %q", chunk1.Delta)
-	}
-
-	chunk2, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("recv chunk 2 failed: %v", err)
-	}
-	if chunk2.Delta != "42." {
-		t.Errorf("expected chunk 2 Delta '42.', got %q", chunk2.Delta)
-	}
-	if chunk2.ThinkingDelta != "" {
-		t.Errorf("expected chunk 2 ThinkingDelta empty, got %q", chunk2.ThinkingDelta)
-	}
-}
-
-func TestGoogleProvider_ResponseFormat(t *testing.T) {
-	var capturedConfig map[string]any
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var reqMap map[string]any
-		_ = json.Unmarshal(body, &reqMap)
-		if genConfig, ok := reqMap["generationConfig"].(map[string]any); ok {
-			capturedConfig = genConfig
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		resp := map[string]any{
-			"candidates": []map[string]any{
-				{
-					"content": map[string]any{
-						"role": "model",
-						"parts": []map[string]any{
-							{"text": `{"answer":42}`},
-						},
-					},
-					"finishReason": "STOP",
-				},
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer ts.Close()
-
-	ctx := context.Background()
-	m, err := google.New(ctx, google.Config{
-		Model:  "gemini-2.5-flash",
-		APIKey: "test-key",
-		ClientConfig: &genai.ClientConfig{
-			HTTPOptions: genai.HTTPOptions{
-				BaseURL: ts.URL,
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("failed to create model: %v", err)
-	}
-
-	// 1. Test ResponseFormatJSON
-	_, err = m.Generate(ctx, llm.GenerateRequest{
-		Messages: []llm.Message{llm.UserMessage("give json")},
-		ResponseFormat: &llm.ResponseFormat{
-			Type: llm.ResponseFormatJSON,
-		},
-	})
-	if err != nil {
-		t.Fatalf("Generate with ResponseFormatJSON failed: %v", err)
-	}
-	if capturedConfig["responseMimeType"] != "application/json" {
-		t.Errorf("expected responseMimeType 'application/json', got %v", capturedConfig["responseMimeType"])
-	}
-
-	// 2. Test ResponseFormatJSONSchema
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"answer": map[string]any{"type": "integer"},
-		},
-		"required": []string{"answer"},
-	}
-	res, err := m.Generate(ctx, llm.GenerateRequest{
-		Messages: []llm.Message{llm.UserMessage("give schema")},
-		ResponseFormat: &llm.ResponseFormat{
-			Type:   llm.ResponseFormatJSONSchema,
-			Schema: schema,
-		},
-	})
-	if err != nil {
-		t.Fatalf("Generate with ResponseFormatJSONSchema failed: %v", err)
-	}
-	if res.Text != `{"answer":42}` {
-		t.Errorf("expected response text, got %q", res.Text)
-	}
-	if capturedConfig["responseMimeType"] != "application/json" {
-		t.Errorf("expected responseMimeType 'application/json', got %v", capturedConfig["responseMimeType"])
-	}
-	if capturedConfig["responseJsonSchema"] == nil {
-		t.Errorf("expected responseJsonSchema in request, got %v", capturedConfig)
-	}
-}
-
-func TestModel_DoesNotMutateCallerClientConfig(t *testing.T) {
-	t.Setenv("GEMINI_API_KEY", "env-gemini-key")
-
-	clientCfg := &genai.ClientConfig{}
-	_, err := google.New(context.Background(), google.Config{
-		Model:        "gemini-2.5-flash",
-		ClientConfig: clientCfg,
-	})
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
-
-	if clientCfg.APIKey != "" {
-		t.Errorf("New mutated the caller's ClientConfig: APIKey = %q, want empty", clientCfg.APIKey)
-	}
-}
-
-func TestModel_Generate_BlockedPrompt(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		resp := map[string]any{
-			"promptFeedback": map[string]any{
-				"blockReason": "SAFETY",
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer ts.Close()
-
-	m, err := google.New(context.Background(), google.Config{
-		Model:  "gemini-2.5-flash",
-		APIKey: "test-key",
-		ClientConfig: &genai.ClientConfig{
-			HTTPOptions: genai.HTTPOptions{
-				BaseURL: ts.URL,
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("failed to create model: %v", err)
-	}
-
-	_, err = m.Generate(context.Background(), llm.GenerateRequest{
-		Messages: []llm.Message{llm.UserMessage("blocked prompt")},
-	})
-	if !errors.Is(err, google.ErrResponseBlocked) {
-		t.Fatalf("expected ErrResponseBlocked, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "SAFETY") {
-		t.Errorf("expected block reason in error, got %q", err.Error())
-	}
-}
-
-func TestModel_Stream_BlockedPrompt(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "streaming not supported", http.StatusInternalServerError)
-			return
-		}
-
-		blocked := map[string]any{
-			"promptFeedback": map[string]any{
-				"blockReason": "SAFETY",
-			},
-		}
-		b, _ := json.Marshal(blocked)
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
-		flusher.Flush()
-	}))
-	defer ts.Close()
-
-	m, err := google.New(context.Background(), google.Config{
-		Model:  "gemini-2.5-flash",
-		APIKey: "test-key",
-		ClientConfig: &genai.ClientConfig{
-			HTTPOptions: genai.HTTPOptions{
-				BaseURL: ts.URL,
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("failed to create model: %v", err)
-	}
-
-	stream, err := m.Stream(context.Background(), llm.GenerateRequest{
-		Messages: []llm.Message{llm.UserMessage("blocked prompt")},
-	})
-	if err != nil {
-		t.Fatalf("Stream failed: %v", err)
-	}
-	defer func() {
-		_ = stream.Close()
-	}()
-
 	_, err = stream.Recv()
 	if !errors.Is(err, google.ErrResponseBlocked) {
-		t.Fatalf("expected ErrResponseBlocked from stream, got %v", err)
+		t.Fatalf("Recv err = %v, want ErrResponseBlocked", err)
 	}
 }
 
-func TestModel_Stream_RawAccumulatesParts(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "streaming not supported", http.StatusInternalServerError)
-			return
+func TestThinkingConfiguration(t *testing.T) {
+	t.Run("level", func(t *testing.T) {
+		var captured map[string]any
+		m := newModel(t, func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &captured)
+			writeJSON(t, w, map[string]any{"candidates": []map[string]any{{
+				"content": map[string]any{"role": "model", "parts": []map[string]any{{"text": "ok"}}},
+			}}})
+		})
+		include := true
+		_, err := m.Generate(context.Background(), &llm.Request{
+			Messages: []llm.Message{llm.UserMessage("go")},
+			Thinking: &llm.ThinkingConfig{Level: llm.ThinkingLevelHigh, IncludeThoughts: &include},
+		})
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
 		}
-
-		chunks := []map[string]any{
-			{
-				"candidates": []map[string]any{
-					{
-						"content": map[string]any{
-							"role":  "model",
-							"parts": []map[string]any{{"text": "Hello "}},
-						},
-					},
-				},
-			},
-			{
-				"candidates": []map[string]any{
-					{
-						"content": map[string]any{
-							"role": "model",
-							"parts": []map[string]any{
-								{"text": "world"},
-								{"functionCall": map[string]any{"name": "greet", "args": map[string]any{}}},
-							},
-						},
-						"finishReason": "STOP",
-					},
-				},
-			},
+		thinking := captured["generationConfig"].(map[string]any)["thinkingConfig"].(map[string]any)
+		if thinking["thinkingLevel"] != "HIGH" {
+			t.Errorf("thinkingLevel = %v", thinking["thinkingLevel"])
 		}
-		for _, c := range chunks {
-			b, _ := json.Marshal(c)
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
-			flusher.Flush()
+		if thinking["includeThoughts"] != true {
+			t.Errorf("includeThoughts = %v", thinking["includeThoughts"])
 		}
-	}))
-	defer ts.Close()
-
-	m, err := google.New(context.Background(), google.Config{
-		Model:  "gemini-2.5-flash",
-		APIKey: "test-key",
-		ClientConfig: &genai.ClientConfig{
-			HTTPOptions: genai.HTTPOptions{
-				BaseURL: ts.URL,
-			},
-		},
+		if thinking["thinkingBudget"] != nil {
+			t.Errorf("thinkingBudget should not be set with a level: %+v", thinking)
+		}
 	})
-	if err != nil {
-		t.Fatalf("failed to create model: %v", err)
-	}
 
-	stream, err := m.Stream(context.Background(), llm.GenerateRequest{
-		Messages: []llm.Message{llm.UserMessage("say hello")},
+	t.Run("budget", func(t *testing.T) {
+		var captured map[string]any
+		m := newModel(t, func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &captured)
+			writeJSON(t, w, map[string]any{"candidates": []map[string]any{{
+				"content": map[string]any{"role": "model", "parts": []map[string]any{{"text": "ok"}}},
+			}}})
+		})
+		budget := 128
+		_, err := m.Generate(context.Background(), &llm.Request{
+			Messages: []llm.Message{llm.UserMessage("go")},
+			Thinking: &llm.ThinkingConfig{BudgetTokens: &budget},
+		})
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		thinking := captured["generationConfig"].(map[string]any)["thinkingConfig"].(map[string]any)
+		if thinking["thinkingBudget"] != float64(128) {
+			t.Errorf("thinkingBudget = %v", thinking["thinkingBudget"])
+		}
 	})
-	if err != nil {
-		t.Fatalf("Stream failed: %v", err)
-	}
-	defer func() {
-		_ = stream.Close()
-	}()
+}
 
-	first, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("first Recv failed: %v", err)
-	}
-	firstRaw, ok := first.Raw.(*genai.Content)
-	if !ok || firstRaw == nil || len(firstRaw.Parts) != 1 {
-		t.Fatalf("expected first chunk Raw to contain 1 part, got %+v", first.Raw)
+func TestResponseFormats(t *testing.T) {
+	tests := []struct {
+		name     string
+		format   *llm.ResponseFormat
+		wantMIME string
+	}{
+		{name: "json", format: &llm.ResponseFormat{Type: llm.ResponseFormatJSON}, wantMIME: "application/json"},
+		{name: "schema", format: &llm.ResponseFormat{Type: llm.ResponseFormatJSONSchema, Schema: map[string]any{"type": "object"}}, wantMIME: "application/json"},
+		{name: "text", format: &llm.ResponseFormat{Type: llm.ResponseFormatText}, wantMIME: "text/plain"},
 	}
 
-	second, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("second Recv failed: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured map[string]any
+			m := newModel(t, func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				_ = json.Unmarshal(body, &captured)
+				writeJSON(t, w, map[string]any{"candidates": []map[string]any{{
+					"content": map[string]any{"role": "model", "parts": []map[string]any{{"text": "ok"}}},
+				}}})
+			})
+			_, err := m.Generate(context.Background(), &llm.Request{
+				Messages:       []llm.Message{llm.UserMessage("go")},
+				ResponseFormat: tc.format,
+			})
+			if err != nil {
+				t.Fatalf("Generate: %v", err)
+			}
+			if got := captured["generationConfig"].(map[string]any)["responseMimeType"]; got != tc.wantMIME {
+				t.Errorf("responseMimeType = %v, want %v", got, tc.wantMIME)
+			}
+		})
 	}
-	secondRaw, ok := second.Raw.(*genai.Content)
-	if !ok || secondRaw == nil || len(secondRaw.Parts) != 3 {
-		t.Fatalf("expected second chunk Raw to accumulate 3 parts, got %+v", second.Raw)
-	}
+}
 
-	// Chunks emitted earlier must stay a snapshot of the parts received so
-	// far, even though later chunks share the underlying storage.
-	if got := len(firstRaw.Parts); got != 1 {
-		t.Errorf("first chunk Raw mutated by later chunks: got %d parts, want 1", got)
+func TestThinkingLevels(t *testing.T) {
+	levels := google.AvailableThinkingLevels()
+	if len(levels) == 0 {
+		t.Fatal("expected thinking levels")
+	}
+	if levels[0] != google.ThinkingLevelMinimal {
+		t.Errorf("first level = %v", levels[0])
 	}
 }

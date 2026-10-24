@@ -8,7 +8,7 @@ import (
 )
 
 // convertConfig prepares the genai.GenerateContentConfig from Gojent request parameters.
-func (m *Model) convertConfig(req llm.GenerateRequest, systemInstruction *genai.Content) *genai.GenerateContentConfig {
+func (m *Model) convertConfig(req *llm.Request, systemInstruction *genai.Content) *genai.GenerateContentConfig {
 	cfg := &genai.GenerateContentConfig{
 		SystemInstruction: systemInstruction,
 	}
