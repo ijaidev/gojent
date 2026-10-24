@@ -103,9 +103,3 @@ func resultFromOutput[Out any](out Out) (Result, error) {
 		Data:    out,
 	})
 }
-
-var jsonMarshalerType = reflect.TypeFor[json.Marshaler]()
-
-func implementsJSONMarshaler(t reflect.Type) bool {
-	return t.Implements(jsonMarshalerType) || reflect.PointerTo(t).Implements(jsonMarshalerType)
-}

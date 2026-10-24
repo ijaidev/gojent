@@ -1,15 +1,16 @@
 package agent
 
 import (
+	"errors"
 	"time"
 )
 
 // DefaultMaxSteps is the step budget used when Budget.MaxSteps is zero.
 const DefaultMaxSteps = 8
 
-// DefaultToolTimeout bounds a single tool execution when
-// RunOptions.ToolTimeout is zero.
-const DefaultToolTimeout = 2 * time.Minute
+// errDurationBudget identifies the run's own duration deadline so it can be
+// distinguished from a caller's context deadline.
+var errDurationBudget = errors.New("agent: duration budget exceeded")
 
 // Budget bounds a run. Zero values mean "use the default" for MaxSteps and
 // "unlimited" for the other fields.
@@ -32,35 +33,4 @@ func (b Budget) steps() int {
 		return DefaultMaxSteps
 	}
 	return b.MaxSteps
-}
-
-// RetryPolicy configures retries of transient model failures.
-type RetryPolicy struct {
-	// MaxAttempts is the total number of attempts, including the first. Zero
-	// or one disables retries.
-	MaxAttempts int
-	// InitialDelay is the first backoff delay. Zero uses 500ms.
-	InitialDelay time.Duration
-	// MaxDelay caps the backoff delay. Zero uses 8s.
-	MaxDelay time.Duration
-}
-
-// delay returns the backoff before the given attempt (1-based).
-func (p RetryPolicy) delay(attempt int) time.Duration {
-	base := p.InitialDelay
-	if base <= 0 {
-		base = 500 * time.Millisecond
-	}
-	maximum := p.MaxDelay
-	if maximum <= 0 {
-		maximum = 8 * time.Second
-	}
-	delay := base
-	for i := 1; i < attempt && delay < maximum; i++ {
-		delay *= 2
-	}
-	if delay > maximum {
-		delay = maximum
-	}
-	return delay
 }

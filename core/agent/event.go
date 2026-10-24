@@ -132,13 +132,6 @@ func (s multiSink) Emit(event Event) {
 		if sink == nil {
 			continue
 		}
-		emitToSink(sink, event)
+		safeEmit(sink, event)
 	}
-}
-
-func emitToSink(sink Sink, event Event) {
-	defer func() {
-		_ = recover()
-	}()
-	sink.Emit(event)
 }

@@ -1,6 +1,3 @@
-// Package agent provides the agent runtime: one streaming-first execution
-// loop, typed tools, provider-neutral models, optional sessions, policy and
-// event seams.
 package agent
 
 import (
@@ -56,25 +53,4 @@ type PanicError struct {
 // Error implements the error interface.
 func (e *PanicError) Error() string {
 	return fmt.Sprintf("agent: panic: %v", e.Value)
-}
-
-// RecoveryError renders a panic as a provider-safe tool result.
-func recoveryError(err error) string {
-	var panicErr *PanicError
-	if errors.As(err, &panicErr) {
-		return fmt.Sprintf("panic: %v", panicErr.Value)
-	}
-	return err.Error()
-}
-
-// toolErrorPayload renders an error as the JSON object delivered to a model.
-func toolErrorPayload(err error) string {
-	if err == nil {
-		return `{"error":"unknown error"}`
-	}
-	encoded, marshalErr := marshalJSON(map[string]string{"error": recoveryError(err)})
-	if marshalErr != nil {
-		return `{"error":"tool failed"}`
-	}
-	return encoded
 }

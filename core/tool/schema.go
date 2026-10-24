@@ -342,3 +342,41 @@ func dateTimeSchema() map[string]any {
 		"format": "date-time",
 	}
 }
+
+func normalizeSchema(value map[string]any) (map[string]any, error) {
+	if value == nil {
+		return nil, fmt.Errorf("schema must be a JSON object")
+	}
+	if _, err := json.Marshal(value); err != nil {
+		return nil, err
+	}
+	return cloneSchemaMap(value), nil
+}
+
+func cloneSchemaMap(schema map[string]any) map[string]any {
+	if schema == nil {
+		return nil
+	}
+	out := make(map[string]any, len(schema))
+	for k, v := range schema {
+		switch value := v.(type) {
+		case map[string]any:
+			out[k] = cloneSchemaMap(value)
+		case []any:
+			items := make([]any, len(value))
+			for i, item := range value {
+				if nested, ok := item.(map[string]any); ok {
+					items[i] = cloneSchemaMap(nested)
+				} else {
+					items[i] = item
+				}
+			}
+			out[k] = items
+		case []string:
+			out[k] = append([]string(nil), value...)
+		default:
+			out[k] = v
+		}
+	}
+	return out
+}
