@@ -9,6 +9,7 @@ import (
 
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/session"
+	"github.com/ijaidev/gojent/core/session/sessiontest"
 	"github.com/ijaidev/gojent/stores/postgres"
 )
 
@@ -77,4 +78,30 @@ func TestIntegration(t *testing.T) {
 	if len(isolated) != 0 {
 		t.Errorf("tenant isolation failed: %d messages", len(isolated))
 	}
+}
+
+// TestConformance runs the shared store contract against a real PostgreSQL
+// database. The table is truncated between subtests, so point
+// GOJENT_POSTGRES_DSN at a dedicated test database.
+func TestConformance(t *testing.T) {
+	dsn := os.Getenv("GOJENT_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("GOJENT_POSTGRES_DSN is not set")
+	}
+
+	sessiontest.Run(t, func(t *testing.T) session.Store {
+		store, err := postgres.New(dsn)
+		if err != nil {
+			t.Fatalf("postgres.New: %v", err)
+		}
+		t.Cleanup(func() {
+			if err := store.Close(); err != nil {
+				t.Errorf("Close: %v", err)
+			}
+		})
+		if _, err := store.DB().ExecContext(context.Background(), "TRUNCATE session_messages RESTART IDENTITY"); err != nil {
+			t.Fatalf("truncate: %v", err)
+		}
+		return store
+	})
 }
