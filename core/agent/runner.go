@@ -16,18 +16,26 @@ import (
 	"github.com/ijaidev/gojent/core/tool"
 )
 
-// Runner owns execution concerns: storage, policy, observation, approval,
-// budgets, retries, and tool limits. It is safe for concurrent use.
-type Runner struct {
-	// Store is the optional conversation store.
+// runner owns execution concerns: storage, policy, observation, approval,
+// budgets, retries, and tool limits. It is internal so Agent remains the
+// public execution surface.
+type runner struct {
+	opts RunOptions
+}
+
+// RunOptions configures one agent run. It is the single public configuration
+// type; execution internals stay unexported.
+type RunOptions struct {
+	// Session identifies the conversation. It is required when Store is set.
+	Session *session.Session
+	// Store persists the conversation. It is optional.
 	Store session.Store
-	// Policy controls model and tool calls. An Agent policy is used when this
-	// is nil.
+	// Policy controls model and tool calls. The agent policy is used when nil.
 	Policy Policy
-	// Sink observes run events.
-	Sink Sink
 	// Approver resolves Ask decisions. Without one, Ask is treated as Deny.
 	Approver Approver
+	// Sink observes run events.
+	Sink Sink
 	// Budget bounds the run.
 	Budget Budget
 	// Retry configures transient model retries.
@@ -35,10 +43,7 @@ type Runner struct {
 	// ToolTimeout bounds each tool execution. Zero uses DefaultToolTimeout.
 	// A negative value disables the timeout.
 	ToolTimeout time.Duration
-}
 
-// RunOptions overrides model request and per-call settings for one run.
-type RunOptions struct {
 	// Model overrides the agent model.
 	Model llm.Model
 	// Tools adds or replaces agent tools by name.
@@ -53,70 +58,68 @@ type RunOptions struct {
 	MaxTokens *int
 	// TopP overrides nucleus sampling.
 	TopP *float64
-	// MaxSteps overrides Runner.Budget.MaxSteps.
+	// MaxSteps overrides Budget.MaxSteps.
 	MaxSteps int
 	// Media attaches parts to the trailing user message.
 	Media []llm.Part
 	// ToolChoice constrains tool selection.
 	ToolChoice llm.ToolChoice
-	// Session supplies a session when the caller passes nil to RunWith.
-	Session *session.Session
 }
 
-// Run executes an agent synchronously and returns its final response.
-func (r *Runner) Run(ctx context.Context, a *Agent, s *session.Session, input ...llm.Message) (*Response, error) {
-	return r.RunWith(ctx, a, s, RunOptions{}, input...)
+func newRunner(opts RunOptions) *runner {
+	return &runner{opts: opts}
 }
 
-// RunWith executes an agent with per-run options.
-func (r *Runner) RunWith(ctx context.Context, a *Agent, s *session.Session, opts RunOptions, input ...llm.Message) (resp *Response, err error) {
-	if r == nil {
-		r = &Runner{}
-	}
+// validate checks the minimum execution requirements.
+func (r *runner) validate(a *Agent) error {
 	if a == nil {
-		return nil, ErrAgentRequired
+		return ErrAgentRequired
 	}
-	model := opts.Model
+	if r.opts.Model == nil && a.Model() == nil {
+		return ErrModelRequired
+	}
+	if r.opts.Store != nil {
+		if r.opts.Session == nil {
+			return ErrSessionRequired
+		}
+		if r.opts.Session.ID == "" {
+			return ErrSessionIDRequired
+		}
+	}
+	return nil
+}
+
+// run executes the agent loop synchronously.
+func (r *runner) run(ctx context.Context, a *Agent, input ...llm.Message) (resp *Response, err error) {
+	if err := r.validate(a); err != nil {
+		return nil, err
+	}
+
+	model := r.opts.Model
 	if model == nil {
 		model = a.Model()
 	}
-	if model == nil {
-		return nil, ErrModelRequired
-	}
-	if s == nil {
-		s = opts.Session
-	}
-	if r.Store != nil {
-		if s == nil {
-			return nil, ErrSessionRequired
-		}
-		if s.ID == "" {
-			return nil, ErrSessionIDRequired
-		}
-	}
-
-	registry := newToolRegistry(a.Tools(), opts.Tools)
-	policy := r.Policy
+	registry := newToolRegistry(a.Tools(), r.opts.Tools)
+	policy := r.opts.Policy
 	if policy == nil {
 		policy = a.Policy()
 	}
+
 	e := &execution{
-		runner:     r,
 		agent:      a,
 		model:      model,
 		registry:   registry,
 		policy:     policy,
-		sink:       r.Sink,
-		approver:   r.Approver,
-		session:    s,
-		opts:       opts,
+		sink:       r.opts.Sink,
+		approver:   r.opts.Approver,
+		session:    r.opts.Session,
+		opts:       r.opts,
 		usedCallID: make(map[string]bool),
 	}
 	return e.run(ctx, input)
 }
 
 type execution struct {
-	runner     *Runner
 	agent      *Agent
 	model      llm.Model
 	registry   *toolRegistry
@@ -143,8 +146,8 @@ func (e *execution) run(ctx context.Context, input []llm.Message) (resp *Respons
 
 	var budgetCtx context.Context
 	var cancel context.CancelFunc
-	if e.runner.Budget.MaxDuration > 0 {
-		budgetCtx, cancel = context.WithTimeout(ctx, e.runner.Budget.MaxDuration)
+	if e.opts.Budget.MaxDuration > 0 {
+		budgetCtx, cancel = context.WithTimeout(ctx, e.opts.Budget.MaxDuration)
 		defer cancel()
 	} else {
 		budgetCtx = ctx
@@ -163,7 +166,7 @@ func (e *execution) run(ctx context.Context, input []llm.Message) (resp *Respons
 
 	maxSteps := e.opts.MaxSteps
 	if maxSteps <= 0 {
-		maxSteps = e.runner.Budget.steps()
+		maxSteps = e.opts.Budget.steps()
 	}
 	finish := llm.FinishReasonStop
 
@@ -257,10 +260,10 @@ func (e *execution) run(ctx context.Context, input []llm.Message) (resp *Respons
 }
 
 func (e *execution) load(ctx context.Context) ([]llm.Message, error) {
-	if e.runner.Store == nil || e.session == nil {
+	if e.opts.Store == nil || e.session == nil {
 		return nil, nil
 	}
-	messages, err := e.runner.Store.Load(ctx, *e.session)
+	messages, err := e.opts.Store.Load(ctx, *e.session)
 	if err != nil {
 		return nil, fmt.Errorf("agent: load session: %w", err)
 	}
@@ -268,10 +271,10 @@ func (e *execution) load(ctx context.Context) ([]llm.Message, error) {
 }
 
 func (e *execution) append(ctx context.Context, messages ...llm.Message) error {
-	if e.runner.Store == nil || e.session == nil || len(messages) == 0 {
+	if e.opts.Store == nil || e.session == nil || len(messages) == 0 {
 		return nil
 	}
-	if err := e.runner.Store.Append(ctx, *e.session, messages...); err != nil {
+	if err := e.opts.Store.Append(ctx, *e.session, messages...); err != nil {
 		return fmt.Errorf("agent: append session: %w", err)
 	}
 	return nil
@@ -337,7 +340,7 @@ func (e *execution) response(conversation []llm.Message, finish llm.FinishReason
 }
 
 func (e *execution) tokenBudgetExceeded() bool {
-	maxTokens := e.runner.Budget.MaxTotalTokens
+	maxTokens := e.opts.Budget.MaxTotalTokens
 	return maxTokens > 0 && e.usage.TotalTokens > maxTokens
 }
 
@@ -356,7 +359,7 @@ func (e *execution) contextError(ctx context.Context) error {
 }
 
 func (e *execution) callModel(ctx context.Context, request *llm.Request, step int) (*llm.Response, error) {
-	attempts := e.runner.Retry.MaxAttempts
+	attempts := e.opts.Retry.MaxAttempts
 	if attempts <= 0 {
 		attempts = 1
 	}
@@ -370,7 +373,7 @@ func (e *execution) callModel(ctx context.Context, request *llm.Request, step in
 		if attempt == attempts || !retryable(err) {
 			return nil, err
 		}
-		delay := e.runner.Retry.delay(attempt)
+		delay := e.opts.Retry.delay(attempt)
 		if providerErr, ok := llm.AsError(err); ok && providerErr.RetryAfter > 0 {
 			delay = providerErr.RetryAfter
 		}
@@ -509,7 +512,7 @@ func (e *execution) runTools(ctx context.Context, calls []llm.ToolCall, step int
 		}
 		safeEmit(e.sink, ToolStart{Step: step, Call: call, Spec: spec})
 
-		if e.runner.Budget.MaxToolCalls > 0 && e.toolCalls >= e.runner.Budget.MaxToolCalls {
+		if e.opts.Budget.MaxToolCalls > 0 && e.toolCalls >= e.opts.Budget.MaxToolCalls {
 			budgetExceeded = true
 			message := toolErrorMessage(call, fmt.Errorf("%w: tool call budget exceeded", ErrBudgetExceeded))
 			safeEmit(e.sink, ToolEnd{Step: step, Call: call, Message: &message, Err: ErrBudgetExceeded})
@@ -612,7 +615,7 @@ func (e *execution) afterTool(ctx context.Context, step int, call tool.Call, res
 }
 
 func (e *execution) executeTool(ctx context.Context, impl tool.Tool, call tool.Call) (tool.Result, error) {
-	timeout := e.runner.ToolTimeout
+	timeout := e.opts.ToolTimeout
 	if timeout == 0 {
 		timeout = DefaultToolTimeout
 	}

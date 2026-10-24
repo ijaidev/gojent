@@ -8,7 +8,7 @@ import (
 const DefaultMaxSteps = 8
 
 // DefaultToolTimeout bounds a single tool execution when
-// Runner.ToolTimeout is zero.
+// RunOptions.ToolTimeout is zero.
 const DefaultToolTimeout = 2 * time.Minute
 
 // Budget bounds a run. Zero values mean "use the default" for MaxSteps and

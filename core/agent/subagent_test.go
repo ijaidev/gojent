@@ -35,7 +35,10 @@ func TestAgent_AsToolDelegatesToSubagent(t *testing.T) {
 	parent := mustAgent(t, agent.Config{Name: "parent", Model: parentModel, Tools: []tool.Tool{subTool}})
 	store := &recordingStore{}
 
-	resp, err := (&agent.Runner{Store: store}).Run(context.Background(), parent, &session.Session{ID: "parent"}, llm.UserMessage("ask the helper"))
+	resp, err := parent.GenerateWith(context.Background(), "ask the helper", agent.RunOptions{
+		Store:   store,
+		Session: &session.Session{ID: "parent"},
+	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

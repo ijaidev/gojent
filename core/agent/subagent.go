@@ -20,8 +20,8 @@ type AsToolConfig struct {
 	// Description overrides the tool description. Defaults to the agent
 	// description.
 	Description string
-	// Runner executes the subagent. Defaults to a zero-value Runner.
-	Runner *Runner
+	// Options configures the subagent run. Defaults to zero-value options.
+	Options RunOptions
 }
 
 // AsTool exposes the agent as a tool so another agent can delegate to it.
@@ -41,16 +41,12 @@ func (a *Agent) AsTool(cfg ...AsToolConfig) tool.Tool {
 	if description == "" {
 		description = "Delegate a task to the " + a.Name() + " agent."
 	}
-	runner := config.Runner
-	if runner == nil {
-		runner = &Runner{}
-	}
 
 	return tool.MustNew(tool.Config[SubagentInput, tool.Result]{
 		ID:          name,
 		Description: description,
 		Execute: func(ctx context.Context, input SubagentInput) (tool.Result, error) {
-			response, err := runner.Run(ctx, a, nil, llm.UserMessage(input.Prompt))
+			response, err := newRunner(config.Options).run(ctx, a, llm.UserMessage(input.Prompt))
 			if err != nil {
 				return tool.Result{}, err
 			}

@@ -34,7 +34,7 @@ type Config struct {
 	Model llm.Model
 	// Tools are the capabilities available to the model.
 	Tools []tool.Tool
-	// Policy is the agent's default policy. A Runner policy may override it.
+	// Policy is the agent's default policy. A RunOptions policy may override it.
 	Policy Policy
 }
 

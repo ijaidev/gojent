@@ -71,7 +71,7 @@ func (r *eventRecorder) Events() []agent.Event {
 	return out
 }
 
-func TestRunner_StreamingMergesFragmentsAndEmitsEvents(t *testing.T) {
+func TestAgent_StreamingMergesFragmentsAndEmitsEvents(t *testing.T) {
 	stepUsage := llm.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}
 	finalUsage := llm.Usage{PromptTokens: 3, CompletionTokens: 2, TotalTokens: 5}
 	providerData := &llm.ProviderData{Provider: "test", Version: 1, Data: []byte(`{"thought":"sig"}`)}
@@ -99,7 +99,11 @@ func TestRunner_StreamingMergesFragmentsAndEmitsEvents(t *testing.T) {
 	sink := &eventRecorder{}
 	store := &recordingStore{}
 
-	resp, err := (&agent.Runner{Store: store, Sink: sink}).Run(context.Background(), a, &session.Session{ID: "s"}, llm.UserMessage("go"))
+	resp, err := a.GenerateWith(context.Background(), "go", agent.RunOptions{
+		Store:   store,
+		Sink:    sink,
+		Session: &session.Session{ID: "s"},
+	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -191,12 +195,12 @@ func TestRunner_StreamingMergesFragmentsAndEmitsEvents(t *testing.T) {
 	}
 }
 
-func TestRunner_NonStreamingEmitsEquivalentEvents(t *testing.T) {
+func TestAgent_NonStreamingEmitsEquivalentEvents(t *testing.T) {
 	model := &scriptModel{steps: []step{finalText("hello")}}
 	a := mustAgent(t, agent.Config{Name: "events", Model: model})
 	sink := &eventRecorder{}
 
-	if _, err := (&agent.Runner{Sink: sink}).Run(context.Background(), a, nil, llm.UserMessage("hi")); err != nil {
+	if _, err := a.GenerateWith(context.Background(), "hi", agent.RunOptions{Sink: sink}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 

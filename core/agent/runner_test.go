@@ -229,7 +229,7 @@ func assertNoDanglingToolCalls(t *testing.T, messages []llm.Message) {
 	}
 }
 
-func TestRunner_Generate(t *testing.T) {
+func TestAgent_Generate(t *testing.T) {
 	model := &scriptModel{steps: []step{finalText("hello")}}
 	a := mustAgent(t, agent.Config{
 		Name:         "assistant",
@@ -237,8 +237,7 @@ func TestRunner_Generate(t *testing.T) {
 		Model:        model,
 	})
 
-	runner := &agent.Runner{}
-	resp, err := runner.Run(context.Background(), a, nil, llm.UserMessage("hi"))
+	resp, err := a.GenerateWith(context.Background(), "hi", agent.RunOptions{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -264,7 +263,7 @@ func TestRunner_Generate(t *testing.T) {
 	}
 }
 
-func TestRunner_ToolLoopPersistsAtomicBatches(t *testing.T) {
+func TestAgent_ToolLoopPersistsAtomicBatches(t *testing.T) {
 	model := &scriptModel{steps: []step{
 		toolCallStep(llm.ToolCall{ID: "c1", Name: "echo", Arguments: `{"value":"sunny"}`}),
 		finalText("It is sunny"),
@@ -275,8 +274,7 @@ func TestRunner_ToolLoopPersistsAtomicBatches(t *testing.T) {
 	store := &recordingStore{}
 	sess := &session.Session{ID: "thread-1", ResourceID: "user-1"}
 
-	runner := &agent.Runner{Store: store}
-	resp, err := runner.Run(context.Background(), a, sess, llm.UserMessage("weather?"))
+	resp, err := a.GenerateWith(context.Background(), "weather?", agent.RunOptions{Store: store, Session: sess})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -326,7 +324,7 @@ func TestRunner_ToolLoopPersistsAtomicBatches(t *testing.T) {
 	}
 }
 
-func TestRunner_UniqueToolCallIDs(t *testing.T) {
+func TestAgent_UniqueToolCallIDs(t *testing.T) {
 	tests := []struct {
 		name  string
 		calls []llm.ToolCall
@@ -364,7 +362,7 @@ func TestRunner_UniqueToolCallIDs(t *testing.T) {
 			a := mustAgent(t, agent.Config{Name: "multi", Model: model, Tools: []tool.Tool{echo}})
 			store := &recordingStore{}
 
-			resp, err := (&agent.Runner{Store: store}).Run(context.Background(), a, &session.Session{ID: "s"}, llm.UserMessage("go"))
+			resp, err := a.GenerateWith(context.Background(), "go", agent.RunOptions{Store: store, Session: &session.Session{ID: "s"}})
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -390,7 +388,7 @@ func TestRunner_UniqueToolCallIDs(t *testing.T) {
 	}
 }
 
-func TestRunner_ReplayAfterJSONPersistence(t *testing.T) {
+func TestAgent_ReplayAfterJSONPersistence(t *testing.T) {
 	providerData := &llm.ProviderData{Provider: "test", Version: 1, Data: []byte(`{"signature":"abc"}`)}
 	firstResponse := &llm.Response{
 		Message: llm.Message{
@@ -410,7 +408,7 @@ func TestRunner_ReplayAfterJSONPersistence(t *testing.T) {
 	store := &recordingStore{}
 	sess := &session.Session{ID: "persisted-thread"}
 
-	if _, err := (&agent.Runner{Store: store}).Run(context.Background(), a, sess, llm.UserMessage("start")); err != nil {
+	if _, err := a.GenerateWith(context.Background(), "start", agent.RunOptions{Store: store, Session: sess}); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
 
@@ -435,7 +433,7 @@ func TestRunner_ReplayAfterJSONPersistence(t *testing.T) {
 	replayModel := &scriptModel{steps: []step{finalText("second done")}}
 	replayAgent := mustAgent(t, agent.Config{Name: "replay", Model: replayModel, Tools: []tool.Tool{echo}})
 
-	resp, err := (&agent.Runner{Store: replayStore}).Run(context.Background(), replayAgent, sess, llm.UserMessage("again"))
+	resp, err := replayAgent.GenerateWith(context.Background(), "again", agent.RunOptions{Store: replayStore, Session: sess})
 	if err != nil {
 		t.Fatalf("replay run: %v", err)
 	}
@@ -471,7 +469,7 @@ func finalAssistant(text string) llm.Message {
 	return llm.Message{Role: llm.RoleAssistant, Content: []llm.Part{llm.TextPart(text)}}
 }
 
-func TestRunner_MaxStepsKeepsTranscriptComplete(t *testing.T) {
+func TestAgent_MaxStepsKeepsTranscriptComplete(t *testing.T) {
 	model := &scriptModel{steps: []step{
 		toolCallStep(llm.ToolCall{Name: "echo", Arguments: `{"value":"one"}`}),
 		toolCallStep(llm.ToolCall{Name: "echo", Arguments: `{"value":"two"}`}),
@@ -482,8 +480,11 @@ func TestRunner_MaxStepsKeepsTranscriptComplete(t *testing.T) {
 	a := mustAgent(t, agent.Config{Name: "looper", Model: model, Tools: []tool.Tool{echo}})
 	store := &recordingStore{}
 
-	resp, err := (&agent.Runner{Store: store, Budget: agent.Budget{MaxSteps: 2}}).
-		Run(context.Background(), a, &session.Session{ID: "s"}, llm.UserMessage("go"))
+	resp, err := a.GenerateWith(context.Background(), "go", agent.RunOptions{
+		Store:   store,
+		Budget:  agent.Budget{MaxSteps: 2},
+		Session: &session.Session{ID: "s"},
+	})
 	if !errors.Is(err, agent.ErrMaxSteps) {
 		t.Fatalf("err = %v, want ErrMaxSteps", err)
 	}
@@ -506,7 +507,7 @@ func TestRunner_MaxStepsKeepsTranscriptComplete(t *testing.T) {
 	assertNoDanglingToolCalls(t, messages)
 }
 
-func TestRunner_ToolPanicIsContained(t *testing.T) {
+func TestAgent_ToolPanicIsContained(t *testing.T) {
 	model := &scriptModel{steps: []step{
 		toolCallStep(llm.ToolCall{ID: "boom", Name: "boom", Arguments: `{}`}),
 		finalText("recovered"),
@@ -520,7 +521,7 @@ func TestRunner_ToolPanicIsContained(t *testing.T) {
 	a := mustAgent(t, agent.Config{Name: "panic", Model: model, Tools: []tool.Tool{boom}})
 	store := &recordingStore{}
 
-	resp, err := (&agent.Runner{Store: store}).Run(context.Background(), a, &session.Session{ID: "s"}, llm.UserMessage("go"))
+	resp, err := a.GenerateWith(context.Background(), "go", agent.RunOptions{Store: store, Session: &session.Session{ID: "s"}})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -544,7 +545,7 @@ func TestRunner_ToolPanicIsContained(t *testing.T) {
 	}
 }
 
-func TestRunner_ModelPanicIsContained(t *testing.T) {
+func TestAgent_ModelPanicIsContained(t *testing.T) {
 	model := &scriptModel{steps: []step{{
 		run: func(context.Context, *llm.Request) (*llm.Response, error) {
 			panic("model exploded")
@@ -552,7 +553,7 @@ func TestRunner_ModelPanicIsContained(t *testing.T) {
 	}}}
 	a := mustAgent(t, agent.Config{Name: "panic", Model: model})
 
-	resp, err := (&agent.Runner{}).Run(context.Background(), a, nil, llm.UserMessage("go"))
+	resp, err := a.GenerateWith(context.Background(), "go", agent.RunOptions{})
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -568,7 +569,7 @@ func TestRunner_ModelPanicIsContained(t *testing.T) {
 	}
 }
 
-func TestRunner_ToolTimeoutIsContained(t *testing.T) {
+func TestAgent_ToolTimeoutIsContained(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 
@@ -587,8 +588,11 @@ func TestRunner_ToolTimeoutIsContained(t *testing.T) {
 	store := &recordingStore{}
 
 	started := time.Now()
-	resp, err := (&agent.Runner{Store: store, ToolTimeout: 25 * time.Millisecond}).
-		Run(context.Background(), a, &session.Session{ID: "s"}, llm.UserMessage("go"))
+	resp, err := a.GenerateWith(context.Background(), "go", agent.RunOptions{
+		Store:       store,
+		ToolTimeout: 25 * time.Millisecond,
+		Session:     &session.Session{ID: "s"},
+	})
 	elapsed := time.Since(started)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -609,7 +613,7 @@ func TestRunner_ToolTimeoutIsContained(t *testing.T) {
 	assertNoDanglingToolCalls(t, messages)
 }
 
-func TestRunner_CancellationPreservesCause(t *testing.T) {
+func TestAgent_CancellationPreservesCause(t *testing.T) {
 	started := make(chan struct{})
 	model := &scriptModel{steps: []step{{
 		run: func(ctx context.Context, _ *llm.Request) (*llm.Response, error) {
@@ -619,7 +623,7 @@ func TestRunner_CancellationPreservesCause(t *testing.T) {
 		},
 	}}}
 	a := mustAgent(t, agent.Config{Name: "cancel", Model: model})
-	run, err := (&agent.Runner{}).Start(context.Background(), a, nil, llm.UserMessage("go"))
+	run, err := a.StreamWith(context.Background(), "go", agent.RunOptions{})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -647,7 +651,7 @@ func TestRunner_CancellationPreservesCause(t *testing.T) {
 	}
 }
 
-func TestRunner_PolicyDeniesAndApproves(t *testing.T) {
+func TestAgent_PolicyDeniesAndApproves(t *testing.T) {
 	tests := []struct {
 		name          string
 		decision      agent.Decision
@@ -695,8 +699,12 @@ func TestRunner_PolicyDeniesAndApproves(t *testing.T) {
 				},
 			}
 
-			resp, err := (&agent.Runner{Store: store, Policy: policy, Approver: tc.approver}).
-				Run(context.Background(), a, &session.Session{ID: "s"}, llm.UserMessage("go"))
+			resp, err := a.GenerateWith(context.Background(), "go", agent.RunOptions{
+				Store:    store,
+				Policy:   policy,
+				Approver: tc.approver,
+				Session:  &session.Session{ID: "s"},
+			})
 
 			if tc.terminalError != nil {
 				if !errors.Is(err, tc.terminalError) {
@@ -741,7 +749,7 @@ func TestRunner_PolicyDeniesAndApproves(t *testing.T) {
 	}
 }
 
-func TestRunner_ToolBudgetPersistsAllResults(t *testing.T) {
+func TestAgent_ToolBudgetPersistsAllResults(t *testing.T) {
 	executed := 0
 	echo := tool.MustNew(tool.Config[echoInput, string]{
 		ID: "echo",
@@ -760,8 +768,11 @@ func TestRunner_ToolBudgetPersistsAllResults(t *testing.T) {
 	a := mustAgent(t, agent.Config{Name: "budget", Model: model, Tools: []tool.Tool{echo}})
 	store := &recordingStore{}
 
-	resp, err := (&agent.Runner{Store: store, Budget: agent.Budget{MaxToolCalls: 1}}).
-		Run(context.Background(), a, &session.Session{ID: "s"}, llm.UserMessage("go"))
+	resp, err := a.GenerateWith(context.Background(), "go", agent.RunOptions{
+		Store:   store,
+		Budget:  agent.Budget{MaxToolCalls: 1},
+		Session: &session.Session{ID: "s"},
+	})
 	if !errors.Is(err, agent.ErrBudgetExceeded) {
 		t.Fatalf("err = %v, want ErrBudgetExceeded", err)
 	}
@@ -787,7 +798,7 @@ func TestRunner_ToolBudgetPersistsAllResults(t *testing.T) {
 	}
 }
 
-func TestRunner_TokenBudget(t *testing.T) {
+func TestAgent_TokenBudget(t *testing.T) {
 	t.Run("final answer", func(t *testing.T) {
 		response := finalText("done")
 		response.response.Usage = llm.Usage{PromptTokens: 40, CompletionTokens: 60, TotalTokens: 100}
@@ -795,8 +806,11 @@ func TestRunner_TokenBudget(t *testing.T) {
 		a := mustAgent(t, agent.Config{Name: "tokens", Model: model})
 		store := &recordingStore{}
 
-		resp, err := (&agent.Runner{Store: store, Budget: agent.Budget{MaxTotalTokens: 50}}).
-			Run(context.Background(), a, &session.Session{ID: "s"}, llm.UserMessage("go"))
+		resp, err := a.GenerateWith(context.Background(), "go", agent.RunOptions{
+			Store:   store,
+			Budget:  agent.Budget{MaxTotalTokens: 50},
+			Session: &session.Session{ID: "s"},
+		})
 		if !errors.Is(err, agent.ErrBudgetExceeded) {
 			t.Fatalf("err = %v, want ErrBudgetExceeded", err)
 		}
@@ -819,8 +833,11 @@ func TestRunner_TokenBudget(t *testing.T) {
 		a := mustAgent(t, agent.Config{Name: "tokens", Model: model, Tools: []tool.Tool{echo}})
 		store := &recordingStore{}
 
-		_, err := (&agent.Runner{Store: store, Budget: agent.Budget{MaxTotalTokens: 50}}).
-			Run(context.Background(), a, &session.Session{ID: "s"}, llm.UserMessage("go"))
+		_, err := a.GenerateWith(context.Background(), "go", agent.RunOptions{
+			Store:   store,
+			Budget:  agent.Budget{MaxTotalTokens: 50},
+			Session: &session.Session{ID: "s"},
+		})
 		if !errors.Is(err, agent.ErrBudgetExceeded) {
 			t.Fatalf("err = %v, want ErrBudgetExceeded", err)
 		}
@@ -835,15 +852,15 @@ func TestRunner_TokenBudget(t *testing.T) {
 	})
 }
 
-func TestRunner_RetriesTransientModelFailures(t *testing.T) {
+func TestAgent_RetriesTransientModelFailures(t *testing.T) {
 	model := &scriptModel{steps: []step{
 		{err: &llm.Error{Kind: llm.KindRateLimit, RetryAfter: time.Millisecond}},
 		finalText("recovered"),
 	}}
 	a := mustAgent(t, agent.Config{Name: "retry", Model: model})
-	runner := &agent.Runner{Retry: agent.RetryPolicy{MaxAttempts: 3, InitialDelay: time.Millisecond}}
+	opts := agent.RunOptions{Retry: agent.RetryPolicy{MaxAttempts: 3, InitialDelay: time.Millisecond}}
 
-	resp, err := runner.Run(context.Background(), a, nil, llm.UserMessage("go"))
+	resp, err := a.GenerateWith(context.Background(), "go", opts)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -852,18 +869,18 @@ func TestRunner_RetriesTransientModelFailures(t *testing.T) {
 	}
 }
 
-func TestRunner_DoesNotRetryInvalidRequests(t *testing.T) {
+func TestAgent_DoesNotRetryInvalidRequests(t *testing.T) {
 	model := &scriptModel{steps: []step{{err: &llm.Error{Kind: llm.KindInvalid}}}}
 	a := mustAgent(t, agent.Config{Name: "invalid", Model: model})
-	runner := &agent.Runner{Retry: agent.RetryPolicy{MaxAttempts: 3, InitialDelay: time.Millisecond}}
+	opts := agent.RunOptions{Retry: agent.RetryPolicy{MaxAttempts: 3, InitialDelay: time.Millisecond}}
 
-	_, err := runner.Run(context.Background(), a, nil, llm.UserMessage("go"))
+	_, err := a.GenerateWith(context.Background(), "go", opts)
 	if err == nil || model.CallCount() != 1 {
 		t.Fatalf("err = %v, calls = %d; want one non-retried call", err, model.CallCount())
 	}
 }
 
-func TestRunner_ValidatesToolArguments(t *testing.T) {
+func TestAgent_ValidatesToolArguments(t *testing.T) {
 	executed := false
 	strict := tool.MustNew(tool.Config[echoInput, string]{
 		ID: "echo",
@@ -879,7 +896,7 @@ func TestRunner_ValidatesToolArguments(t *testing.T) {
 	a := mustAgent(t, agent.Config{Name: "validation", Model: model, Tools: []tool.Tool{strict}})
 	store := &recordingStore{}
 
-	if _, err := (&agent.Runner{Store: store}).Run(context.Background(), a, &session.Session{ID: "s"}, llm.UserMessage("go")); err != nil {
+	if _, err := a.GenerateWith(context.Background(), "go", agent.RunOptions{Store: store, Session: &session.Session{ID: "s"}}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if executed {

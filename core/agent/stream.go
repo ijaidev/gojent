@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/ijaidev/gojent/core/llm"
-	"github.com/ijaidev/gojent/core/session"
 )
 
 // Run is an asynchronous agent execution.
@@ -64,42 +63,16 @@ func (r *Run) Close() error {
 	return nil
 }
 
-// Start begins a run asynchronously.
-func (r *Runner) Start(ctx context.Context, a *Agent, s *session.Session, input ...llm.Message) (*Run, error) {
-	return r.StartWith(ctx, a, s, RunOptions{}, input...)
-}
-
-// StartWith begins a run with per-run options.
-func (r *Runner) StartWith(ctx context.Context, a *Agent, s *session.Session, opts RunOptions, input ...llm.Message) (*Run, error) {
-	if r == nil {
-		r = &Runner{}
-	}
-	if a == nil {
-		return nil, ErrAgentRequired
-	}
-	model := opts.Model
-	if model == nil {
-		model = a.Model()
-	}
-	if model == nil {
-		return nil, ErrModelRequired
-	}
-	if s == nil {
-		s = opts.Session
-	}
-	if r.Store != nil {
-		if s == nil {
-			return nil, ErrSessionRequired
-		}
-		if s.ID == "" {
-			return nil, ErrSessionIDRequired
-		}
+// start begins a run asynchronously.
+func (r *runner) start(ctx context.Context, a *Agent, input ...llm.Message) (*Run, error) {
+	if err := r.validate(a); err != nil {
+		return nil, err
 	}
 
 	runCtx, cancel := context.WithCancelCause(ctx)
 	queue := newEventQueue(runCtx)
-	runner := *r
-	runner.Sink = multiSink{r.Sink, queue}
+	opts := r.opts
+	opts.Sink = multiSink{r.opts.Sink, queue}
 
 	run := &Run{
 		events: queue.out,
@@ -108,7 +81,7 @@ func (r *Runner) StartWith(ctx context.Context, a *Agent, s *session.Session, op
 	}
 	go func() {
 		defer close(run.done)
-		response, err := runner.RunWith(runCtx, a, s, opts, input...)
+		response, err := newRunner(opts).run(runCtx, a, input...)
 		run.mu.Lock()
 		run.response = response
 		run.err = err
@@ -123,11 +96,20 @@ func (a *Agent) Stream(ctx context.Context, prompt string, opts ...Option) (*Run
 	return a.StreamMessages(ctx, promptMessages(prompt), opts...)
 }
 
+// StreamWith runs the agent asynchronously with a complete RunOptions value.
+func (a *Agent) StreamWith(ctx context.Context, prompt string, opts RunOptions) (*Run, error) {
+	return a.StreamMessagesWith(ctx, promptMessages(prompt), opts)
+}
+
 // StreamMessages runs the agent asynchronously with explicit messages.
 func (a *Agent) StreamMessages(ctx context.Context, messages []llm.Message, opts ...Option) (*Run, error) {
-	cfg := resolveOptions(opts)
-	runner := cfg.runner
-	return runner.StartWith(ctx, a, cfg.session, cfg.run, messages...)
+	return a.StreamMessagesWith(ctx, messages, resolveOptions(opts))
+}
+
+// StreamMessagesWith runs the agent asynchronously with explicit messages and
+// RunOptions.
+func (a *Agent) StreamMessagesWith(ctx context.Context, messages []llm.Message, opts RunOptions) (*Run, error) {
+	return newRunner(opts).start(ctx, a, messages...)
 }
 
 func promptMessages(prompt string) []llm.Message {
