@@ -2,22 +2,23 @@ package tool
 
 import "github.com/ijaidev/gojent/core/llm"
 
-// ToDefinition converts a Tool to an llm.ToolDefinition.
-// Nil and typed-nil tools produce an empty definition.
-func ToDefinition(t Tool) llm.ToolDefinition {
+// Definition converts a tool into the provider-neutral definition sent to a
+// model. Nil and typed-nil tools produce an empty definition.
+func Definition(t Tool) llm.ToolDefinition {
 	if IsNilTool(t) {
 		return llm.ToolDefinition{}
 	}
+	spec := t.Spec()
 	return llm.ToolDefinition{
-		Name:        t.ID(),
-		Description: t.Description(),
-		Parameters:  t.Parameters(),
+		Name:        spec.Name,
+		Description: spec.Description,
+		Parameters:  spec.InputSchema,
+		Strict:      spec.Strict,
 	}
 }
 
-// ToDefinitions converts a slice of Tools to a slice of llm.ToolDefinition.
-// Nil and typed-nil tools are skipped.
-func ToDefinitions(tools []Tool) []llm.ToolDefinition {
+// Definitions converts tools into model definitions, skipping nil entries.
+func Definitions(tools []Tool) []llm.ToolDefinition {
 	if len(tools) == 0 {
 		return nil
 	}
@@ -26,7 +27,7 @@ func ToDefinitions(tools []Tool) []llm.ToolDefinition {
 		if IsNilTool(t) {
 			continue
 		}
-		defs = append(defs, ToDefinition(t))
+		defs = append(defs, Definition(t))
 	}
 	if len(defs) == 0 {
 		return nil

@@ -40,12 +40,15 @@ type customTool struct {
 	id string
 }
 
-func (t customTool) ID() string          { return t.id }
-func (t customTool) Description() string { return "custom tool" }
-func (t customTool) Parameters() map[string]any {
-	return map[string]any{"type": "object"}
+func (t customTool) Spec() tool.Spec {
+	return tool.Spec{
+		Name:        t.id,
+		Description: "custom tool",
+		InputSchema: map[string]any{"type": "object"},
+	}
 }
-func (t customTool) Execute(_ context.Context, _ []byte) (tool.Result, error) {
+
+func (t customTool) Execute(_ context.Context, _ tool.Call) (tool.Result, error) {
 	return tool.Result{Content: []llm.Part{llm.TextPart("custom result")}}, nil
 }
 
@@ -78,28 +81,10 @@ func TestTool_Validation(t *testing.T) {
 			want: tool.ErrExecuteRequired,
 		},
 		{
-			name: "non-object custom schema",
-			cfg: tool.Config[WeatherInput, WeatherOutput]{
-				ID:         "weather",
-				Parameters: "not an object",
-				Execute:    execute,
-			},
-			want: tool.ErrInvalidSchema,
-		},
-		{
 			name: "unencodable custom schema",
 			cfg: tool.Config[WeatherInput, WeatherOutput]{
 				ID:         "weather",
-				Parameters: make(chan int),
-				Execute:    execute,
-			},
-			want: tool.ErrInvalidSchema,
-		},
-		{
-			name: "typed nil custom schema",
-			cfg: tool.Config[WeatherInput, WeatherOutput]{
-				ID:         "weather",
-				Parameters: map[string]any(nil),
+				Parameters: map[string]any{"type": make(chan int)},
 				Execute:    execute,
 			},
 			want: tool.ErrInvalidSchema,
@@ -244,20 +229,6 @@ func TestTool_ExplicitSchemaOverride(t *testing.T) {
 }
 
 func TestTool_CustomSchemaFormats(t *testing.T) {
-	rawSchema := json.RawMessage(`{"type":"object","properties":{"value":{"type":"string"}}}`)
-	rawTool := tool.MustNew(tool.Config[string, string]{
-		ID:         "raw_schema",
-		Parameters: rawSchema,
-		Execute: func(_ context.Context, in string) (string, error) {
-			return in, nil
-		},
-	})
-	rawParams := rawTool.Parameters()
-	rawProps, ok := rawParams["properties"].(map[string]any)
-	if !ok || rawProps["value"] == nil {
-		t.Fatalf("expected raw JSON schema to be normalized, got %+v", rawParams)
-	}
-
 	mapSchema := map[string]any{
 		"type":       "object",
 		"properties": map[string]any{},
@@ -290,7 +261,7 @@ func TestTool_Execute(t *testing.T) {
 
 	ctx := context.Background()
 
-	result, err := weatherTool.Execute(ctx, []byte(`{"location":"Paris","units":"celsius"}`))
+	result, err := weatherTool.Execute(ctx, tool.Call{Arguments: []byte(`{"location":"Paris","units":"celsius"}`)})
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -306,7 +277,7 @@ func TestTool_Execute(t *testing.T) {
 		t.Errorf("expected JSON text content, got %q", result.Text())
 	}
 
-	typedOut, err := weatherTool.Execute(ctx, []byte(`{"location":"Berlin","units":"celsius"}`))
+	typedOut, err := weatherTool.Execute(ctx, tool.Call{Arguments: []byte(`{"location":"Berlin","units":"celsius"}`)})
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -325,7 +296,7 @@ func TestTool_Execute_StringAndByteInputsUseJSON(t *testing.T) {
 			return "ok", nil
 		},
 	})
-	if _, err := stringTool.Execute(ctx, []byte(`"hello"`)); err != nil {
+	if _, err := stringTool.Execute(ctx, tool.Call{Arguments: []byte(`"hello"`)}); err != nil {
 		t.Fatalf("string Execute failed: %v", err)
 	}
 	if stringInput != "hello" {
@@ -333,7 +304,7 @@ func TestTool_Execute_StringAndByteInputsUseJSON(t *testing.T) {
 	}
 
 	stringInput = "set"
-	if _, err := stringTool.Execute(ctx, nil); err != nil {
+	if _, err := stringTool.Execute(ctx, tool.Call{}); err != nil {
 		t.Fatalf("empty input Execute failed: %v", err)
 	}
 	if stringInput != "" {
@@ -341,7 +312,7 @@ func TestTool_Execute_StringAndByteInputsUseJSON(t *testing.T) {
 	}
 
 	stringInput = "set"
-	if _, err := stringTool.Execute(ctx, []byte("null")); err != nil {
+	if _, err := stringTool.Execute(ctx, tool.Call{Arguments: []byte("null")}); err != nil {
 		t.Fatalf("null input Execute failed: %v", err)
 	}
 	if stringInput != "" {
@@ -356,7 +327,7 @@ func TestTool_Execute_StringAndByteInputsUseJSON(t *testing.T) {
 			return "ok", nil
 		},
 	})
-	if _, err := namedTool.Execute(context.Background(), []byte(`"world"`)); err != nil {
+	if _, err := namedTool.Execute(context.Background(), tool.Call{Arguments: []byte(`"world"`)}); err != nil {
 		t.Fatalf("named string Execute failed: %v", err)
 	}
 	if namedInput != "world" {
@@ -375,7 +346,7 @@ func TestTool_Execute_StringAndByteInputsUseJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to encode bytes: %v", err)
 	}
-	if _, err := bytesTool.Execute(context.Background(), encoded); err != nil {
+	if _, err := bytesTool.Execute(context.Background(), tool.Call{Arguments: encoded}); err != nil {
 		t.Fatalf("bytes Execute failed: %v", err)
 	}
 	if string(bytesInput) != "bytes" {
@@ -393,7 +364,7 @@ func TestTool_Execute_InvalidInput(t *testing.T) {
 		},
 	})
 
-	_, err := weatherTool.Execute(context.Background(), []byte(`{invalid-json`))
+	_, err := weatherTool.Execute(context.Background(), tool.Call{Arguments: []byte(`{invalid-json`)})
 	if !errors.Is(err, tool.ErrInvalidInput) {
 		t.Fatalf("expected ErrInvalidInput, got %v", err)
 	}
@@ -403,7 +374,7 @@ func TestTool_Execute_InvalidInput(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := weatherTool.Execute(ctx, []byte(`{}`)); !errors.Is(err, context.Canceled) {
+	if _, err := weatherTool.Execute(ctx, tool.Call{Arguments: []byte(`{}`)}); !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context cancellation, got %v", err)
 	}
 }
@@ -416,11 +387,11 @@ func TestTool_Execute_Validator(t *testing.T) {
 		},
 	})
 
-	if _, err := validatingTool.Execute(context.Background(), []byte(`{}`)); !errors.Is(err, tool.ErrInvalidInput) {
+	if _, err := validatingTool.Execute(context.Background(), tool.Call{Arguments: []byte(`{}`)}); !errors.Is(err, tool.ErrInvalidInput) {
 		t.Fatalf("expected validation error, got %v", err)
 	}
 
-	result, err := validatingTool.Execute(context.Background(), []byte(`{"name":"ok"}`))
+	result, err := validatingTool.Execute(context.Background(), tool.Call{Arguments: []byte(`{"name":"ok"}`)})
 	if err != nil {
 		t.Fatalf("expected valid input, got %v", err)
 	}
@@ -437,7 +408,7 @@ func TestTool_Execute_OutputNormalization(t *testing.T) {
 				return tool.Result{Data: map[string]any{"ok": true}}, nil
 			},
 		})
-		result, err := resultTool.Execute(context.Background(), []byte(`"x"`))
+		result, err := resultTool.Execute(context.Background(), tool.Call{Arguments: []byte(`"x"`)})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
@@ -453,7 +424,7 @@ func TestTool_Execute_OutputNormalization(t *testing.T) {
 				return "ready", nil
 			},
 		})
-		result, err := resultTool.Execute(context.Background(), []byte(`"x"`))
+		result, err := resultTool.Execute(context.Background(), tool.Call{Arguments: []byte(`"x"`)})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
@@ -469,7 +440,7 @@ func TestTool_Execute_OutputNormalization(t *testing.T) {
 				return make(chan int), nil
 			},
 		})
-		if _, err := resultTool.Execute(context.Background(), []byte(`"x"`)); !errors.Is(err, tool.ErrOutputEncode) {
+		if _, err := resultTool.Execute(context.Background(), tool.Call{Arguments: []byte(`"x"`)}); !errors.Is(err, tool.ErrOutputEncode) {
 			t.Errorf("expected ErrOutputEncode, got %v", err)
 		}
 	})
@@ -481,7 +452,7 @@ func TestTool_Execute_OutputNormalization(t *testing.T) {
 				return llm.TextPart("part text"), nil
 			},
 		})
-		result, err := resultTool.Execute(context.Background(), []byte(`"x"`))
+		result, err := resultTool.Execute(context.Background(), tool.Call{Arguments: []byte(`"x"`)})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
@@ -497,7 +468,7 @@ func TestTool_Execute_OutputNormalization(t *testing.T) {
 				return []llm.Part{llm.TextPart("one"), llm.TextPart("two")}, nil
 			},
 		})
-		result, err := resultTool.Execute(context.Background(), []byte(`"x"`))
+		result, err := resultTool.Execute(context.Background(), tool.Call{Arguments: []byte(`"x"`)})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
@@ -513,7 +484,7 @@ func TestTool_Execute_OutputNormalization(t *testing.T) {
 				return []byte("bytes"), nil
 			},
 		})
-		result, err := resultTool.Execute(context.Background(), []byte(`"x"`))
+		result, err := resultTool.Execute(context.Background(), tool.Call{Arguments: []byte(`"x"`)})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
@@ -529,7 +500,7 @@ func TestTool_Execute_OutputNormalization(t *testing.T) {
 				return namedBytes("named bytes"), nil
 			},
 		})
-		result, err := resultTool.Execute(context.Background(), []byte(`"x"`))
+		result, err := resultTool.Execute(context.Background(), tool.Call{Arguments: []byte(`"x"`)})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
@@ -545,7 +516,7 @@ func TestTool_Execute_OutputNormalization(t *testing.T) {
 				return json.RawMessage(`{"raw":true}`), nil
 			},
 		})
-		result, err := resultTool.Execute(context.Background(), []byte(`"x"`))
+		result, err := resultTool.Execute(context.Background(), tool.Call{Arguments: []byte(`"x"`)})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
@@ -564,7 +535,7 @@ func TestTool_Execute_OutputNormalization(t *testing.T) {
 				return nil, nil
 			},
 		})
-		result, err := resultTool.Execute(context.Background(), []byte(`"x"`))
+		result, err := resultTool.Execute(context.Background(), tool.Call{Arguments: []byte(`"x"`)})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
@@ -580,7 +551,7 @@ func TestTool_Execute_OutputNormalization(t *testing.T) {
 				return nil, nil
 			},
 		})
-		result, err := resultTool.Execute(context.Background(), []byte(`"x"`))
+		result, err := resultTool.Execute(context.Background(), tool.Call{Arguments: []byte(`"x"`)})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
@@ -599,7 +570,7 @@ func TestTool_Execute_OutputNormalization(t *testing.T) {
 				}, nil
 			},
 		})
-		result, err := resultTool.Execute(context.Background(), []byte(`"x"`))
+		result, err := resultTool.Execute(context.Background(), tool.Call{Arguments: []byte(`"x"`)})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
@@ -629,19 +600,19 @@ func TestTool_ToDefinition(t *testing.T) {
 		},
 	})
 
-	def1 := tool.ToDefinition(t1)
+	def1 := tool.Definition(t1)
 	if def1.Name != "tool1" || def1.Description != "First tool" {
 		t.Errorf("unexpected definition: %+v", def1)
 	}
 
 	custom := customTool{id: "custom"}
-	customDef := tool.ToDefinition(custom)
+	customDef := tool.Definition(custom)
 	if customDef.Name != "custom" || customDef.Description != "custom tool" {
 		t.Errorf("unexpected custom definition: %+v", customDef)
 	}
 
 	var typedNil *tool.BaseTool[string, string]
-	defs := tool.ToDefinitions([]tool.Tool{t1, nil, typedNil, t2})
+	defs := tool.Definitions([]tool.Tool{t1, nil, typedNil, t2})
 	if len(defs) != 2 {
 		t.Fatalf("expected 2 definitions after skipping nil tools, got %d", len(defs))
 	}
@@ -649,13 +620,13 @@ func TestTool_ToDefinition(t *testing.T) {
 		t.Errorf("unexpected definitions list: %+v", defs)
 	}
 
-	if def := tool.ToDefinition(nil); def.Name != "" || def.Description != "" || def.Parameters != nil {
+	if def := tool.Definition(nil); def.Name != "" || def.Description != "" || def.Parameters != nil {
 		t.Error("expected zero definition for nil tool")
 	}
-	if tool.ToDefinitions(nil) != nil {
+	if tool.Definitions(nil) != nil {
 		t.Error("expected nil for empty tools")
 	}
-	if tool.ToDefinitions([]tool.Tool{nil, typedNil}) != nil {
+	if tool.Definitions([]tool.Tool{nil, typedNil}) != nil {
 		t.Error("expected nil when all tools are nil")
 	}
 }
@@ -670,7 +641,7 @@ func TestTool_MultipartResult(t *testing.T) {
 		},
 	})
 
-	result, err := screenshotTool.Execute(context.Background(), []byte(`"full"`))
+	result, err := screenshotTool.Execute(context.Background(), tool.Call{Arguments: []byte(`"full"`)})
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -714,11 +685,11 @@ func TestTool_NilAndZeroValue(t *testing.T) {
 	if nilTool.ID() != "" || nilTool.Description() != "" || nilTool.Parameters() != nil {
 		t.Error("expected nil tool accessors to be safe")
 	}
-	if _, err := nilTool.Execute(context.Background(), nil); !errors.Is(err, tool.ErrExecuteRequired) {
+	if _, err := nilTool.Execute(context.Background(), tool.Call{}); !errors.Is(err, tool.ErrExecuteRequired) {
 		t.Errorf("expected ErrExecuteRequired for nil tool, got %v", err)
 	}
 	var zero tool.BaseTool[string, string]
-	if _, err := zero.Execute(context.Background(), nil); !errors.Is(err, tool.ErrExecuteRequired) {
+	if _, err := zero.Execute(context.Background(), tool.Call{}); !errors.Is(err, tool.ErrExecuteRequired) {
 		t.Errorf("expected ErrExecuteRequired for zero tool, got %v", err)
 	}
 }
