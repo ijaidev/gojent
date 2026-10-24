@@ -500,7 +500,14 @@ func (r *runner) finalizeAssistant(message llm.Message, step int) llm.Message {
 			call.Arguments = "{}"
 		}
 		if call.ID == "" || r.usedCallID[call.ID] {
-			call.ID = fmt.Sprintf("call_%d_%d", step, i)
+			// A generated ID must not collide with one the provider already
+			// used, including a provider ID that happens to look generated.
+			base := fmt.Sprintf("call_%d_%d", step, i)
+			candidate := base
+			for suffix := 1; r.usedCallID[candidate]; suffix++ {
+				candidate = fmt.Sprintf("%s_%d", base, suffix)
+			}
+			call.ID = candidate
 		}
 		r.usedCallID[call.ID] = true
 	}

@@ -885,6 +885,33 @@ func TestAgent_PolicyMutationDoesNotAlterTranscript(t *testing.T) {
 	}
 }
 
+func TestAgent_ToolCallIDCollisionWithGeneratedID(t *testing.T) {
+	model := &scriptModel{steps: []step{
+		toolCallStep(llm.ToolCall{ID: "call_1_0", Name: "echo", Arguments: `{"value":"one"}`}),
+		toolCallStep(llm.ToolCall{ID: "call_1_0", Name: "echo", Arguments: `{"value":"two"}`}),
+		finalText("done"),
+	}}
+	echo := tool.MustNew(tool.Config[echoInput, string]{
+		ID: "echo",
+		Execute: func(context.Context, echoInput) (string, error) {
+			return "ok", nil
+		},
+	})
+	a := mustAgent(t, agent.Config{Name: "collision", Model: model, Tools: []tool.Tool{echo}})
+
+	resp, err := a.Generate(context.Background(), "go")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	seen := make(map[string]bool, len(resp.ToolCalls))
+	for _, call := range resp.ToolCalls {
+		if seen[call.ID] {
+			t.Fatalf("duplicate tool call ID %q in %+v", call.ID, resp.ToolCalls)
+		}
+		seen[call.ID] = true
+	}
+}
+
 func TestAgent_ToolBudgetPersistsAllResults(t *testing.T) {
 	executed := 0
 	echo := tool.MustNew(tool.Config[echoInput, string]{
