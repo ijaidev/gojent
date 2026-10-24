@@ -38,7 +38,6 @@ import (
 	"os"
 
 	"github.com/ijaidev/gojent/core/agent"
-	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/session"
 	"github.com/ijaidev/gojent/core/tool"
 	"github.com/ijaidev/gojent/providers/google"
@@ -83,11 +82,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	runner := &agent.Runner{Store: session.NewMemory()}
-	response, err := runner.Run(ctx, assistant,
-		&session.Session{ID: "demo", ResourceID: "user-1"},
-		llm.UserMessage("What is the weather in Tokyo?"),
-	)
+	response, err := assistant.GenerateWith(ctx, "What is the weather in Tokyo?", agent.RunOptions{
+		Store:   session.NewMemory(),
+		Session: &session.Session{ID: "demo", ResourceID: "user-1"},
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -121,13 +119,13 @@ response, err := run.Wait(ctx)
 ```
 
 `Run.Events` is an observation stream. A `RunEnd` event is always last. The
-runner prefers a model's `Stream` method when it implements `llm.Streamer`.
+agent prefers a model's `Stream` method when it implements `llm.Streamer`.
 
 ## Packages
 
 | Package | Responsibility |
 | --- | --- |
-| `core/agent` | Immutable `Agent` behavior and the `Runner` execution loop. |
+| `core/agent` | Immutable `Agent` behavior and its execution adapters. |
 | `core/llm` | `Model`, canonical `Message`/`Request`/`Response`, streams, errors. |
 | `core/tool` | `Tool`, typed `Config`, JSON Schema generation and validation. |
 | `core/session` | `Session` identity, the two-method `Store` contract, `Memory`. |
@@ -147,9 +145,9 @@ The core exposes four extension points:
 - `session.Store`
 - `agent.Policy`, `agent.Approver`, and `agent.Sink`
 
-The execution loop itself is a concrete method (`Runner.RunWith`), not an
-interface. Middleware such as tracing, caching, or redaction belongs in
-wrappers around these seams.
+The execution loop itself is private, not an interface. `Generate` and
+`Stream` are the public adapters. Middleware such as tracing, caching, or
+redaction belongs in wrappers around these seams.
 
 ## Sessions and stores
 
@@ -162,7 +160,7 @@ type Store interface {
 }
 ```
 
-`Append` is atomic. The runner persists an assistant tool-call message and all
+`Append` is atomic. The agent persists an assistant tool-call message and all
 of its tool results in one call, so a crash cannot leave a transcript with
 unanswered tool calls. Durability features such as checkpoints, leases, and
 search belong in store modules, not in the core.
@@ -190,10 +188,10 @@ search := tool.MustNew(tool.Config[SearchInput, []string]{
 })
 ```
 
-The constructor generates a JSON Schema from the input type. The runner
+The constructor generates a JSON Schema from the input type. The agent
 validates model arguments before executing the handler and reports validation
 failures back to the model as tool errors. Tool panics, timeouts, and
-cancellations are contained by the runner.
+cancellations are contained by the runtime.
 
 Ready-made bundles live in `tools`:
 
@@ -209,7 +207,7 @@ Approval is a policy decision, not a model-invoked tool. That keeps a model
 from skipping or spoofing the check.
 
 ```go
-runner := &agent.Runner{
+opts := agent.RunOptions{
 	Policy: agent.Hooks{
 		OnBeforeTool: func(_ context.Context, req *agent.ToolRequest) (agent.Decision, error) {
 			if req.Spec.Annotations.Destructive {
@@ -223,9 +221,13 @@ runner := &agent.Runner{
 		return confirmWithUser(req.Call), nil
 	}),
 }
+
+response, err := assistant.GenerateWith(ctx, "Clean up the build directory.", opts)
 ```
 
-`Ask` without an approver is denied. `Terminate` aborts the run.
+`Ask` without an approver is denied. `Terminate` aborts the run. `RunOptions`
+is the only public per-run configuration type; execution internals are not
+exported.
 
 ## Subagents
 
@@ -308,7 +310,7 @@ Optional features belong in separate modules that you fetch with `go get`.
 ## Repository layout
 
 ```
-core/agent         immutable agents, runner, policies, events
+core/agent         immutable agents, run options, policies, events
 core/llm           model contract, messages, streams, errors
 core/tool          typed tools, schemas, validation, results
 core/session       session identity, store contract, memory store
