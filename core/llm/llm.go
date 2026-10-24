@@ -45,18 +45,29 @@ type Info struct {
 
 // Capabilities describes optional model features.
 type Capabilities struct {
-	Streaming  bool
-	Tools      bool
+	// Streaming reports incremental generation support.
+	Streaming bool
+	// Tools reports function or tool calling support.
+	Tools bool
+	// JSONSchema reports strict JSON Schema output support.
 	JSONSchema bool
-	Vision     bool
-	Audio      bool
-	Video      bool
-	Documents  bool
-	Reasoning  bool
+	// Vision reports image input support.
+	Vision bool
+	// Audio reports audio input or output support.
+	Audio bool
+	// Video reports video input support.
+	Video bool
+	// Documents reports document input support.
+	Documents bool
+	// Reasoning reports a separate reasoning or thinking channel.
+	Reasoning bool
 }
 
-// Pricing describes model cost in US dollars per million tokens.
+// Pricing describes model cost in US dollars per million tokens. All fields
+// are zero when pricing is unknown.
 type Pricing struct {
-	InputPerMTokens  float64
+	// InputPerMTokens is the cost of one million input tokens.
+	InputPerMTokens float64
+	// OutputPerMTokens is the cost of one million output tokens.
 	OutputPerMTokens float64
 }
