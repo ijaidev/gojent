@@ -202,7 +202,11 @@ func (a *Agent) GenerateMessages(ctx context.Context, messages []llm.Message, op
 
 // GenerateMessagesWith runs the agent with explicit messages and RunOptions.
 func (a *Agent) GenerateMessagesWith(ctx context.Context, messages []llm.Message, opts RunOptions) (*Response, error) {
-	return newRunner(opts).run(ctx, a, messages...)
+	r, err := newRunner(a, opts)
+	if err != nil {
+		return nil, err
+	}
+	return r.run(ctx, messages...)
 }
 
 // GenerateStructured runs the agent and decodes its output into T.

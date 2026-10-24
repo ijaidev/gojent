@@ -16,11 +16,20 @@ import (
 	"github.com/ijaidev/gojent/core/tool"
 )
 
-// runner owns execution concerns: storage, policy, observation, approval,
-// budgets, retries, and tool limits. It is internal so Agent remains the
-// public execution surface.
+// runner is one agent execution. It owns resolved configuration and the
+// mutable state of a single run. It stays private so Agent remains the public
+// execution surface.
 type runner struct {
-	opts RunOptions
+	agent    *Agent
+	model    llm.Model
+	registry *toolRegistry
+	policy   Policy
+	opts     RunOptions
+
+	usage      llm.Usage
+	calls      []llm.ToolCall
+	toolCalls  int
+	usedCallID map[string]bool
 }
 
 // RunOptions configures one agent run. It is the single public configuration
@@ -66,133 +75,99 @@ type RunOptions struct {
 	ToolChoice llm.ToolChoice
 }
 
-func newRunner(opts RunOptions) *runner {
-	return &runner{opts: opts}
-}
-
-// validate checks the minimum execution requirements.
-func (r *runner) validate(a *Agent) error {
+// newRunner resolves and validates the configuration for one execution.
+func newRunner(a *Agent, opts RunOptions) (*runner, error) {
 	if a == nil {
-		return ErrAgentRequired
+		return nil, ErrAgentRequired
 	}
-	if r.opts.Model == nil && a.Model() == nil {
-		return ErrModelRequired
-	}
-	if r.opts.Store != nil {
-		if r.opts.Session == nil {
-			return ErrSessionRequired
-		}
-		if r.opts.Session.ID == "" {
-			return ErrSessionIDRequired
-		}
-	}
-	return nil
-}
-
-// run executes the agent loop synchronously.
-func (r *runner) run(ctx context.Context, a *Agent, input ...llm.Message) (resp *Response, err error) {
-	if err := r.validate(a); err != nil {
-		return nil, err
-	}
-
-	model := r.opts.Model
+	model := opts.Model
 	if model == nil {
 		model = a.Model()
 	}
-	registry := newToolRegistry(a.Tools(), r.opts.Tools)
-	policy := r.opts.Policy
+	if model == nil {
+		return nil, ErrModelRequired
+	}
+	if opts.Store != nil {
+		if opts.Session == nil {
+			return nil, ErrSessionRequired
+		}
+		if opts.Session.ID == "" {
+			return nil, ErrSessionIDRequired
+		}
+	}
+	policy := opts.Policy
 	if policy == nil {
 		policy = a.Policy()
 	}
-
-	e := &execution{
+	return &runner{
 		agent:      a,
 		model:      model,
-		registry:   registry,
+		registry:   newToolRegistry(a.Tools(), opts.Tools),
 		policy:     policy,
-		sink:       r.opts.Sink,
-		approver:   r.opts.Approver,
-		session:    r.opts.Session,
-		opts:       r.opts,
+		opts:       opts,
 		usedCallID: make(map[string]bool),
-	}
-	return e.run(ctx, input)
+	}, nil
 }
 
-type execution struct {
-	agent      *Agent
-	model      llm.Model
-	registry   *toolRegistry
-	policy     Policy
-	sink       Sink
-	approver   Approver
-	session    *session.Session
-	opts       RunOptions
-	usage      llm.Usage
-	calls      []llm.ToolCall
-	toolCalls  int
-	usedCallID map[string]bool
-}
-
-func (e *execution) run(ctx context.Context, input []llm.Message) (resp *Response, err error) {
-	input = mergeMedia(input, e.opts.Media)
+func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response, err error) {
+	input = mergeMedia(input, r.opts.Media)
 	started := time.Now()
 	runID := newRunID()
-	emit := func(event Event) { safeEmit(e.sink, event) }
-	emit(RunStart{RunID: runID, Agent: e.agent.Name(), Session: cloneSession(e.session), At: started})
+	emit := func(event Event) { safeEmit(r.opts.Sink, event) }
+	emit(RunStart{RunID: runID, Agent: r.agent.Name(), Session: cloneSession(r.opts.Session), At: started})
 	defer func() {
 		emit(RunEnd{Response: resp, Err: err})
 	}()
 
 	var budgetCtx context.Context
 	var cancel context.CancelFunc
-	if e.opts.Budget.MaxDuration > 0 {
-		budgetCtx, cancel = context.WithTimeout(ctx, e.opts.Budget.MaxDuration)
+	if r.opts.Budget.MaxDuration > 0 {
+		budgetCtx, cancel = context.WithTimeout(ctx, r.opts.Budget.MaxDuration)
 		defer cancel()
 	} else {
 		budgetCtx = ctx
 	}
 
-	conversation, err := e.load(budgetCtx)
+	conversation, err := r.load(budgetCtx)
 	if err != nil {
 		return nil, err
 	}
 	if len(input) > 0 {
 		conversation = append(conversation, cloneMessages(input)...)
-		if err := e.append(budgetCtx, input...); err != nil {
+		if err := r.append(budgetCtx, input...); err != nil {
 			return nil, err
 		}
 	}
 
-	maxSteps := e.opts.MaxSteps
+	maxSteps := r.opts.MaxSteps
 	if maxSteps <= 0 {
-		maxSteps = e.opts.Budget.steps()
+		maxSteps = r.opts.Budget.steps()
 	}
 	finish := llm.FinishReasonStop
 
 	for step := 0; ; step++ {
 		if err := budgetCtx.Err(); err != nil {
-			return e.response(conversation, finish), e.contextError(budgetCtx)
+			return r.response(conversation, finish), r.contextError(budgetCtx)
 		}
 		if step >= maxSteps {
-			return e.response(conversation, llm.FinishReasonLength), ErrMaxSteps
+			return r.response(conversation, llm.FinishReasonLength), ErrMaxSteps
 		}
 
 		emit(StepStart{Step: step})
-		request := e.request(conversation)
-		if e.policy != nil {
+		request := r.request(conversation)
+		if r.policy != nil {
 			if policyErr := callPolicy(func() error {
-				return e.policy.BeforeModel(budgetCtx, &ModelRequest{Step: step, Request: request})
+				return r.policy.BeforeModel(budgetCtx, &ModelRequest{Step: step, Request: request})
 			}); policyErr != nil {
 				emit(StepEnd{Step: step, Err: policyErr})
 				return nil, policyErr
 			}
 		}
 
-		response, callErr := e.callModel(budgetCtx, request, step)
-		if e.policy != nil {
+		response, callErr := r.callModel(budgetCtx, request, step)
+		if r.policy != nil {
 			if policyErr := callPolicy(func() error {
-				return e.policy.AfterModel(budgetCtx, &ModelResult{
+				return r.policy.AfterModel(budgetCtx, &ModelResult{
 					Step:     step,
 					Request:  request,
 					Response: response,
@@ -205,7 +180,7 @@ func (e *execution) run(ctx context.Context, input []llm.Message) (resp *Respons
 		}
 		if callErr != nil {
 			if budgetCtx.Err() != nil {
-				callErr = e.contextError(budgetCtx)
+				callErr = r.contextError(budgetCtx)
 			}
 			emit(StepEnd{Step: step, Err: callErr})
 			return nil, callErr
@@ -213,22 +188,22 @@ func (e *execution) run(ctx context.Context, input []llm.Message) (resp *Respons
 
 		assistant := response.Message
 		conversation = append(conversation, assistant)
-		e.usage = e.usage.Add(response.Usage)
-		e.calls = append(e.calls, assistant.ToolCalls...)
+		r.usage = r.usage.Add(response.Usage)
+		r.calls = append(r.calls, assistant.ToolCalls...)
 		finish = response.FinishReason
 
 		if len(assistant.ToolCalls) == 0 {
-			if err := e.append(budgetCtx, assistant); err != nil {
+			if err := r.append(budgetCtx, assistant); err != nil {
 				return nil, err
 			}
 			emit(StepEnd{Step: step, Usage: response.Usage})
-			if e.tokenBudgetExceeded() {
-				return e.response(conversation, finish), fmt.Errorf("%w: %d tokens", ErrBudgetExceeded, e.usage.TotalTokens)
+			if r.tokenBudgetExceeded() {
+				return r.response(conversation, finish), fmt.Errorf("%w: %d tokens", ErrBudgetExceeded, r.usage.TotalTokens)
 			}
-			return e.response(conversation, finish), nil
+			return r.response(conversation, finish), nil
 		}
 
-		results, budgetExceeded, toolsErr := e.runTools(budgetCtx, assistant.ToolCalls, step)
+		results, budgetExceeded, toolsErr := r.runTools(budgetCtx, assistant.ToolCalls, step)
 		if toolsErr != nil {
 			emit(StepEnd{Step: step, Usage: response.Usage, Err: toolsErr})
 			return nil, toolsErr
@@ -237,52 +212,52 @@ func (e *execution) run(ctx context.Context, input []llm.Message) (resp *Respons
 		batch := make([]llm.Message, 0, len(results)+1)
 		batch = append(batch, assistant)
 		batch = append(batch, results...)
-		if err := e.append(budgetCtx, batch...); err != nil {
+		if err := r.append(budgetCtx, batch...); err != nil {
 			return nil, err
 		}
 		conversation = append(conversation, results...)
 		emit(StepEnd{Step: step, Usage: response.Usage})
 
 		if budgetExceeded {
-			return e.response(conversation, llm.FinishReasonLength), fmt.Errorf("%w: %d tool calls", ErrBudgetExceeded, e.toolCalls)
+			return r.response(conversation, llm.FinishReasonLength), fmt.Errorf("%w: %d tool calls", ErrBudgetExceeded, r.toolCalls)
 		}
-		if e.tokenBudgetExceeded() {
-			return e.response(conversation, finish), fmt.Errorf("%w: %d tokens", ErrBudgetExceeded, e.usage.TotalTokens)
+		if r.tokenBudgetExceeded() {
+			return r.response(conversation, finish), fmt.Errorf("%w: %d tokens", ErrBudgetExceeded, r.usage.TotalTokens)
 		}
 		// Replay defense: a hung tool must not outlive its run.
 		if err := budgetCtx.Err(); err != nil {
-			return e.response(conversation, finish), e.contextError(budgetCtx)
+			return r.response(conversation, finish), r.contextError(budgetCtx)
 		}
 		if step+1 >= maxSteps {
-			return e.response(conversation, llm.FinishReasonLength), ErrMaxSteps
+			return r.response(conversation, llm.FinishReasonLength), ErrMaxSteps
 		}
 	}
 }
 
-func (e *execution) load(ctx context.Context) ([]llm.Message, error) {
-	if e.opts.Store == nil || e.session == nil {
+func (r *runner) load(ctx context.Context) ([]llm.Message, error) {
+	if r.opts.Store == nil || r.opts.Session == nil {
 		return nil, nil
 	}
-	messages, err := e.opts.Store.Load(ctx, *e.session)
+	messages, err := r.opts.Store.Load(ctx, *r.opts.Session)
 	if err != nil {
 		return nil, fmt.Errorf("agent: load session: %w", err)
 	}
 	return messages, nil
 }
 
-func (e *execution) append(ctx context.Context, messages ...llm.Message) error {
-	if e.opts.Store == nil || e.session == nil || len(messages) == 0 {
+func (r *runner) append(ctx context.Context, messages ...llm.Message) error {
+	if r.opts.Store == nil || r.opts.Session == nil || len(messages) == 0 {
 		return nil
 	}
-	if err := e.opts.Store.Append(ctx, *e.session, messages...); err != nil {
+	if err := r.opts.Store.Append(ctx, *r.opts.Session, messages...); err != nil {
 		return fmt.Errorf("agent: append session: %w", err)
 	}
 	return nil
 }
 
-func (e *execution) request(conversation []llm.Message) *llm.Request {
+func (r *runner) request(conversation []llm.Message) *llm.Request {
 	messages := make([]llm.Message, 0, len(conversation)+1)
-	if instructions := e.agent.Instructions(); instructions != "" {
+	if instructions := r.agent.Instructions(); instructions != "" {
 		messages = append(messages, llm.SystemMessage(instructions))
 	}
 	for i := range conversation {
@@ -293,13 +268,13 @@ func (e *execution) request(conversation []llm.Message) *llm.Request {
 	}
 	return &llm.Request{
 		Messages:       messages,
-		Tools:          e.registry.definitions(),
-		ToolChoice:     e.opts.ToolChoice,
-		Thinking:       e.opts.Thinking.Clone(),
-		ResponseFormat: e.opts.ResponseFormat.Clone(),
-		Temperature:    cloneFloat(e.opts.Temperature),
-		MaxTokens:      cloneInt(e.opts.MaxTokens),
-		TopP:           cloneFloat(e.opts.TopP),
+		Tools:          r.registry.definitions(),
+		ToolChoice:     r.opts.ToolChoice,
+		Thinking:       r.opts.Thinking.Clone(),
+		ResponseFormat: r.opts.ResponseFormat.Clone(),
+		Temperature:    cloneFloat(r.opts.Temperature),
+		MaxTokens:      cloneInt(r.opts.MaxTokens),
+		TopP:           cloneFloat(r.opts.TopP),
 	}
 }
 
@@ -314,7 +289,7 @@ func isEmptyAssistant(message llm.Message) bool {
 		message.ProviderData == nil
 }
 
-func (e *execution) response(conversation []llm.Message, finish llm.FinishReason) *Response {
+func (r *runner) response(conversation []llm.Message, finish llm.FinishReason) *Response {
 	text := ""
 	thinking := ""
 	if len(conversation) > 0 {
@@ -325,26 +300,26 @@ func (e *execution) response(conversation []llm.Message, finish llm.FinishReason
 		}
 	}
 	display := make([]llm.Message, 0, len(conversation)+1)
-	if instructions := e.agent.Instructions(); instructions != "" {
+	if instructions := r.agent.Instructions(); instructions != "" {
 		display = append(display, llm.SystemMessage(instructions))
 	}
 	display = append(display, cloneMessages(conversation)...)
 	return &Response{
 		Text:         text,
 		Thinking:     thinking,
-		ToolCalls:    append([]llm.ToolCall(nil), e.calls...),
+		ToolCalls:    append([]llm.ToolCall(nil), r.calls...),
 		Messages:     display,
 		FinishReason: finish,
-		Usage:        e.usage,
+		Usage:        r.usage,
 	}
 }
 
-func (e *execution) tokenBudgetExceeded() bool {
-	maxTokens := e.opts.Budget.MaxTotalTokens
-	return maxTokens > 0 && e.usage.TotalTokens > maxTokens
+func (r *runner) tokenBudgetExceeded() bool {
+	maxTokens := r.opts.Budget.MaxTotalTokens
+	return maxTokens > 0 && r.usage.TotalTokens > maxTokens
 }
 
-func (e *execution) contextError(ctx context.Context) error {
+func (r *runner) contextError(ctx context.Context) error {
 	cause := context.Cause(ctx)
 	if errors.Is(cause, context.DeadlineExceeded) {
 		return fmt.Errorf("%w: %w", ErrBudgetExceeded, cause)
@@ -358,14 +333,14 @@ func (e *execution) contextError(ctx context.Context) error {
 	return cause
 }
 
-func (e *execution) callModel(ctx context.Context, request *llm.Request, step int) (*llm.Response, error) {
-	attempts := e.opts.Retry.MaxAttempts
+func (r *runner) callModel(ctx context.Context, request *llm.Request, step int) (*llm.Response, error) {
+	attempts := r.opts.Retry.MaxAttempts
 	if attempts <= 0 {
 		attempts = 1
 	}
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		response, err := e.callModelOnce(ctx, request, step)
+		response, err := r.callModelOnce(ctx, request, step)
 		if err == nil {
 			return response, nil
 		}
@@ -373,7 +348,7 @@ func (e *execution) callModel(ctx context.Context, request *llm.Request, step in
 		if attempt == attempts || !retryable(err) {
 			return nil, err
 		}
-		delay := e.opts.Retry.delay(attempt)
+		delay := r.opts.Retry.delay(attempt)
 		if providerErr, ok := llm.AsError(err); ok && providerErr.RetryAfter > 0 {
 			delay = providerErr.RetryAfter
 		}
@@ -381,23 +356,23 @@ func (e *execution) callModel(ctx context.Context, request *llm.Request, step in
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, e.contextError(ctx)
+			return nil, r.contextError(ctx)
 		case <-timer.C:
 		}
 	}
 	return nil, lastErr
 }
 
-func (e *execution) callModelOnce(ctx context.Context, request *llm.Request, step int) (*llm.Response, error) {
-	streamer, ok := e.model.(llm.Streamer)
+func (r *runner) callModelOnce(ctx context.Context, request *llm.Request, step int) (*llm.Response, error) {
+	streamer, ok := r.model.(llm.Streamer)
 	if !ok {
-		response, err := callGenerate(ctx, e.model, request)
+		response, err := callGenerate(ctx, r.model, request)
 		if err != nil {
 			return nil, err
 		}
-		message := e.finalizeAssistant(response.Message, step)
-		emitMessageDeltasFromMessage(e.sink, step, message)
-		safeEmit(e.sink, MessageEnd{Step: step, Message: &message})
+		message := r.finalizeAssistant(response.Message, step)
+		emitMessageDeltasFromMessage(r.opts.Sink, step, message)
+		safeEmit(r.opts.Sink, MessageEnd{Step: step, Message: &message})
 		return &llm.Response{Message: message, FinishReason: response.FinishReason, Usage: response.Usage}, nil
 	}
 
@@ -409,7 +384,7 @@ func (e *execution) callModelOnce(ctx context.Context, request *llm.Request, ste
 		_ = stream.Close()
 	}()
 
-	safeEmit(e.sink, MessageStart{Step: step})
+	safeEmit(r.opts.Sink, MessageStart{Step: step})
 	var text, thinking string
 	var calls []llm.ToolCall
 	var usage llm.Usage
@@ -426,16 +401,16 @@ func (e *execution) callModelOnce(ctx context.Context, request *llm.Request, ste
 		}
 		if chunk.Delta != "" {
 			text += chunk.Delta
-			safeEmit(e.sink, TextDelta{Step: step, Text: chunk.Delta})
+			safeEmit(r.opts.Sink, TextDelta{Step: step, Text: chunk.Delta})
 		}
 		if chunk.ThinkingDelta != "" {
 			thinking += chunk.ThinkingDelta
-			safeEmit(e.sink, ThinkingDelta{Step: step, Text: chunk.ThinkingDelta})
+			safeEmit(r.opts.Sink, ThinkingDelta{Step: step, Text: chunk.ThinkingDelta})
 		}
 		if len(chunk.ToolCalls) > 0 {
 			calls = accumulateToolCalls(calls, chunk.ToolCalls)
 			for _, call := range chunk.ToolCalls {
-				safeEmit(e.sink, ToolCallDelta{
+				safeEmit(r.opts.Sink, ToolCallDelta{
 					Step:      step,
 					Index:     call.Index,
 					ID:        call.ID,
@@ -464,7 +439,7 @@ func (e *execution) callModelOnce(ctx context.Context, request *llm.Request, ste
 	if text != "" {
 		message.Content = []llm.Part{llm.TextPart(text)}
 	}
-	message = e.finalizeAssistant(message, step)
+	message = r.finalizeAssistant(message, step)
 	if finish == "" {
 		if len(message.ToolCalls) > 0 {
 			finish = llm.FinishReasonTool
@@ -472,11 +447,11 @@ func (e *execution) callModelOnce(ctx context.Context, request *llm.Request, ste
 			finish = llm.FinishReasonStop
 		}
 	}
-	safeEmit(e.sink, MessageEnd{Step: step, Message: &message})
+	safeEmit(r.opts.Sink, MessageEnd{Step: step, Message: &message})
 	return &llm.Response{Message: message, FinishReason: finish, Usage: usage}, nil
 }
 
-func (e *execution) finalizeAssistant(message llm.Message, step int) llm.Message {
+func (r *runner) finalizeAssistant(message llm.Message, step int) llm.Message {
 	message.Role = llm.RoleAssistant
 	message.Content = llm.NonEmptyParts(message.Content)
 	for i := range message.ToolCalls {
@@ -485,15 +460,15 @@ func (e *execution) finalizeAssistant(message llm.Message, step int) llm.Message
 		if call.Arguments == "" {
 			call.Arguments = "{}"
 		}
-		if call.ID == "" || e.usedCallID[call.ID] {
+		if call.ID == "" || r.usedCallID[call.ID] {
 			call.ID = fmt.Sprintf("call_%d_%d", step, i)
 		}
-		e.usedCallID[call.ID] = true
+		r.usedCallID[call.ID] = true
 	}
 	return message
 }
 
-func (e *execution) runTools(ctx context.Context, calls []llm.ToolCall, step int) ([]llm.Message, bool, error) {
+func (r *runner) runTools(ctx context.Context, calls []llm.ToolCall, step int) ([]llm.Message, bool, error) {
 	results := make([]llm.Message, 0, len(calls))
 	budgetExceeded := false
 
@@ -506,21 +481,21 @@ func (e *execution) runTools(ctx context.Context, calls []llm.ToolCall, step int
 			IdempotencyKey: raw.ID,
 		}
 		spec := tool.Spec{}
-		impl, found := e.registry.byName[call.Name]
+		impl, found := r.registry.byName[call.Name]
 		if found {
 			spec = impl.Spec()
 		}
-		safeEmit(e.sink, ToolStart{Step: step, Call: call, Spec: spec})
+		safeEmit(r.opts.Sink, ToolStart{Step: step, Call: call, Spec: spec})
 
-		if e.opts.Budget.MaxToolCalls > 0 && e.toolCalls >= e.opts.Budget.MaxToolCalls {
+		if r.opts.Budget.MaxToolCalls > 0 && r.toolCalls >= r.opts.Budget.MaxToolCalls {
 			budgetExceeded = true
 			message := toolErrorMessage(call, fmt.Errorf("%w: tool call budget exceeded", ErrBudgetExceeded))
-			safeEmit(e.sink, ToolEnd{Step: step, Call: call, Message: &message, Err: ErrBudgetExceeded})
+			safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Message: &message, Err: ErrBudgetExceeded})
 			results = append(results, message)
 			continue
 		}
 
-		decision, policyErr := e.beforeTool(ctx, step, call, spec)
+		decision, policyErr := r.beforeTool(ctx, step, call, spec)
 		if policyErr != nil {
 			return nil, false, policyErr
 		}
@@ -529,13 +504,13 @@ func (e *execution) runTools(ctx context.Context, calls []llm.ToolCall, step int
 			return nil, false, ErrTerminated
 		case Deny, Ask:
 			message := toolErrorMessage(call, ErrToolDenied)
-			safeEmit(e.sink, ToolEnd{Step: step, Call: call, Message: &message, Err: ErrToolDenied})
+			safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Message: &message, Err: ErrToolDenied})
 			results = append(results, message)
 			continue
 		case Allow:
 		default:
 			message := toolErrorMessage(call, ErrToolDenied)
-			safeEmit(e.sink, ToolEnd{Step: step, Call: call, Message: &message, Err: ErrToolDenied})
+			safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Message: &message, Err: ErrToolDenied})
 			results = append(results, message)
 			continue
 		}
@@ -543,56 +518,56 @@ func (e *execution) runTools(ctx context.Context, calls []llm.ToolCall, step int
 		if !found {
 			err := fmt.Errorf("agent: tool %q not found", call.Name)
 			message := toolErrorMessage(call, err)
-			if afterErr := e.afterTool(ctx, step, call, nil, err); afterErr != nil {
+			if afterErr := r.afterTool(ctx, step, call, nil, err); afterErr != nil {
 				return nil, false, afterErr
 			}
-			safeEmit(e.sink, ToolEnd{Step: step, Call: call, Message: &message, Err: err})
+			safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Message: &message, Err: err})
 			results = append(results, message)
 			continue
 		}
 
-		e.toolCalls++
-		result, execErr := e.executeTool(ctx, impl, call)
-		if afterErr := e.afterTool(ctx, step, call, &result, execErr); afterErr != nil {
+		r.toolCalls++
+		result, execErr := r.executeTool(ctx, impl, call)
+		if afterErr := r.afterTool(ctx, step, call, &result, execErr); afterErr != nil {
 			return nil, false, afterErr
 		}
 		if execErr != nil {
 			message := toolErrorMessage(call, execErr)
-			safeEmit(e.sink, ToolEnd{Step: step, Call: call, Result: &result, Message: &message, Err: execErr})
+			safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Result: &result, Message: &message, Err: execErr})
 			results = append(results, message)
 			continue
 		}
 
 		message, encodeErr := resultMessage(call, result)
 		if encodeErr != nil {
-			safeEmit(e.sink, ToolEnd{Step: step, Call: call, Result: &result, Err: encodeErr})
+			safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Result: &result, Err: encodeErr})
 			message = toolErrorMessage(call, encodeErr)
 		}
-		safeEmit(e.sink, ToolEnd{Step: step, Call: call, Result: &result, Message: &message, Err: encodeErr})
+		safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Result: &result, Message: &message, Err: encodeErr})
 		results = append(results, message)
 	}
 	return results, budgetExceeded, nil
 }
 
-func (e *execution) beforeTool(ctx context.Context, step int, call tool.Call, spec tool.Spec) (Decision, error) {
-	if e.policy == nil {
+func (r *runner) beforeTool(ctx context.Context, step int, call tool.Call, spec tool.Spec) (Decision, error) {
+	if r.policy == nil {
 		return Allow, nil
 	}
 	var decision Decision
 	err := callPolicy(func() error {
 		var policyErr error
-		decision, policyErr = e.policy.BeforeTool(ctx, &ToolRequest{Step: step, Call: call, Spec: spec})
+		decision, policyErr = r.policy.BeforeTool(ctx, &ToolRequest{Step: step, Call: call, Spec: spec})
 		return policyErr
 	})
 	if err != nil {
 		return Deny, err
 	}
 	if decision == Ask {
-		if e.approver == nil {
+		if r.opts.Approver == nil {
 			return Deny, nil
 		}
 		approved, approveErr := callApprove(func() (bool, error) {
-			return e.approver.Approve(ctx, ToolRequest{Step: step, Call: call, Spec: spec})
+			return r.opts.Approver.Approve(ctx, ToolRequest{Step: step, Call: call, Spec: spec})
 		})
 		if approveErr != nil {
 			return Deny, approveErr
@@ -605,17 +580,17 @@ func (e *execution) beforeTool(ctx context.Context, step int, call tool.Call, sp
 	return decision, nil
 }
 
-func (e *execution) afterTool(ctx context.Context, step int, call tool.Call, result *tool.Result, err error) error {
-	if e.policy == nil {
+func (r *runner) afterTool(ctx context.Context, step int, call tool.Call, result *tool.Result, err error) error {
+	if r.policy == nil {
 		return nil
 	}
 	return callPolicy(func() error {
-		return e.policy.AfterTool(ctx, &ToolResult{Step: step, Call: call, Result: result, Err: err})
+		return r.policy.AfterTool(ctx, &ToolResult{Step: step, Call: call, Result: result, Err: err})
 	})
 }
 
-func (e *execution) executeTool(ctx context.Context, impl tool.Tool, call tool.Call) (tool.Result, error) {
-	timeout := e.opts.ToolTimeout
+func (r *runner) executeTool(ctx context.Context, impl tool.Tool, call tool.Call) (tool.Result, error) {
+	timeout := r.opts.ToolTimeout
 	if timeout == 0 {
 		timeout = DefaultToolTimeout
 	}

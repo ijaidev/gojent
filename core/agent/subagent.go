@@ -46,7 +46,11 @@ func (a *Agent) AsTool(cfg ...AsToolConfig) tool.Tool {
 		ID:          name,
 		Description: description,
 		Execute: func(ctx context.Context, input SubagentInput) (tool.Result, error) {
-			response, err := newRunner(config.Options).run(ctx, a, llm.UserMessage(input.Prompt))
+			r, err := newRunner(a, config.Options)
+			if err != nil {
+				return tool.Result{}, err
+			}
+			response, err := r.run(ctx, llm.UserMessage(input.Prompt))
 			if err != nil {
 				return tool.Result{}, err
 			}

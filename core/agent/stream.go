@@ -63,16 +63,11 @@ func (r *Run) Close() error {
 	return nil
 }
 
-// start begins a run asynchronously.
-func (r *runner) start(ctx context.Context, a *Agent, input ...llm.Message) (*Run, error) {
-	if err := r.validate(a); err != nil {
-		return nil, err
-	}
-
+// start begins the execution asynchronously.
+func (r *runner) start(ctx context.Context, input ...llm.Message) (*Run, error) {
 	runCtx, cancel := context.WithCancelCause(ctx)
 	queue := newEventQueue(runCtx)
-	opts := r.opts
-	opts.Sink = multiSink{r.opts.Sink, queue}
+	r.opts.Sink = multiSink{r.opts.Sink, queue}
 
 	run := &Run{
 		events: queue.out,
@@ -81,7 +76,7 @@ func (r *runner) start(ctx context.Context, a *Agent, input ...llm.Message) (*Ru
 	}
 	go func() {
 		defer close(run.done)
-		response, err := newRunner(opts).run(runCtx, a, input...)
+		response, err := r.run(runCtx, input...)
 		run.mu.Lock()
 		run.response = response
 		run.err = err
@@ -109,7 +104,11 @@ func (a *Agent) StreamMessages(ctx context.Context, messages []llm.Message, opts
 // StreamMessagesWith runs the agent asynchronously with explicit messages and
 // RunOptions.
 func (a *Agent) StreamMessagesWith(ctx context.Context, messages []llm.Message, opts RunOptions) (*Run, error) {
-	return newRunner(opts).start(ctx, a, messages...)
+	r, err := newRunner(a, opts)
+	if err != nil {
+		return nil, err
+	}
+	return r.start(ctx, messages...)
 }
 
 func promptMessages(prompt string) []llm.Message {
