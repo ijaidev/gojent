@@ -122,13 +122,23 @@ func (f SinkFunc) Emit(event Event) {
 	f(event)
 }
 
-// multiSink fans events out to every non-nil sink in order.
+// multiSink fans events out to every non-nil sink in order. A panicking sink
+// must not prevent later sinks, especially the run's own event queue, from
+// observing the event.
 type multiSink []Sink
 
 func (s multiSink) Emit(event Event) {
 	for _, sink := range s {
-		if sink != nil {
-			sink.Emit(event)
+		if sink == nil {
+			continue
 		}
+		emitToSink(sink, event)
 	}
+}
+
+func emitToSink(sink Sink, event Event) {
+	defer func() {
+		_ = recover()
+	}()
+	sink.Emit(event)
 }

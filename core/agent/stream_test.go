@@ -224,6 +224,29 @@ func TestAgent_NonStreamingEmitsEquivalentEvents(t *testing.T) {
 	}
 }
 
+func TestAgent_PanickingSinkDoesNotStarveRunEvents(t *testing.T) {
+	model := &scriptModel{steps: []step{finalText("hi")}}
+	a := mustAgent(t, agent.Config{Name: "sink", Model: model})
+	sink := agent.SinkFunc(func(agent.Event) {
+		panic("observer failed")
+	})
+
+	run, err := a.Stream(context.Background(), "hello", agent.WithSink(sink))
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+
+	var runEnd agent.RunEnd
+	for event := range run.Events() {
+		if typed, ok := event.(agent.RunEnd); ok {
+			runEnd = typed
+		}
+	}
+	if runEnd.Response == nil || runEnd.Response.Text != "hi" {
+		t.Fatalf("RunEnd = %+v, want the completed response", runEnd)
+	}
+}
+
 func TestAgent_StreamDrainsEventsAndReturnsResponse(t *testing.T) {
 	model := &streamModel{steps: [][]*llm.StreamChunk{{
 		{Delta: "hi", FinishReason: llm.FinishReasonStop},
