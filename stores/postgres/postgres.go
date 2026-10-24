@@ -1,5 +1,8 @@
-// Package postgres provides a thread-safe PostgreSQL implementation of the Gojent storage interfaces.
-// It supports automatic migrations, transactions, connection pooling, and JSONB persistence.
+// Package postgres provides a durable session.Store backed by PostgreSQL.
+//
+// The store persists whole messages as JSONB and exposes only Load and atomic
+// Append. Conversation metadata, search, and orchestration state belong in
+// higher-level modules.
 package postgres
 
 import (
@@ -9,95 +12,72 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ijaidev/gojent/core/storage"
-	_ "github.com/lib/pq" // Register postgres driver for database/sql.
+	"github.com/ijaidev/gojent/core/session"
+
+	_ "github.com/lib/pq" // Register the postgres driver.
 )
 
-// DefaultDriverName is the default SQL driver registered for PostgreSQL.
+// DefaultDriverName is the SQL driver registered by lib/pq.
 const DefaultDriverName = "postgres"
 
-// Store implements storage.Storage using PostgreSQL as the persistence backend.
-type Store struct {
-	mu     sync.RWMutex
-	closed bool
-	db     *sql.DB
-}
+// Option configures a Store.
+type Option func(*options)
 
 type options struct {
 	driverName      string
 	maxOpenConns    int
 	maxIdleConns    int
 	connMaxLifetime time.Duration
-	connMaxIdleTime time.Duration
 	autoMigrate     bool
 }
 
-// Option configures Store settings.
-type Option func(*options)
-
-// WithDriverName configures a custom SQL driver name (defaults to "postgres").
-func WithDriverName(driverName string) Option {
+// WithDriverName configures a custom registered SQL driver.
+func WithDriverName(name string) Option {
 	return func(o *options) {
-		if driverName != "" {
-			o.driverName = driverName
+		if name != "" {
+			o.driverName = name
 		}
 	}
 }
 
-// WithMaxOpenConns sets the maximum number of open connections to the database.
+// WithMaxOpenConns sets the maximum number of open connections.
 func WithMaxOpenConns(n int) Option {
-	return func(o *options) {
-		o.maxOpenConns = n
-	}
+	return func(o *options) { o.maxOpenConns = n }
 }
 
-// WithMaxIdleConns sets the maximum number of idle connections in the pool.
+// WithMaxIdleConns sets the maximum number of idle connections.
 func WithMaxIdleConns(n int) Option {
-	return func(o *options) {
-		o.maxIdleConns = n
-	}
+	return func(o *options) { o.maxIdleConns = n }
 }
 
-// WithConnMaxLifetime sets the maximum amount of time a connection may be reused.
+// WithConnMaxLifetime bounds connection reuse.
 func WithConnMaxLifetime(d time.Duration) Option {
-	return func(o *options) {
-		o.connMaxLifetime = d
-	}
+	return func(o *options) { o.connMaxLifetime = d }
 }
 
-// WithConnMaxIdleTime sets the maximum amount of time a connection may be idle.
-func WithConnMaxIdleTime(d time.Duration) Option {
-	return func(o *options) {
-		o.connMaxIdleTime = d
-	}
+// WithAutoMigrate controls whether New applies the schema. It defaults to true.
+func WithAutoMigrate(enabled bool) Option {
+	return func(o *options) { o.autoMigrate = enabled }
 }
 
-// WithAutoMigrate enables or disables automatic database migration on startup (defaults to true).
-func WithAutoMigrate(autoMigrate bool) Option {
-	return func(o *options) {
-		o.autoMigrate = autoMigrate
-	}
+// Store implements session.Store using PostgreSQL.
+type Store struct {
+	mu     sync.RWMutex
+	closed bool
+	db     *sql.DB
 }
 
-// New creates and initializes a new PostgreSQL Store from a connection DSN.
+// New opens a PostgreSQL database and applies the schema when configured.
 func New(dsn string, opts ...Option) (*Store, error) {
-	if dsn == "" {
-		return nil, fmt.Errorf("%w: dsn cannot be empty", storage.ErrInvalidInput)
-	}
-
-	cfg := &options{
-		driverName:  DefaultDriverName,
-		autoMigrate: true,
-	}
+	cfg := defaultOptions()
 	for _, opt := range opts {
 		opt(cfg)
 	}
 
 	db, err := sql.Open(cfg.driverName, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("postgres: failed to open database: %w", err)
+		return nil, fmt.Errorf("postgres: open: %w", err)
 	}
-
 	if cfg.maxOpenConns > 0 {
 		db.SetMaxOpenConns(cfg.maxOpenConns)
 	}
@@ -107,68 +87,55 @@ func New(dsn string, opts ...Option) (*Store, error) {
 	if cfg.connMaxLifetime > 0 {
 		db.SetConnMaxLifetime(cfg.connMaxLifetime)
 	}
-	if cfg.connMaxIdleTime > 0 {
-		db.SetConnMaxIdleTime(cfg.connMaxIdleTime)
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("postgres: failed to ping database: %w", err)
+		return nil, fmt.Errorf("postgres: ping: %w", err)
 	}
 
-	store := &Store{db: db}
-
-	if cfg.autoMigrate {
-		if err := store.Migrate(ctx); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("postgres: failed to apply migrations: %w", err)
-		}
+	store, err := NewWithDB(db, opts...)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
 	}
-
 	return store, nil
 }
 
-// NewWithDB creates a Store wrapping an existing *sql.DB instance.
+// NewWithDB wraps an existing database handle.
 func NewWithDB(db *sql.DB, opts ...Option) (*Store, error) {
 	if db == nil {
-		return nil, fmt.Errorf("%w: db cannot be nil", storage.ErrInvalidInput)
+		return nil, fmt.Errorf("postgres: db is nil")
 	}
-
-	cfg := &options{
-		autoMigrate: true,
-	}
+	cfg := defaultOptions()
 	for _, opt := range opts {
 		opt(cfg)
 	}
-
 	store := &Store{db: db}
-
 	if cfg.autoMigrate {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := store.Migrate(ctx); err != nil {
-			return nil, fmt.Errorf("postgres: failed to apply migrations: %w", err)
+			return nil, fmt.Errorf("postgres: migrate: %w", err)
 		}
 	}
-
 	return store, nil
 }
 
-// DB returns the underlying *sql.DB handle.
+func defaultOptions() *options {
+	return &options{
+		driverName:  DefaultDriverName,
+		autoMigrate: true,
+	}
+}
+
+// DB returns the underlying database handle.
 func (s *Store) DB() *sql.DB {
 	return s.db
 }
 
-func (s *Store) isClosed() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.closed
-}
-
-// Close closes the database connection pool. Subsequent operations return storage.ErrClosed.
+// Close closes the database. It is safe to call more than once.
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -179,39 +146,11 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// Clear removes all rows from threads and messages.
-func (s *Store) Clear(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
+func (s *Store) available() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return session.ErrClosed
 	}
-	if s.isClosed() {
-		return storage.ErrClosed
-	}
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, "DELETE FROM messages"); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM threads"); err != nil {
-		return err
-	}
-
-	return tx.Commit()
+	return nil
 }
-
-// DangerouslyClearAll removes all stored threads and messages using a background context.
-func (s *Store) DangerouslyClearAll() {
-	_ = s.Clear(context.Background())
-}
-
-// Compile-time checks that Store implements storage.Storage and all domain store interfaces.
-var (
-	_ storage.Storage      = (*Store)(nil)
-	_ storage.ThreadStore  = (*Store)(nil)
-	_ storage.MessageStore = (*Store)(nil)
-)

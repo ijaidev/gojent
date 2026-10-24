@@ -2,51 +2,79 @@ package postgres_test
 
 import (
 	"context"
-	"database/sql"
+	"fmt"
 	"os"
 	"testing"
+	"time"
 
-	"github.com/ijaidev/gojent/core/storage"
-	"github.com/ijaidev/gojent/core/storage/storagetest"
+	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/core/session"
 	"github.com/ijaidev/gojent/stores/postgres"
 )
 
-// TestStore_Integration runs the shared storage conformance suite against a
-// real PostgreSQL server. Set GOJENT_TEST_POSTGRES_DSN (for example
-// "postgres://postgres:postgres@localhost:5432/gojent_test?sslmode=disable")
-// to enable it; the test is skipped when the variable is empty.
-func TestStore_Integration(t *testing.T) {
-	dsn := os.Getenv("GOJENT_TEST_POSTGRES_DSN")
+// TestIntegration exercises the store against a real PostgreSQL instance.
+// Set GOJENT_POSTGRES_DSN to run it; otherwise it is skipped.
+func TestIntegration(t *testing.T) {
+	dsn := os.Getenv("GOJENT_POSTGRES_DSN")
 	if dsn == "" {
-		t.Skip("set GOJENT_TEST_POSTGRES_DSN to run PostgreSQL integration tests")
-	}
-
-	storagetest.Run(t, func(t *testing.T) storage.Storage {
-		t.Helper()
-
-		store := newIntegrationStore(t, dsn)
-		return store
-	})
-}
-
-// newIntegrationStore resets the storage tables and returns a migrated store,
-// so every conformance subtest starts from an empty database.
-func newIntegrationStore(t *testing.T, dsn string) *postgres.Store {
-	t.Helper()
-
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		t.Fatalf("sql.Open failed: %v", err)
-	}
-	_, dropErr := db.ExecContext(context.Background(), "DROP TABLE IF EXISTS messages, threads CASCADE")
-	if closeErr := db.Close(); dropErr != nil || closeErr != nil {
-		t.Fatalf("failed to reset database: drop err=%v, close err=%v", dropErr, closeErr)
+		t.Skip("GOJENT_POSTGRES_DSN is not set")
 	}
 
 	store, err := postgres.New(dsn)
 	if err != nil {
-		t.Fatalf("postgres.New failed: %v", err)
+		t.Fatalf("New: %v", err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	return store
+	defer func() { _ = store.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	sess := session.Session{
+		ID:         fmt.Sprintf("integration-%d", time.Now().UnixNano()),
+		ResourceID: "gojent-tests",
+	}
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := store.Delete(cleanup, sess); err != nil {
+			t.Errorf("Delete: %v", err)
+		}
+	})
+
+	messages := []llm.Message{
+		llm.UserMessage("hello"),
+		{
+			Role:         llm.RoleAssistant,
+			Content:      []llm.Part{llm.TextPart("hi")},
+			ToolCalls:    []llm.ToolCall{{Index: 0, ID: "call-1", Name: "lookup", Arguments: `{"q":"go"}`}},
+			ProviderData: &llm.ProviderData{Provider: "test", Version: 1, Data: []byte(`{"sig":"x"}`)},
+		},
+		{Role: llm.RoleTool, ToolCallID: "call-1", Name: "lookup", Content: []llm.Part{llm.TextPart(`{"answer":42}`)}},
+	}
+	if err := store.Append(ctx, sess, messages...); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	loaded, err := store.Load(ctx, sess)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(loaded) != len(messages) {
+		t.Fatalf("messages = %d, want %d", len(loaded), len(messages))
+	}
+	if loaded[1].ProviderData == nil || string(loaded[1].ProviderData.Data) != `{"sig":"x"}` {
+		t.Errorf("provider data did not round-trip: %+v", loaded[1].ProviderData)
+	}
+	if loaded[2].ToolCallID != "call-1" || loaded[2].Text() != `{"answer":42}` {
+		t.Errorf("tool result did not round-trip: %+v", loaded[2])
+	}
+
+	other := session.Session{ID: sess.ID, ResourceID: "other-tenant"}
+	isolated, err := store.Load(ctx, other)
+	if err != nil {
+		t.Fatalf("Load other: %v", err)
+	}
+	if len(isolated) != 0 {
+		t.Errorf("tenant isolation failed: %d messages", len(isolated))
+	}
 }
