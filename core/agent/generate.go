@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"time"
 
@@ -48,7 +49,8 @@ func WithOutputSchema[T any](opts ...tool.SchemaOption) Option {
 		schemaOpts = append(schemaOpts, tool.WithStrictSchema(true))
 		schema, err := tool.GenerateSchema[T](schemaOpts...)
 		if err != nil {
-			schema = map[string]any{}
+			cfg.optionErr = fmt.Errorf("%w: %w", ErrOutputSchema, err)
+			return
 		}
 
 		var zero T

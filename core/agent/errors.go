@@ -34,6 +34,9 @@ var (
 	ErrTerminated = errors.New("agent: run terminated by policy")
 	// ErrToolDenied is returned internally when a tool call is denied.
 	ErrToolDenied = errors.New("agent: tool call denied")
+	// ErrOutputSchema is returned when a structured output schema cannot be
+	// generated from the requested type.
+	ErrOutputSchema = errors.New("agent: invalid output schema")
 	// ErrRunCanceled is returned when a run is canceled without a more
 	// specific cause.
 	ErrRunCanceled = errors.New("agent: run canceled")

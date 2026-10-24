@@ -72,12 +72,18 @@ type RunOptions struct {
 	Media []llm.Part
 	// ToolChoice constrains tool selection.
 	ToolChoice llm.ToolChoice
+
+	// optionErr records a failure from an Option so newRunner can return it.
+	optionErr error
 }
 
 // newRunner resolves and validates the configuration for one execution.
 func newRunner(a *Agent, opts RunOptions) (*runner, error) {
 	if a == nil {
 		return nil, ErrAgentRequired
+	}
+	if opts.optionErr != nil {
+		return nil, opts.optionErr
 	}
 	if opts.Model == nil {
 		opts.Model = a.Model()

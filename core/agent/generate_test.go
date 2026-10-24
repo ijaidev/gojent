@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/ijaidev/gojent/core/agent"
@@ -70,5 +71,18 @@ func TestGenerateStructured_DecodeError(t *testing.T) {
 	}
 	if resp == nil {
 		t.Error("expected the originating response on decode failure")
+	}
+}
+
+func TestGenerateStructured_UnsupportedTypeFailsBeforeCallingModel(t *testing.T) {
+	model := &scriptModel{steps: []step{finalText("unused")}}
+	a := mustAgent(t, agent.Config{Name: "structured", Model: model})
+
+	_, _, err := agent.GenerateStructured[chan int](context.Background(), a, "make a person")
+	if !errors.Is(err, agent.ErrOutputSchema) {
+		t.Fatalf("err = %v, want ErrOutputSchema", err)
+	}
+	if model.CallCount() != 0 {
+		t.Errorf("model calls = %d, want 0", model.CallCount())
 	}
 }
