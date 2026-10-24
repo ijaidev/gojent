@@ -1,33 +1,40 @@
 package llm
 
-// UserMessage creates a user message with the given text content.
+// UserMessage creates a user message with text content.
 func UserMessage(content string) Message {
-	return Message{Role: RoleUser, Content: []Part{TextPart(content)}}
+	return Message{Role: RoleUser, Content: NonEmptyParts([]Part{TextPart(content)})}
 }
 
 // UserMessageWithParts creates a user message containing explicit parts.
 func UserMessageWithParts(parts ...Part) Message {
-	return Message{
-		Role:    RoleUser,
-		Content: parts,
-	}
+	return Message{Role: RoleUser, Content: NonEmptyParts(parts)}
 }
 
-// SystemMessage creates a system instruction message with the given content.
+// SystemMessage creates a system instruction message.
 func SystemMessage(content string) Message {
-	return Message{Role: RoleSystem, Content: []Part{TextPart(content)}}
+	return Message{Role: RoleSystem, Content: NonEmptyParts([]Part{TextPart(content)})}
 }
 
-// AssistantMessage creates an assistant message with the given content.
+// AssistantMessage creates an assistant message with text content.
 func AssistantMessage(content string) Message {
-	return Message{Role: RoleAssistant, Content: []Part{TextPart(content)}}
+	return Message{Role: RoleAssistant, Content: NonEmptyParts([]Part{TextPart(content)})}
 }
 
-// ToolResultMessage creates a tool execution output message for a specific tool call ID.
+// ToolResultMessage creates a tool result for a specific call.
 func ToolResultMessage(toolCallID, content string) Message {
 	return Message{
 		Role:       RoleTool,
 		ToolCallID: toolCallID,
-		Content:    []Part{TextPart(content)},
+		Content:    NonEmptyParts([]Part{TextPart(content)}),
+	}
+}
+
+// ToolErrorMessage creates an error tool result for a specific call.
+func ToolErrorMessage(toolCallID, content string) Message {
+	return Message{
+		Role:       RoleTool,
+		ToolCallID: toolCallID,
+		IsError:    true,
+		Content:    NonEmptyParts([]Part{TextPart(content)}),
 	}
 }

@@ -24,8 +24,8 @@ type StreamChunk struct {
 	FinishReason FinishReason `json:"finish_reason,omitempty"`
 	// Usage contains token consumption statistics, typically populated on the final chunk.
 	Usage *Usage `json:"usage,omitempty"`
-	// Raw contains provider-specific stream event payload if available.
-	Raw any `json:"raw,omitempty"`
+	// ProviderData carries opaque replay state produced during streaming.
+	ProviderData *ProviderData `json:"provider_data,omitempty"`
 }
 
 // Stream represents an active token stream from an LLM.

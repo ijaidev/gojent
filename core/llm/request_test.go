@@ -33,16 +33,16 @@ func TestResponseFormat_Clone(t *testing.T) {
 		Type:   llm.ResponseFormatJSONSchema,
 		Name:   "TestSchema",
 		Schema: map[string]any{"type": "object"},
-		Strict: &strict,
+		Strict: strict,
 	}
 
 	cloned := rf.Clone()
-	if cloned.Type != llm.ResponseFormatJSONSchema || cloned.Name != "TestSchema" || *cloned.Strict != true {
+	if cloned.Type != llm.ResponseFormatJSONSchema || cloned.Name != "TestSchema" || !cloned.Strict {
 		t.Fatalf("unexpected cloned format: %+v", cloned)
 	}
 
-	*rf.Strict = false
-	if *cloned.Strict != true {
-		t.Errorf("expected clone strict to remain true, got %v", *cloned.Strict)
+	rf.Strict = false
+	if !cloned.Strict {
+		t.Errorf("expected clone strict to remain true, got %v", cloned.Strict)
 	}
 }
