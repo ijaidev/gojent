@@ -278,6 +278,21 @@ GOJENT_POSTGRES_DSN='postgres://postgres:postgres@localhost:5432/gojent_test?ssl
   go test -race ./...
 ```
 
+## Versioning
+
+The root module and each optional module are versioned independently. Tag a
+module release with its directory prefix so `go get` can resolve it:
+
+```bash
+git tag providers/google/v0.1.0
+git tag stores/sqlite/v0.1.0
+git tag stores/postgres/v0.1.0
+```
+
+The optional modules carry `replace` directives that resolve the root module
+from this checkout during local development. Remove them in the release commit
+before tagging.
+
 ## Non-goals
 
 Gojent deliberately does not include:
