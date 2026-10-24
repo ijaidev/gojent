@@ -1,139 +1,174 @@
-// Package agent provides autonomous agent abstractions, configuration, execution loops,
-// and lifecycle hooks for observing and customizing runs.
 package agent
 
 import (
-	"sync"
+	"cmp"
+	"fmt"
+	"slices"
 
 	"github.com/ijaidev/gojent/core/llm"
-	"github.com/ijaidev/gojent/core/storage"
 	"github.com/ijaidev/gojent/core/tool"
 )
 
-const defaultMaxSteps = 5
-
-// Config defines the initialization options for an Agent.
-type Config struct {
-	// ID is the unique identifier for the agent (e.g. "chef-agent").
-	ID string
-	// Instructions are the system instructions/prompt guiding agent behavior.
-	Instructions string
-	// Model is the swappable LLM instance that powers the agent.
-	Model llm.LLM
-	// Storage is the optional swappable storage backend for conversation threads, messages, and state.
-	Storage storage.Storage
-	// Tools contains the list of tools available to the agent.
-	Tools []tool.Tool
-	// MaxSteps sets the default maximum number of ReAct loop iterations (defaults to 5).
-	MaxSteps int
-	// Thinking configures default thinking/reasoning parameters for the agent.
-	Thinking *llm.ThinkingConfig
-	// Hooks defines optional lifecycle callbacks for observing and customizing runs.
-	Hooks Hooks
-}
-
-// Agent represents an autonomous AI agent that leverages a Large Language Model.
-// It encapsulates instructions, swappable model dependencies, and execution methods.
+// Agent is reusable behavior: instructions, a model, tools, and an optional
+// default policy. It does not own storage or execution state.
 type Agent struct {
-	mu           sync.RWMutex
-	id           string
+	name         string
+	description  string
 	instructions string
-	model        llm.LLM
-	storage      storage.Storage
-	tools        map[string]tool.Tool
-	hooks        Hooks
-	maxSteps     int
-	thinking     *llm.ThinkingConfig
+	model        llm.Model
+	tools        []tool.Tool
+	toolByName   map[string]tool.Tool
+	policy       Policy
 }
 
-// New creates and initializes a new Agent with the given configuration.
+// Config configures an Agent.
+type Config struct {
+	// Name uniquely identifies the agent. Required.
+	Name string
+	// Description explains the agent's purpose, especially when exposed as a
+	// tool for subagents.
+	Description string
+	// Instructions is the system prompt.
+	Instructions string
+	// Model powers the agent. Required.
+	Model llm.Model
+	// Tools are the capabilities available to the model.
+	Tools []tool.Tool
+	// Policy is the agent's default policy. A Runner policy may override it.
+	Policy Policy
+}
+
+// New creates an immutable Agent.
 func New(cfg Config) (*Agent, error) {
-	if cfg.ID == "" {
-		return nil, ErrIDRequired
+	if cfg.Name == "" {
+		return nil, ErrNameRequired
 	}
 	if cfg.Model == nil {
 		return nil, ErrModelRequired
 	}
-	toolsMap := make(map[string]tool.Tool, len(cfg.Tools))
-	for _, t := range cfg.Tools {
-		if !tool.IsNilTool(t) {
-			toolsMap[t.ID()] = t
-		}
-	}
 
-	maxSteps := cfg.MaxSteps
-	if maxSteps <= 0 {
-		maxSteps = defaultMaxSteps
+	tools := make([]tool.Tool, 0, len(cfg.Tools))
+	seen := make(map[string]struct{}, len(cfg.Tools))
+	for _, candidate := range cfg.Tools {
+		if tool.IsNilTool(candidate) {
+			return nil, ErrToolNil
+		}
+		name := candidate.Spec().Name
+		if _, exists := seen[name]; exists {
+			return nil, fmt.Errorf("%w: %q", ErrDuplicateTool, name)
+		}
+		seen[name] = struct{}{}
+		tools = append(tools, candidate)
+	}
+	slices.SortFunc(tools, func(a, b tool.Tool) int {
+		return cmp.Compare(a.Spec().Name, b.Spec().Name)
+	})
+
+	byName := make(map[string]tool.Tool, len(tools))
+	for _, candidate := range tools {
+		byName[candidate.Spec().Name] = candidate
 	}
 
 	return &Agent{
-		id:           cfg.ID,
+		name:         cfg.Name,
+		description:  cfg.Description,
 		instructions: cfg.Instructions,
 		model:        cfg.Model,
-		storage:      cfg.Storage,
-		tools:        toolsMap,
-		hooks:        cfg.Hooks,
-		maxSteps:     maxSteps,
-		thinking:     cfg.Thinking.Clone(),
+		tools:        tools,
+		toolByName:   byName,
+		policy:       cfg.Policy,
 	}, nil
 }
 
-// ID returns the unique ID of the agent.
-func (a *Agent) ID() string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.id
+// Name returns the agent name.
+func (a *Agent) Name() string {
+	if a == nil {
+		return ""
+	}
+	return a.name
 }
 
-// Instructions returns the agent's system instructions.
+// Description returns the agent description.
+func (a *Agent) Description() string {
+	if a == nil {
+		return ""
+	}
+	return a.description
+}
+
+// Instructions returns the system instructions.
 func (a *Agent) Instructions() string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
+	if a == nil {
+		return ""
+	}
 	return a.instructions
 }
 
-// Model returns the current swappable LLM used by this agent.
-func (a *Agent) Model() llm.LLM {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
+// Model returns the agent model.
+func (a *Agent) Model() llm.Model {
+	if a == nil {
+		return nil
+	}
 	return a.model
 }
 
-// MaxSteps returns the default maximum number of ReAct loop iterations for this agent.
-func (a *Agent) MaxSteps() int {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.maxSteps
-}
-
-// Thinking returns the default thinking configuration for this agent, or nil.
-func (a *Agent) Thinking() *llm.ThinkingConfig {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.thinking.Clone()
-}
-
-// Hooks returns the lifecycle hooks configured on this agent.
-func (a *Agent) Hooks() Hooks {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.hooks
-}
-
-// SetModel swaps the LLM implementation for this agent at runtime.
-func (a *Agent) SetModel(m llm.LLM) error {
-	if m == nil {
-		return ErrModelRequired
+// Tools returns a copy of the tool list.
+func (a *Agent) Tools() []tool.Tool {
+	if a == nil {
+		return nil
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.model = m
-	return nil
+	return slices.Clone(a.tools)
 }
 
-// Storage returns the configured storage backend for this agent, or nil.
-func (a *Agent) Storage() storage.Storage {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.storage
+// Policy returns the agent's default policy, or nil.
+func (a *Agent) Policy() Policy {
+	if a == nil {
+		return nil
+	}
+	return a.policy
+}
+
+// Tool looks up a tool by name.
+func (a *Agent) Tool(name string) (tool.Tool, bool) {
+	if a == nil {
+		return nil, false
+	}
+	candidate, ok := a.toolByName[name]
+	return candidate, ok
+}
+
+// mergeTools builds a name-indexed tool registry from the agent and per-run
+// tools. Later entries with the same name replace earlier ones.
+type toolRegistry struct {
+	ordered []tool.Tool
+	byName  map[string]tool.Tool
+}
+
+func newToolRegistry(agentTools, extra []tool.Tool) *toolRegistry {
+	merged := make(map[string]tool.Tool, len(agentTools)+len(extra))
+	for _, candidate := range agentTools {
+		if !tool.IsNilTool(candidate) {
+			merged[candidate.Spec().Name] = candidate
+		}
+	}
+	for _, candidate := range extra {
+		if !tool.IsNilTool(candidate) {
+			merged[candidate.Spec().Name] = candidate
+		}
+	}
+	ordered := make([]tool.Tool, 0, len(merged))
+	for _, candidate := range merged {
+		ordered = append(ordered, candidate)
+	}
+	slices.SortFunc(ordered, func(a, b tool.Tool) int {
+		return cmp.Compare(a.Spec().Name, b.Spec().Name)
+	})
+	return &toolRegistry{ordered: ordered, byName: merged}
+}
+
+func (r *toolRegistry) definitions() []llm.ToolDefinition {
+	if r == nil {
+		return nil
+	}
+	return tool.Definitions(r.ordered)
 }
