@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ijaidev/gojent/core/tool"
 	"github.com/ijaidev/gojent/tools/exec"
 )
 
@@ -21,7 +22,7 @@ func TestExecuteCommand_Success(t *testing.T) {
 		Command: "echo 'hello from gojent'",
 	})
 
-	resAny, err := cmdTool.Execute(context.Background(), inputBytes)
+	resAny, err := cmdTool.Execute(context.Background(), tool.Call{Arguments: inputBytes})
 	if err != nil {
 		t.Fatalf("command failed: %v", err)
 	}
@@ -45,7 +46,7 @@ func TestExecuteCommand_Failure(t *testing.T) {
 		Command: "nonexistent_command_12345",
 	})
 
-	resAny, err := cmdTool.Execute(context.Background(), inputBytes)
+	resAny, err := cmdTool.Execute(context.Background(), tool.Call{Arguments: inputBytes})
 	if err != nil {
 		t.Fatalf("expected non-nil result even on exit failure, got error: %v", err)
 	}
@@ -70,7 +71,7 @@ func TestExecuteCommand_Timeout(t *testing.T) {
 	})
 
 	start := time.Now()
-	resAny, err := cmdTool.Execute(context.Background(), inputBytes)
+	resAny, err := cmdTool.Execute(context.Background(), tool.Call{Arguments: inputBytes})
 	duration := time.Since(start)
 
 	if err != nil {
@@ -101,7 +102,7 @@ func TestExecuteCommand_TimeoutKillsChildProcesses(t *testing.T) {
 	})
 
 	start := time.Now()
-	resAny, err := cmdTool.Execute(context.Background(), inputBytes)
+	resAny, err := cmdTool.Execute(context.Background(), tool.Call{Arguments: inputBytes})
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("expected timed out CommandOutput, got error: %v", err)

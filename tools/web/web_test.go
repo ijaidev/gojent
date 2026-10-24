@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ijaidev/gojent/core/tool"
 	"github.com/ijaidev/gojent/tools/web"
 )
 
@@ -41,7 +42,7 @@ func TestWebFetchTool_HTMLCleaning(t *testing.T) {
 		URL: ts.URL,
 	})
 
-	resAny, err := fetchTool.Execute(context.Background(), inputBytes)
+	resAny, err := fetchTool.Execute(context.Background(), tool.Call{Arguments: inputBytes})
 	if err != nil {
 		t.Fatalf("fetch failed: %v", err)
 	}
@@ -79,7 +80,7 @@ func TestWebSearchTool_Mock(t *testing.T) {
 		MaxResults: 1,
 	})
 
-	resAny, err := searchTool.Execute(context.Background(), inputBytes)
+	resAny, err := searchTool.Execute(context.Background(), tool.Call{Arguments: inputBytes})
 	if err != nil {
 		t.Fatalf("search failed: %v", err)
 	}

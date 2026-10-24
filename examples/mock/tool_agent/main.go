@@ -1,13 +1,11 @@
-// Package main demonstrates building an autonomous Agent equipped with custom tools
-// using a Mock LLM to simulate tool calling, ReAct execution loops, and real-time
-// tool argument streaming.
+// Package main demonstrates an autonomous agent with custom tools using a
+// mock model, including a streamed tool-call loop.
 package main
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"time"
 
@@ -19,7 +17,7 @@ import (
 
 // CalculatorInput specifies arguments for arithmetic operations.
 type CalculatorInput struct {
-	Operation string  `json:"operation" description:"The arithmetic operation to perform: add, subtract, multiply, or divide"`
+	Operation string  `json:"operation" description:"add, subtract, multiply, or divide"`
 	A         float64 `json:"a" description:"The first operand"`
 	B         float64 `json:"b" description:"The second operand"`
 }
@@ -32,8 +30,8 @@ type CalculatorOutput struct {
 
 // WeatherInput specifies arguments for querying weather conditions.
 type WeatherInput struct {
-	City  string `json:"city" description:"The city name, e.g. Tokyo, Paris, San Francisco"`
-	Units string `json:"units,omitempty" description:"The temperature scale: celsius or fahrenheit"`
+	City  string `json:"city" description:"The city name, e.g. Tokyo"`
+	Units string `json:"units,omitempty" description:"celsius or fahrenheit"`
 }
 
 // WeatherOutput contains the weather report for a city.
@@ -44,45 +42,43 @@ type WeatherOutput struct {
 	Condition   string  `json:"condition"`
 }
 
-func run() error {
-	ctx := context.Background()
-
-	// 1. Define strongly typed tools using tool.MustNew
-	calcTool := tool.MustNew(tool.Config[CalculatorInput, CalculatorOutput]{
+func calculatorTool() tool.Tool {
+	return tool.MustNew(tool.Config[CalculatorInput, CalculatorOutput]{
 		ID:          "calculator",
-		Description: "Perform basic mathematical arithmetic operations (add, subtract, multiply, divide).",
+		Description: "Perform basic arithmetic operations.",
 		Execute: func(_ context.Context, in CalculatorInput) (CalculatorOutput, error) {
-			var res float64
+			var result float64
 			switch in.Operation {
 			case "add":
-				res = in.A + in.B
+				result = in.A + in.B
 			case "subtract":
-				res = in.A - in.B
+				result = in.A - in.B
 			case "multiply":
-				res = in.A * in.B
+				result = in.A * in.B
 			case "divide":
 				if in.B == 0 {
 					return CalculatorOutput{}, errors.New("division by zero")
 				}
-				res = in.A / in.B
+				result = in.A / in.B
 			default:
 				return CalculatorOutput{}, fmt.Errorf("unsupported operation: %s", in.Operation)
 			}
-			return CalculatorOutput{
-				Operation: in.Operation,
-				Result:    res,
-			}, nil
+			fmt.Printf("  [tool] calculator(%s, %v, %v) = %v\n", in.Operation, in.A, in.B, result)
+			return CalculatorOutput{Operation: in.Operation, Result: result}, nil
 		},
 	})
+}
 
-	weatherTool := tool.MustNew(tool.Config[WeatherInput, WeatherOutput]{
+func weatherTool() tool.Tool {
+	return tool.MustNew(tool.Config[WeatherInput, WeatherOutput]{
 		ID:          "get_weather",
-		Description: "Retrieve current weather conditions for a specified city.",
+		Description: "Retrieve current weather conditions for a city.",
 		Execute: func(_ context.Context, in WeatherInput) (WeatherOutput, error) {
 			units := in.Units
 			if units == "" {
 				units = "celsius"
 			}
+			fmt.Printf("  [tool] get_weather(%s)\n", in.City)
 			return WeatherOutput{
 				City:        in.City,
 				Temperature: 21.5,
@@ -91,195 +87,152 @@ func run() error {
 			}, nil
 		},
 	})
+}
 
-	// =========================================================================
-	// Demo 1: Autonomous ReAct loop with MockLLM (Non-streaming)
-	// =========================================================================
-	fmt.Println("=== Demo 1: Autonomous ReAct Tool Execution (Non-streaming) ===")
+func runNonStreaming(ctx context.Context) error {
+	fmt.Println("=== Demo 1: Autonomous tool loop (non-streaming) ===")
 
-	calcTurn := 0
-	mockCalc := mockllm.New().ApplyOptions(
-		mockllm.WithCustomHandler(func(_ context.Context, _ llm.GenerateRequest) (*llm.GenerateResponse, error) {
-			calcTurn++
-			if calcTurn == 1 {
-				// Turn 1: Model inspects prompt and returns a ToolCall request
-				fmt.Println("  [MockLLM] Decided to invoke tool: calculator(operation=\"multiply\", a=42, b=7)")
-				return &llm.GenerateResponse{
-					FinishReason: llm.FinishReasonTool,
-					ToolCalls: []llm.ToolCall{
-						{
-							ID:        "call_calc_42_7",
+	turn := 0
+	model := mockllm.New().ApplyOptions(
+		mockllm.WithCustomStreamHandler(func(ctx context.Context, _ *llm.Request) (llm.Stream, error) {
+			turn++
+			if turn == 1 {
+				usage := llm.Usage{PromptTokens: 25, CompletionTokens: 15, TotalTokens: 40}
+				return llm.NewSliceStream(ctx, []*llm.StreamChunk{
+					{
+						ToolCalls: []llm.ToolCall{{
+							Index:     0,
+							ID:        "call_calc",
 							Name:      "calculator",
 							Arguments: `{"operation":"multiply","a":42,"b":7}`,
-						},
+						}},
+						FinishReason: llm.FinishReasonTool,
+						Usage:        &usage,
 					},
-					Usage: llm.Usage{PromptTokens: 25, CompletionTokens: 15, TotalTokens: 40},
-				}, nil
+				}), nil
 			}
-
-			// Turn 2: Model receives tool result from Agent and synthesizes final answer
-			fmt.Println("  [MockLLM] Received tool execution result. Generating final response.")
-			return &llm.GenerateResponse{
-				Text:         "42 multiplied by 7 is 294.",
-				FinishReason: llm.FinishReasonStop,
-				Usage:        llm.Usage{PromptTokens: 45, CompletionTokens: 10, TotalTokens: 55},
-			}, nil
+			usage := llm.Usage{PromptTokens: 45, CompletionTokens: 10, TotalTokens: 55}
+			return llm.NewSliceStream(ctx, []*llm.StreamChunk{
+				{Delta: "42 multiplied by 7 is 294."},
+				{FinishReason: llm.FinishReasonStop, Usage: &usage},
+			}), nil
 		}),
 	)
 
-	// Create Agent with registered tools
-	calcBot, err := agent.New(agent.Config{
-		ID:           "math-assistant",
-		Instructions: "You are a helpful math assistant with access to a calculator tool.",
-		Model:        mockCalc,
-		Tools:        []tool.Tool{calcTool},
+	bot, err := agent.New(agent.Config{
+		Name:         "math-assistant",
+		Instructions: "You are a math assistant with access to a calculator.",
+		Model:        model,
+		Tools:        []tool.Tool{calculatorTool()},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create calc agent: %w", err)
+		return fmt.Errorf("create calc agent: %w", err)
 	}
 
-	prompt1 := "What is 42 multiplied by 7?"
-	fmt.Printf("User: %s\n", prompt1)
-
-	res1, err := calcBot.Generate(ctx, prompt1)
+	prompt := "What is 42 multiplied by 7?"
+	fmt.Printf("User: %s\n", prompt)
+	response, err := bot.Generate(ctx, prompt)
 	if err != nil {
-		return fmt.Errorf("agent.Generate failed: %w", err)
+		return fmt.Errorf("generate: %w", err)
 	}
+	fmt.Printf("Agent: %s\n[usage] %d total tokens\n\n", response.Text, response.Usage.TotalTokens)
 
-	fmt.Printf("Agent: %s\n", res1.Text)
-	fmt.Printf("[Cumulative Usage] Total tokens: %d\n", res1.Usage.TotalTokens)
-
-	fmt.Println("\n--- Conversation ReAct Trajectory ---")
-	for i := range res1.Messages {
-		msg := &res1.Messages[i]
-		switch msg.Role {
-		case llm.RoleSystem:
-			fmt.Printf("  Step %d [%s]: %s\n", i+1, msg.Role, msg.Text())
-		case llm.RoleUser:
-			fmt.Printf("  Step %d [%s]: %s\n", i+1, msg.Role, msg.Text())
+	fmt.Println("--- trajectory ---")
+	for i, message := range response.Messages {
+		switch message.Role {
 		case llm.RoleAssistant:
-			if len(msg.ToolCalls) > 0 {
-				fmt.Printf("  Step %d [%s Tool Call]: Name=%s, Args=%s\n",
-					i+1, msg.Role, msg.ToolCalls[0].Name, msg.ToolCalls[0].Arguments)
+			if len(message.ToolCalls) > 0 {
+				call := message.ToolCalls[0]
+				fmt.Printf("  %d assistant -> %s(%s)\n", i+1, call.Name, call.Arguments)
 			} else {
-				fmt.Printf("  Step %d [%s Final Reply]: %s\n", i+1, msg.Role, msg.Text())
+				fmt.Printf("  %d assistant -> %s\n", i+1, message.Text())
 			}
 		case llm.RoleTool:
-			fmt.Printf("  Step %d [%s Result]: Name=%s, Output=%s\n",
-				i+1, msg.Role, msg.Name, msg.Text())
-		}
-	}
-
-	// =========================================================================
-	// Demo 2: Streaming ReAct loop with Real-time Tool Argument Streaming
-	// =========================================================================
-	fmt.Println("\n=== Demo 2: Streaming ReAct with Tool Argument Streaming ===")
-
-	streamTurn := 0
-	mockStream := mockllm.New().ApplyOptions(
-		mockllm.WithCustomStreamHandler(func(ctx context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
-			streamTurn++
-			if streamTurn == 1 {
-				// Turn 1: Model streams the tool arguments in real-time chunks
-				chunks := []*llm.StreamChunk{
-					{
-						ToolCalls: []llm.ToolCall{
-							{ID: "call_weather_tokyo", Name: "get_weather", Arguments: `{"city":"`},
-						},
-					},
-					{
-						ToolCalls: []llm.ToolCall{
-							{ID: "call_weather_tokyo", Arguments: `Tokyo",`},
-						},
-					},
-					{
-						ToolCalls: []llm.ToolCall{
-							{ID: "call_weather_tokyo", Arguments: `"units":"celsius"}`},
-						},
-						FinishReason: llm.FinishReasonTool,
-					},
-				}
-				return llm.NewSliceStream(ctx, chunks), nil
-			}
-
-			// Turn 2: After tool execution, model streams the final answer tokens
-			chunks := []*llm.StreamChunk{
-				{Delta: "The current "},
-				{Delta: "weather in "},
-				{Delta: "Tokyo is "},
-				{Delta: "21.5°C and "},
-				{Delta: "Sunny with light breeze."},
-			}
-			return llm.NewSliceStream(ctx, chunks), nil
-		}),
-	)
-
-	weatherBot, err := agent.New(agent.Config{
-		ID:           "weather-assistant",
-		Instructions: "You are a helpful assistant with weather lookup capabilities.",
-		Model:        mockStream,
-		Tools:        []tool.Tool{weatherTool},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create weather agent: %w", err)
-	}
-
-	prompt2 := "How is the weather in Tokyo?"
-	fmt.Printf("User: %s\n", prompt2)
-
-	stream, err := weatherBot.Stream(ctx, prompt2)
-	if err != nil {
-		return fmt.Errorf("weatherBot.Stream failed: %w", err)
-	}
-	defer func() {
-		_ = stream.Close()
-	}()
-
-	fmt.Println("Streaming output:")
-	for {
-		chunk, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("stream chunk error: %w", err)
-		}
-
-		// Streamed tool argument deltas can be inspected live
-		if len(chunk.ToolCalls) > 0 {
-			for _, tc := range chunk.ToolCalls {
-				if tc.Arguments != "" {
-					fmt.Printf("  [Streaming Tool Arg Delta] %s\n", tc.Arguments)
-				}
-			}
-		}
-
-		// Streamed text deltas from the final answer
-		if chunk.Delta != "" {
-			fmt.Print(chunk.Delta)
-			time.Sleep(30 * time.Millisecond)
+			fmt.Printf("  %d tool %s -> %s\n", i+1, message.Name, message.Text())
+		default:
+			fmt.Printf("  %d %s -> %s\n", i+1, message.Role, message.Text())
 		}
 	}
 	fmt.Println()
+	return nil
+}
 
-	// Inspect final assembled response
-	finalRes, err := stream.Response()
+func runStreaming(ctx context.Context) error {
+	fmt.Println("=== Demo 2: Streamed tool arguments and final answer ===")
+
+	turn := 0
+	model := mockllm.New().ApplyOptions(
+		mockllm.WithCustomStreamHandler(func(ctx context.Context, _ *llm.Request) (llm.Stream, error) {
+			turn++
+			usage := llm.Usage{PromptTokens: 45, CompletionTokens: 10, TotalTokens: 55}
+			if turn == 1 {
+				return llm.NewSliceStream(ctx, []*llm.StreamChunk{
+					{ToolCalls: []llm.ToolCall{{Index: 0, ID: "call_weather", Name: "get_weather", Arguments: `{"city":"`}}},
+					{ToolCalls: []llm.ToolCall{{Index: 0, Arguments: `Tokyo",`}}},
+					{ToolCalls: []llm.ToolCall{{Index: 0, Arguments: `"units":"celsius"}`}}, FinishReason: llm.FinishReasonTool, Usage: &usage},
+				}), nil
+			}
+			return llm.NewSliceStream(ctx, []*llm.StreamChunk{
+				{Delta: "The current "},
+				{Delta: "weather in Tokyo is "},
+				{Delta: "21.5°C and sunny."},
+				{FinishReason: llm.FinishReasonStop, Usage: &usage},
+			}), nil
+		}),
+	)
+
+	bot, err := agent.New(agent.Config{
+		Name:         "weather-assistant",
+		Instructions: "You are a weather assistant.",
+		Model:        model,
+		Tools:        []tool.Tool{weatherTool()},
+	})
 	if err != nil {
-		return fmt.Errorf("stream.Response failed: %w", err)
+		return fmt.Errorf("create weather agent: %w", err)
 	}
 
-	fmt.Printf("\n[Stream Response Metadata]\n")
-	fmt.Printf("  Final Text: %s\n", finalRes.Text)
-	fmt.Printf("  Tools Invoked: %d\n", len(finalRes.ToolCalls))
-	for _, tc := range finalRes.ToolCalls {
-		fmt.Printf("    - %s with arguments: %s\n", tc.Name, tc.Arguments)
+	prompt := "How is the weather in Tokyo?"
+	fmt.Printf("User: %s\nAgent: ", prompt)
+	run, err := bot.Stream(ctx, prompt)
+	if err != nil {
+		return fmt.Errorf("start stream: %w", err)
 	}
 
+	for event := range run.Events() {
+		switch typed := event.(type) {
+		case agent.TextDelta:
+			fmt.Print(typed.Text)
+			time.Sleep(20 * time.Millisecond)
+		case agent.ToolCallDelta:
+			if typed.Arguments != "" {
+				fmt.Printf("\n  [streamed argument] %s", typed.Arguments)
+			}
+		case agent.ToolStart:
+			fmt.Printf("\n  [tool start] %s(%s)", typed.Call.Name, typed.Call.Arguments)
+		case agent.RunEnd:
+			if typed.Err != nil {
+				fmt.Printf("\n[error] %v\n", typed.Err)
+			}
+		}
+	}
+
+	response, err := run.Wait(ctx)
+	if err != nil {
+		return fmt.Errorf("wait: %w", err)
+	}
+	fmt.Printf("\n[finish] %s | total tokens: %d\n", response.FinishReason, response.Usage.TotalTokens)
+	for _, call := range response.ToolCalls {
+		fmt.Printf("  invoked %s with %s\n", call.Name, call.Arguments)
+	}
 	return nil
 }
 
 func main() {
-	if err := run(); err != nil {
+	ctx := context.Background()
+	if err := runNonStreaming(ctx); err != nil {
+		log.Fatal(err)
+	}
+	if err := runStreaming(ctx); err != nil {
 		log.Fatal(err)
 	}
 }

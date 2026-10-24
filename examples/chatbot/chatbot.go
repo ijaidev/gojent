@@ -13,9 +13,8 @@ import (
 
 	"github.com/ijaidev/gojent/core/agent"
 	"github.com/ijaidev/gojent/core/llm"
-	"github.com/ijaidev/gojent/core/storage"
+	"github.com/ijaidev/gojent/core/session"
 	"github.com/ijaidev/gojent/core/tool"
-	"github.com/ijaidev/gojent/stores/inmemory"
 )
 
 // DefaultInstructions is the default system prompt guiding the chatbot.
@@ -23,11 +22,10 @@ const DefaultInstructions = "You are a friendly, concise, and helpful AI assista
 
 // Config defines the configuration options for a chatbot session.
 type Config struct {
-	AgentID      string
 	AgentName    string
 	Instructions string
-	Storage      storage.Storage
-	ThreadID     string
+	Store        session.Store
+	SessionID    string
 	ResourceID   string
 	Tools        []tool.Tool
 	Input        io.Reader
@@ -39,15 +37,6 @@ type Config struct {
 
 // Option configures a chatbot session.
 type Option func(*Config)
-
-// WithAgentID sets the identifier for the underlying agent.
-func WithAgentID(id string) Option {
-	return func(c *Config) {
-		if id != "" {
-			c.AgentID = id
-		}
-	}
-}
 
 // WithAgentName sets the human-readable display name of the agent.
 func WithAgentName(name string) Option {
@@ -67,24 +56,23 @@ func WithInstructions(instructions string) Option {
 	}
 }
 
-// WithStorage sets the storage backend used to persist conversation threads and history.
-// If not set, an in-memory storage instance is automatically used.
-func WithStorage(s storage.Storage) Option {
+// WithStore sets the session store used to persist conversation history.
+func WithStore(store session.Store) Option {
 	return func(c *Config) {
-		c.Storage = s
+		c.Store = store
 	}
 }
 
-// WithThreadID sets the thread ID for multi-turn conversation memory.
-func WithThreadID(id string) Option {
+// WithSessionID sets the conversation identifier used for multi-turn memory.
+func WithSessionID(id string) Option {
 	return func(c *Config) {
 		if id != "" {
-			c.ThreadID = id
+			c.SessionID = id
 		}
 	}
 }
 
-// WithResourceID sets the owner or tenant resource ID scoping the thread.
+// WithResourceID sets the owner or tenant scope for the conversation.
 func WithResourceID(id string) Option {
 	return func(c *Config) {
 		c.ResourceID = id
@@ -99,7 +87,6 @@ func WithTools(tools ...tool.Tool) Option {
 }
 
 // WithIO sets custom input reader and output writer streams.
-// Useful for automated tests or custom terminal wrappers.
 func WithIO(r io.Reader, w io.Writer) Option {
 	return func(c *Config) {
 		if r != nil {
@@ -118,14 +105,14 @@ func WithBanner(banner string) Option {
 	}
 }
 
-// WithPromptPrefix sets the prompt string printed before the user types (default: "You > ").
+// WithPromptPrefix sets the prompt string printed before the user types.
 func WithPromptPrefix(prefix string) Option {
 	return func(c *Config) {
 		c.PromptPrefix = prefix
 	}
 }
 
-// WithExitCommands overrides the list of commands that terminate the chat session.
+// WithExitCommands overrides the commands that terminate the chat session.
 func WithExitCommands(cmds ...string) Option {
 	return func(c *Config) {
 		if len(cmds) > 0 {
@@ -134,97 +121,72 @@ func WithExitCommands(cmds ...string) Option {
 	}
 }
 
-type printer struct {
-	w io.Writer
-}
-
-func (p *printer) print(a ...any) {
-	_, _ = fmt.Fprint(p.w, a...)
-}
-
-func (p *printer) println(a ...any) {
-	_, _ = fmt.Fprintln(p.w, a...)
-}
-
-func (p *printer) printf(format string, a ...any) {
-	_, _ = fmt.Fprintf(p.w, format, a...)
-}
-
-// Run starts an interactive, stateful, streaming chatbot loop powered by the provided LLM.
-// It reads input line-by-line, streams tokens from the LLM in real-time, persists conversation
-// history in storage across turns, and terminates cleanly on exit commands or context cancellation.
-func Run(ctx context.Context, model llm.LLM, opts ...Option) error {
+// Run starts an interactive, stateful, streaming chatbot loop.
+//
+// Each turn runs through the same Runner, so history is loaded from and
+// appended to the configured store. Events are consumed for streaming output.
+func Run(ctx context.Context, model llm.Model, opts ...Option) error {
 	if model == nil {
 		return errors.New("chatbot: model is required")
 	}
 
 	cfg := &Config{
-		AgentID:      "chatbot-assistant",
 		AgentName:    "Assistant",
 		Instructions: DefaultInstructions,
-		ThreadID:     "chat-session-default",
+		SessionID:    "chat-session-default",
 		Input:        os.Stdin,
 		Output:       os.Stdout,
 		PromptPrefix: "You > ",
 		ExitCommands: []string{"exit", "quit", "/q", ":q", "q"},
 	}
-
 	for _, opt := range opts {
 		opt(cfg)
 	}
-
-	if cfg.Storage == nil {
-		cfg.Storage = inmemory.New()
+	if cfg.Store == nil {
+		cfg.Store = session.NewMemory()
 	}
 
 	bot, err := agent.New(agent.Config{
-		ID:           cfg.AgentID,
+		Name:         "chatbot",
+		Description:  "Interactive assistant",
 		Instructions: cfg.Instructions,
 		Model:        model,
 		Tools:        cfg.Tools,
-		Storage:      cfg.Storage,
 	})
 	if err != nil {
 		return fmt.Errorf("chatbot: failed to create agent: %w", err)
 	}
+	runner := &agent.Runner{Store: cfg.Store}
+	sess := &session.Session{ID: cfg.SessionID, ResourceID: cfg.ResourceID}
 
-	// Ensure the thread exists in storage
-	_, _ = cfg.Storage.SaveThread(ctx, &storage.Thread{
-		ID:         cfg.ThreadID,
-		ResourceID: cfg.ResourceID,
-		Title:      fmt.Sprintf("%s Chat Session", cfg.AgentName),
-	})
+	println := func(a ...any) { _, _ = fmt.Fprintln(cfg.Output, a...) }
+	printf := func(format string, a ...any) { _, _ = fmt.Fprintf(cfg.Output, format, a...) }
 
-	pr := &printer{w: cfg.Output}
-
-	// Print welcome banner
 	if cfg.Banner != "" {
-		pr.println(cfg.Banner)
+		println(cfg.Banner)
 	} else {
-		pr.println("============================================================")
-		pr.printf("🤖 Gojent Interactive Chatbot (%s)\n", cfg.AgentName)
-		pr.println("Type your message and press Enter.")
-		pr.println("Type 'exit' or 'quit' to end the conversation.")
-		pr.println("============================================================")
+		println("============================================================")
+		printf("Gojent Interactive Chatbot (%s)\n", cfg.AgentName)
+		println("Type your message and press Enter.")
+		println("Type 'exit' or 'quit' to end the conversation.")
+		println("============================================================")
 	}
 
 	scanner := bufio.NewScanner(cfg.Input)
-
 	for {
 		select {
 		case <-ctx.Done():
-			pr.println("\nChat session closed.")
+			println("\nChat session closed.")
 			return ctx.Err()
 		default:
 		}
 
-		pr.print(cfg.PromptPrefix)
-
+		printf("%s", cfg.PromptPrefix)
 		if !scanner.Scan() {
 			if scanErr := scanner.Err(); scanErr != nil {
 				return fmt.Errorf("chatbot: input error: %w", scanErr)
 			}
-			pr.println("\nGoodbye!")
+			println("\nGoodbye!")
 			return nil
 		}
 
@@ -232,53 +194,42 @@ func Run(ctx context.Context, model llm.LLM, opts ...Option) error {
 		if input == "" {
 			continue
 		}
-
-		// Check for exit commands
-		lower := strings.ToLower(input)
-		isExit := false
-		for _, cmd := range cfg.ExitCommands {
-			if lower == cmd {
-				isExit = true
-				break
-			}
-		}
-		if isExit {
-			pr.println("Goodbye!")
+		if isExitCommand(input, cfg.ExitCommands) {
+			println("Goodbye!")
 			return nil
 		}
 
-		// Stream the response from the agent
-		pr.printf("%s > ", cfg.AgentName)
-
-		stream, err := bot.Stream(ctx, input,
-			agent.WithStorage(cfg.Storage),
-			agent.WithThreadID(cfg.ThreadID),
-			agent.WithResourceID(cfg.ResourceID),
-		)
+		printf("%s > ", cfg.AgentName)
+		run, err := runner.Start(ctx, bot, sess, llm.UserMessage(input))
 		if err != nil {
-			pr.printf("\n[Error starting response: %v]\n", err)
+			printf("\n[Error starting response: %v]\n", err)
 			continue
 		}
 
-		for {
-			chunk, recvErr := stream.Recv()
-			if errors.Is(recvErr, io.EOF) {
-				break
-			}
-			if recvErr != nil {
-				pr.printf("\n[Stream error: %v]\n", recvErr)
-				break
-			}
-			if chunk != nil && chunk.Delta != "" {
-				pr.print(chunk.Delta)
+		for event := range run.Events() {
+			if delta, ok := event.(agent.TextDelta); ok {
+				_, _ = fmt.Fprint(cfg.Output, delta.Text)
 			}
 		}
-		_ = stream.Close()
-		pr.println()
+		if _, err := run.Wait(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			printf("\n[Error: %v]\n", err)
+			continue
+		}
+		println()
 	}
 }
 
+func isExitCommand(input string, commands []string) bool {
+	lower := strings.ToLower(strings.TrimSpace(input))
+	for _, command := range commands {
+		if lower == strings.ToLower(command) {
+			return true
+		}
+	}
+	return false
+}
+
 // RunChatbot is a convenience alias for Run.
-func RunChatbot(ctx context.Context, model llm.LLM, opts ...Option) error {
+func RunChatbot(ctx context.Context, model llm.Model, opts ...Option) error {
 	return Run(ctx, model, opts...)
 }

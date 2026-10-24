@@ -1,11 +1,10 @@
-// Package main demonstrates using the Google Gen AI provider with a Gojent Agent.
+// Package main demonstrates using the Google Gen AI provider with a Gojent
+// agent for non-streaming and streaming generation.
 package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
 
@@ -20,77 +19,64 @@ func run() error {
 	}
 	if apiKey == "" {
 		fmt.Println("GEMINI_API_KEY is not set.")
-		fmt.Println("To run this example with a live Gemini model, set your API key:")
 		fmt.Println("  export GEMINI_API_KEY=\"your-gemini-api-key\"")
-		fmt.Println("  go run ./examples/google/simple_gemini/main.go")
 		return nil
 	}
 
 	ctx := context.Background()
-
-	// 1. Initialize the Google Gen AI model provider
-	geminiModel, err := google.New(ctx, google.Config{
-		Model:  "gemini-3.8-flash",
+	model, err := google.New(ctx, google.Config{
+		Model:  "gemini-2.5-flash",
 		APIKey: apiKey,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create Google Gen AI provider: %w", err)
+		return fmt.Errorf("create provider: %w", err)
 	}
 
-	// 2. Configure an autonomous Agent powered by Gemini
-	geminiAgent, err := agent.New(agent.Config{
-		ID:           "gemini-assistant",
+	bot, err := agent.New(agent.Config{
+		Name:         "gemini-assistant",
 		Instructions: "You are a concise, helpful assistant powered by Google Gemini.",
-		Model:        geminiModel,
+		Model:        model,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create agent: %w", err)
+		return fmt.Errorf("create agent: %w", err)
 	}
 
-	// 3. Non-streaming Generation
-	fmt.Println("=== 1. Non-streaming Generation ===")
+	fmt.Println("=== 1. Non-streaming generation ===")
 	prompt := "In one short sentence, what makes Go great for systems programming?"
 	fmt.Printf("User: %s\n", prompt)
-
-	res, err := geminiAgent.Generate(ctx, prompt)
+	response, err := bot.Generate(ctx, prompt)
 	if err != nil {
-		return fmt.Errorf("generation failed: %w", err)
+		return fmt.Errorf("generate: %w", err)
 	}
-	fmt.Printf("Agent: %s\n", res.Text)
-	fmt.Printf("[Usage] Prompt: %d | Completion: %d | Total: %d\n\n",
-		res.Usage.PromptTokens, res.Usage.CompletionTokens, res.Usage.TotalTokens)
+	fmt.Printf("Agent: %s\n[usage] prompt=%d completion=%d total=%d\n\n",
+		response.Text,
+		response.Usage.PromptTokens,
+		response.Usage.CompletionTokens,
+		response.Usage.TotalTokens,
+	)
 
-	// 4. Real-time Streaming Generation
-	fmt.Println("=== 2. Real-time Streaming Generation ===")
-	streamPrompt := "List three key features of the Go language with a brief note on each."
+	fmt.Println("=== 2. Streaming generation ===")
+	streamPrompt := "List three key features of Go with a brief note on each."
 	fmt.Printf("User: %s\nAgent: ", streamPrompt)
-
-	stream, err := geminiAgent.Stream(ctx, streamPrompt)
+	run, err := bot.Stream(ctx, streamPrompt)
 	if err != nil {
-		return fmt.Errorf("stream failed: %w", err)
+		return fmt.Errorf("start stream: %w", err)
 	}
-	defer func() {
-		_ = stream.Close()
-	}()
-
-	for {
-		chunk, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
+	for event := range run.Events() {
+		switch typed := event.(type) {
+		case agent.TextDelta:
+			fmt.Print(typed.Text)
+		case agent.RunEnd:
+			if typed.Err != nil {
+				fmt.Printf("\n[error] %v\n", typed.Err)
+			}
 		}
-		if err != nil {
-			return fmt.Errorf("stream chunk error: %w", err)
-		}
-		fmt.Print(chunk.Delta)
 	}
-	fmt.Println()
-
-	finalRes, err := stream.Response()
+	final, err := run.Wait(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to finalize stream response: %w", err)
+		return fmt.Errorf("wait: %w", err)
 	}
-	fmt.Printf("\n[Usage] Total tokens consumed: %d\n", finalRes.Usage.TotalTokens)
-
+	fmt.Printf("\n[usage] total tokens: %d\n", final.Usage.TotalTokens)
 	return nil
 }
 

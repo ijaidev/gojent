@@ -9,114 +9,114 @@ import (
 	"time"
 
 	"github.com/ijaidev/gojent/core/llm"
-	"github.com/ijaidev/gojent/core/storage"
+	"github.com/ijaidev/gojent/core/session"
 	"github.com/ijaidev/gojent/examples/chatbot"
 	"github.com/ijaidev/gojent/providers/mockllm"
-	"github.com/ijaidev/gojent/stores/inmemory"
 )
 
 func TestRun_NilModel(t *testing.T) {
-	err := chatbot.Run(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected error with nil model, got nil")
+	if err := chatbot.Run(context.Background(), nil); err == nil {
+		t.Fatal("expected error with nil model")
 	}
 }
 
 func TestRun_ExitImmediate(t *testing.T) {
-	mockLLM := mockllm.New("Never called")
-	input := strings.NewReader("exit\n")
+	model := mockllm.New("Never called")
 	output := &bytes.Buffer{}
 
-	err := chatbot.Run(context.Background(), mockLLM,
-		chatbot.WithIO(input, output),
+	err := chatbot.Run(context.Background(), model,
+		chatbot.WithIO(strings.NewReader("exit\n"), output),
 		chatbot.WithBanner("Test Banner"),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
-	outStr := output.String()
-	if !strings.Contains(outStr, "Test Banner") {
-		t.Errorf("expected banner in output, got:\n%s", outStr)
+	out := output.String()
+	if !strings.Contains(out, "Test Banner") {
+		t.Errorf("expected banner in output, got:\n%s", out)
 	}
-	if !strings.Contains(outStr, "Goodbye!") {
-		t.Errorf("expected goodbye in output, got:\n%s", outStr)
+	if !strings.Contains(out, "Goodbye!") {
+		t.Errorf("expected goodbye in output, got:\n%s", out)
+	}
+	if model.CallCount() != 0 {
+		t.Errorf("model was called %d times", model.CallCount())
 	}
 }
 
 func TestRun_MultiTurnMemory(t *testing.T) {
-	mockLLM := mockllm.New(
+	model := mockllm.New(
 		"Hello Alice! Nice to meet you.",
 		"Your name is Alice.",
 	)
-
 	input := strings.NewReader("Hello, my name is Alice.\nWhat is my name?\nquit\n")
 	output := &bytes.Buffer{}
-	store := inmemory.New()
-	threadID := "alice-chat-123"
+	store := session.NewMemory()
+	sessionID := "alice-chat-123"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := chatbot.Run(ctx, mockLLM,
+	err := chatbot.Run(ctx, model,
 		chatbot.WithIO(input, output),
-		chatbot.WithStorage(store),
-		chatbot.WithThreadID(threadID),
+		chatbot.WithStore(store),
+		chatbot.WithSessionID(sessionID),
 		chatbot.WithAgentName("Bot"),
 	)
 	if err != nil {
 		t.Fatalf("chatbot.Run returned unexpected error: %v", err)
 	}
 
-	outStr := output.String()
-	if !strings.Contains(outStr, "Hello Alice! Nice to meet you.") {
-		t.Errorf("expected first response in output, got:\n%s", outStr)
+	out := output.String()
+	if !strings.Contains(out, "Hello Alice! Nice to meet you.") {
+		t.Errorf("expected first response in output, got:\n%s", out)
 	}
-	if !strings.Contains(outStr, "Your name is Alice.") {
-		t.Errorf("expected second response in output, got:\n%s", outStr)
+	if !strings.Contains(out, "Your name is Alice.") {
+		t.Errorf("expected second response in output, got:\n%s", out)
 	}
 
-	// Verify messages were persisted in storage
-	msgs, err := store.ListMessages(ctx, storage.MessageFilter{
-		ThreadID: threadID,
-	})
+	messages, err := store.Load(ctx, session.Session{ID: sessionID})
 	if err != nil {
-		t.Fatalf("failed to list messages from storage: %v", err)
+		t.Fatalf("Load: %v", err)
+	}
+	if len(messages) != 4 {
+		t.Fatalf("messages = %d, want 4", len(messages))
+	}
+	want := []struct {
+		role llm.Role
+		text string
+	}{
+		{llm.RoleUser, "Hello, my name is Alice."},
+		{llm.RoleAssistant, "Hello Alice! Nice to meet you."},
+		{llm.RoleUser, "What is my name?"},
+		{llm.RoleAssistant, "Your name is Alice."},
+	}
+	for i, expected := range want {
+		if messages[i].Role != expected.role || messages[i].Text() != expected.text {
+			t.Errorf("message %d = %+v, want %s %q", i, messages[i], expected.role, expected.text)
+		}
 	}
 
-	// Turn 1: user + assistant (2 msgs)
-	// Turn 2: user + assistant (2 msgs)
-	// Total: 4 messages
-	if len(msgs) != 4 {
-		t.Fatalf("expected 4 messages persisted in thread, got %d", len(msgs))
+	// The second model call must replay the first exchange.
+	calls := model.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("model calls = %d, want 2", len(calls))
 	}
-
-	if msgs[0].Role != llm.RoleUser || msgs[0].Text() != "Hello, my name is Alice." {
-		t.Errorf("unexpected message 0: %+v", msgs[0])
+	if len(calls[1].Messages) != 4 {
+		t.Fatalf("second request messages = %d, want system, user, assistant, user", len(calls[1].Messages))
 	}
-	if msgs[1].Role != llm.RoleAssistant || msgs[1].Text() != "Hello Alice! Nice to meet you." {
-		t.Errorf("unexpected message 1: %+v", msgs[1])
-	}
-	if msgs[2].Role != llm.RoleUser || msgs[2].Text() != "What is my name?" {
-		t.Errorf("unexpected message 2: %+v", msgs[2])
-	}
-	if msgs[3].Role != llm.RoleAssistant || msgs[3].Text() != "Your name is Alice." {
-		t.Errorf("unexpected message 3: %+v", msgs[3])
+	if calls[1].Messages[3].Role != llm.RoleUser || calls[1].Messages[3].Text() != "What is my name?" {
+		t.Errorf("second request did not include the new input: %+v", calls[1].Messages)
 	}
 }
 
 func TestRun_ContextCancelled(t *testing.T) {
-	mockLLM := mockllm.New("Response")
-	input := strings.NewReader("Hello\n")
+	model := mockllm.New("Response")
 	output := &bytes.Buffer{}
-
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel before running
+	cancel()
 
-	err := chatbot.Run(ctx, mockLLM,
-		chatbot.WithIO(input, output),
-	)
+	err := chatbot.Run(ctx, model, chatbot.WithIO(strings.NewReader("Hello\n"), output))
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected context.Canceled error, got: %v", err)
+		t.Fatalf("expected context.Canceled, got: %v", err)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/ijaidev/gojent/core/tool"
 	"github.com/ijaidev/gojent/tools/task"
 )
 
@@ -29,7 +30,7 @@ func TestTaskTracker_Lifecycle(t *testing.T) {
 		Title:       "Research API",
 		Description: "Find endpoint specs",
 	})
-	resCreate1Any, err := createTool.Execute(ctx, create1)
+	resCreate1Any, err := createTool.Execute(ctx, tool.Call{Arguments: create1})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestTaskTracker_Lifecycle(t *testing.T) {
 	create2, _ := json.Marshal(task.CreateTaskInput{
 		Title: "Write Tests",
 	})
-	resCreate2Any, err := createTool.Execute(ctx, create2)
+	resCreate2Any, err := createTool.Execute(ctx, tool.Call{Arguments: create2})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
@@ -56,7 +57,7 @@ func TestTaskTracker_Lifecycle(t *testing.T) {
 		ID:     "1",
 		Status: task.StatusInProgress,
 	})
-	resUpdate1Any, err := updateTool.Execute(ctx, update1)
+	resUpdate1Any, err := updateTool.Execute(ctx, tool.Call{Arguments: update1})
 	if err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
@@ -69,7 +70,7 @@ func TestTaskTracker_Lifecycle(t *testing.T) {
 	listPending, _ := json.Marshal(task.ListTasksInput{
 		Status: task.StatusPending,
 	})
-	resListPendingAny, err := listTool.Execute(ctx, listPending)
+	resListPendingAny, err := listTool.Execute(ctx, tool.Call{Arguments: listPending})
 	if err != nil {
 		t.Fatalf("list failed: %v", err)
 	}
@@ -80,7 +81,7 @@ func TestTaskTracker_Lifecycle(t *testing.T) {
 
 	// 5. List all
 	listAll, _ := json.Marshal(task.ListTasksInput{})
-	resListAllAny, err := listTool.Execute(ctx, listAll)
+	resListAllAny, err := listTool.Execute(ctx, tool.Call{Arguments: listAll})
 	if err != nil {
 		t.Fatalf("list failed: %v", err)
 	}

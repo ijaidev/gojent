@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ijaidev/gojent/core/tool"
 	"github.com/ijaidev/gojent/tools/fs"
 )
 
@@ -41,7 +42,7 @@ func TestFSTools_ReadWriteEditList(t *testing.T) {
 		Path:    "docs/hello.txt",
 		Content: "line 1\nline 2\nline 3\nline 4\nline 5",
 	})
-	resWriteAny, err := writeTool.Execute(ctx, writeInput)
+	resWriteAny, err := writeTool.Execute(ctx, tool.Call{Arguments: writeInput})
 	if err != nil {
 		t.Fatalf("write_file failed: %v", err)
 	}
@@ -54,7 +55,7 @@ func TestFSTools_ReadWriteEditList(t *testing.T) {
 	readInput, _ := json.Marshal(fs.ReadFileInput{
 		Path: "docs/hello.txt",
 	})
-	resReadAny, err := readTool.Execute(ctx, readInput)
+	resReadAny, err := readTool.Execute(ctx, tool.Call{Arguments: readInput})
 	if err != nil {
 		t.Fatalf("read_file failed: %v", err)
 	}
@@ -69,7 +70,7 @@ func TestFSTools_ReadWriteEditList(t *testing.T) {
 		StartLine: 2,
 		EndLine:   4,
 	})
-	resRangeAny, err := readTool.Execute(ctx, readRangeInput)
+	resRangeAny, err := readTool.Execute(ctx, tool.Call{Arguments: readRangeInput})
 	if err != nil {
 		t.Fatalf("read_file range failed: %v", err)
 	}
@@ -85,7 +86,7 @@ func TestFSTools_ReadWriteEditList(t *testing.T) {
 		OldString: "line 3",
 		NewString: "edited line 3",
 	})
-	resEditAny, err := editTool.Execute(ctx, editInput)
+	resEditAny, err := editTool.Execute(ctx, tool.Call{Arguments: editInput})
 	if err != nil {
 		t.Fatalf("edit_file failed: %v", err)
 	}
@@ -107,7 +108,7 @@ func TestFSTools_ReadWriteEditList(t *testing.T) {
 	listInput, _ := json.Marshal(fs.ListFilesInput{
 		Recursive: true,
 	})
-	resListAny, err := listTool.Execute(ctx, listInput)
+	resListAny, err := listTool.Execute(ctx, tool.Call{Arguments: listInput})
 	if err != nil {
 		t.Fatalf("list_files failed: %v", err)
 	}
@@ -125,7 +126,7 @@ func TestFSTools_DirectoryEscapePrevention(t *testing.T) {
 	escapeInput, _ := json.Marshal(fs.ReadFileInput{
 		Path: "../../etc/passwd",
 	})
-	_, err := readTool.Execute(ctx, escapeInput)
+	_, err := readTool.Execute(ctx, tool.Call{Arguments: escapeInput})
 	if err == nil {
 		t.Error("expected error for escaping base directory, got nil")
 	}
@@ -149,7 +150,7 @@ func TestFSTools_SymlinkEscapePrevention(t *testing.T) {
 	}
 
 	input, _ := json.Marshal(fs.ReadFileInput{Path: "link/secret.txt"})
-	if _, err := readTool.Execute(context.Background(), input); err == nil {
+	if _, err := readTool.Execute(context.Background(), tool.Call{Arguments: input}); err == nil {
 		t.Error("expected error reading through a symlink outside the base directory, got nil")
 	}
 }
@@ -169,7 +170,7 @@ func TestFSTools_ReadFileLongLines(t *testing.T) {
 	}
 
 	input, _ := json.Marshal(fs.ReadFileInput{Path: "long.txt"})
-	resAny, err := readTool.Execute(context.Background(), input)
+	resAny, err := readTool.Execute(context.Background(), tool.Call{Arguments: input})
 	if err != nil {
 		t.Fatalf("read_file failed on a long line: %v", err)
 	}

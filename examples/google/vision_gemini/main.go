@@ -65,7 +65,7 @@ func main() {
 
 	// 3. Initialize Agent with instructions and tools
 	analyst, err := agent.New(agent.Config{
-		ID:           "analyst-agent",
+		Name:         "analyst-agent",
 		Instructions: "You are a visual data analyst. Call tools to generate charts when requested.",
 		Model:        gemini,
 		Tools:        []tool.Tool{chartTool},

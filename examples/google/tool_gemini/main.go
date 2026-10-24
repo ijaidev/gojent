@@ -5,9 +5,7 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"strings"
@@ -121,7 +119,7 @@ func run() error {
 
 	// 3. Configure autonomous Agent equipped with tools
 	toolAgent, err := agent.New(agent.Config{
-		ID:           "gemini-tool-assistant",
+		Name:         "gemini-tool-assistant",
 		Instructions: "You are a concise, helpful assistant with access to real-time tools. When asked for weather or currency exchange rates, always use the tools provided.",
 		Model:        geminiModel,
 		Tools:        []tool.Tool{weatherTool, exchangeTool},
@@ -174,29 +172,23 @@ func run() error {
 	prompt2 := "What is the exchange rate from USD to EUR?"
 	fmt.Printf("User: %s\nAgent: ", prompt2)
 
-	stream, err := toolAgent.Stream(ctx, prompt2)
+	run, err := toolAgent.Stream(ctx, prompt2)
 	if err != nil {
 		return fmt.Errorf("stream failed: %w", err)
 	}
-	defer func() {
-		_ = stream.Close()
-	}()
-
-	for {
-		chunk, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("stream chunk error: %w", err)
-		}
-		if chunk.Delta != "" {
-			fmt.Print(chunk.Delta)
+	for event := range run.Events() {
+		switch typed := event.(type) {
+		case agent.TextDelta:
+			fmt.Print(typed.Text)
+		case agent.RunEnd:
+			if typed.Err != nil {
+				fmt.Printf("\n[error] %v\n", typed.Err)
+			}
 		}
 	}
 	fmt.Println()
 
-	finalRes, err := stream.Response()
+	finalRes, err := run.Wait(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to finalize stream response: %w", err)
 	}

@@ -5,7 +5,6 @@ import (
 	"github.com/ijaidev/gojent/core/tool"
 	"github.com/ijaidev/gojent/tools/exec"
 	"github.com/ijaidev/gojent/tools/fs"
-	"github.com/ijaidev/gojent/tools/hitl"
 	"github.com/ijaidev/gojent/tools/task"
 	"github.com/ijaidev/gojent/tools/web"
 )
@@ -57,13 +56,4 @@ func StandardTaskTools() (*task.Tracker, []tool.Tool, error) {
 		return nil, nil, err
 	}
 	return tracker, tools, nil
-}
-
-// StandardHITLTools returns human-in-the-loop interaction tools.
-func StandardHITLTools(cfg ...hitl.Config) ([]tool.Tool, error) {
-	askTool, err := hitl.NewAskUserTool(cfg...)
-	if err != nil {
-		return nil, err
-	}
-	return []tool.Tool{askTool}, nil
 }

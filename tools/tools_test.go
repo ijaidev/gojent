@@ -38,12 +38,4 @@ func TestStandardToolsBundles(t *testing.T) {
 	if tracker == nil || len(taskTools) != 3 {
 		t.Errorf("expected 3 task tools, got %d", len(taskTools))
 	}
-
-	hitlTools, err := tools.StandardHITLTools()
-	if err != nil {
-		t.Fatalf("failed to create hitl tools: %v", err)
-	}
-	if len(hitlTools) != 1 {
-		t.Errorf("expected 1 hitl tool, got %d", len(hitlTools))
-	}
 }
