@@ -275,7 +275,7 @@ func (r *runner) request(conversation []llm.Message) *llm.Request {
 		if isEmptyAssistant(conversation[i]) {
 			continue
 		}
-		messages = append(messages, conversation[i])
+		messages = append(messages, conversation[i].Clone())
 	}
 	return &llm.Request{
 		Messages:       messages,

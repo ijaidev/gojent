@@ -800,6 +800,42 @@ func TestAgent_PolicyDeniesAndApproves(t *testing.T) {
 	}
 }
 
+func TestAgent_PolicyMutationDoesNotAlterTranscript(t *testing.T) {
+	model := &scriptModel{steps: []step{finalText("done")}}
+	a := mustAgent(t, agent.Config{Name: "policy", Model: model})
+	store := &recordingStore{}
+	policy := agent.Hooks{
+		OnBeforeModel: func(_ context.Context, req *agent.ModelRequest) error {
+			for i := range req.Request.Messages {
+				if req.Request.Messages[i].Role != llm.RoleUser {
+					continue
+				}
+				req.Request.Messages[i].Content[0].Text = "redacted"
+			}
+			return nil
+		},
+	}
+
+	resp, err := a.GenerateWith(context.Background(), "go", agent.RunOptions{
+		Store:   store,
+		Policy:  policy,
+		Session: &session.Session{ID: "s"},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	for _, message := range resp.Messages {
+		if message.Role == llm.RoleUser && message.Text() != "go" {
+			t.Errorf("response user message = %q, want the original content", message.Text())
+		}
+	}
+	for _, message := range store.Messages() {
+		if message.Role == llm.RoleUser && message.Text() != "go" {
+			t.Errorf("stored user message = %q, want the original content", message.Text())
+		}
+	}
+}
+
 func TestAgent_ToolBudgetPersistsAllResults(t *testing.T) {
 	executed := 0
 	echo := tool.MustNew(tool.Config[echoInput, string]{
