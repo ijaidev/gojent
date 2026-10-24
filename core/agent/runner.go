@@ -16,15 +16,14 @@ import (
 	"github.com/ijaidev/gojent/core/tool"
 )
 
-// runner is one agent execution. It owns resolved configuration and the
-// mutable state of a single run. It stays private so Agent remains the public
-// execution surface.
+// runner is one agent execution. opts is the normalized run configuration and
+// tools is the merged agent and per-run tool set; everything else is mutable
+// state for this run. It stays private so Agent remains the public execution
+// surface.
 type runner struct {
-	agent    *Agent
-	model    llm.Model
-	registry *toolRegistry
-	policy   Policy
-	opts     RunOptions
+	agent *Agent
+	opts  RunOptions
+	tools *toolRegistry
 
 	usage      llm.Usage
 	calls      []llm.ToolCall
@@ -80,11 +79,10 @@ func newRunner(a *Agent, opts RunOptions) (*runner, error) {
 	if a == nil {
 		return nil, ErrAgentRequired
 	}
-	model := opts.Model
-	if model == nil {
-		model = a.Model()
+	if opts.Model == nil {
+		opts.Model = a.Model()
 	}
-	if model == nil {
+	if opts.Model == nil {
 		return nil, ErrModelRequired
 	}
 	if opts.Store != nil {
@@ -95,16 +93,13 @@ func newRunner(a *Agent, opts RunOptions) (*runner, error) {
 			return nil, ErrSessionIDRequired
 		}
 	}
-	policy := opts.Policy
-	if policy == nil {
-		policy = a.Policy()
+	if opts.Policy == nil {
+		opts.Policy = a.Policy()
 	}
 	return &runner{
 		agent:      a,
-		model:      model,
-		registry:   newToolRegistry(a.Tools(), opts.Tools),
-		policy:     policy,
 		opts:       opts,
+		tools:      newToolRegistry(a.Tools(), opts.Tools),
 		usedCallID: make(map[string]bool),
 	}, nil
 }
@@ -155,9 +150,9 @@ func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response,
 
 		emit(StepStart{Step: step})
 		request := r.request(conversation)
-		if r.policy != nil {
+		if r.opts.Policy != nil {
 			if policyErr := callPolicy(func() error {
-				return r.policy.BeforeModel(budgetCtx, &ModelRequest{Step: step, Request: request})
+				return r.opts.Policy.BeforeModel(budgetCtx, &ModelRequest{Step: step, Request: request})
 			}); policyErr != nil {
 				emit(StepEnd{Step: step, Err: policyErr})
 				return nil, policyErr
@@ -165,9 +160,9 @@ func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response,
 		}
 
 		response, callErr := r.callModel(budgetCtx, request, step)
-		if r.policy != nil {
+		if r.opts.Policy != nil {
 			if policyErr := callPolicy(func() error {
-				return r.policy.AfterModel(budgetCtx, &ModelResult{
+				return r.opts.Policy.AfterModel(budgetCtx, &ModelResult{
 					Step:     step,
 					Request:  request,
 					Response: response,
@@ -268,7 +263,7 @@ func (r *runner) request(conversation []llm.Message) *llm.Request {
 	}
 	return &llm.Request{
 		Messages:       messages,
-		Tools:          r.registry.definitions(),
+		Tools:          r.tools.definitions(),
 		ToolChoice:     r.opts.ToolChoice,
 		Thinking:       r.opts.Thinking.Clone(),
 		ResponseFormat: r.opts.ResponseFormat.Clone(),
@@ -364,9 +359,9 @@ func (r *runner) callModel(ctx context.Context, request *llm.Request, step int) 
 }
 
 func (r *runner) callModelOnce(ctx context.Context, request *llm.Request, step int) (*llm.Response, error) {
-	streamer, ok := r.model.(llm.Streamer)
+	streamer, ok := r.opts.Model.(llm.Streamer)
 	if !ok {
-		response, err := callGenerate(ctx, r.model, request)
+		response, err := callGenerate(ctx, r.opts.Model, request)
 		if err != nil {
 			return nil, err
 		}
@@ -481,7 +476,7 @@ func (r *runner) runTools(ctx context.Context, calls []llm.ToolCall, step int) (
 			IdempotencyKey: raw.ID,
 		}
 		spec := tool.Spec{}
-		impl, found := r.registry.byName[call.Name]
+		impl, found := r.tools.byName[call.Name]
 		if found {
 			spec = impl.Spec()
 		}
@@ -550,13 +545,13 @@ func (r *runner) runTools(ctx context.Context, calls []llm.ToolCall, step int) (
 }
 
 func (r *runner) beforeTool(ctx context.Context, step int, call tool.Call, spec tool.Spec) (Decision, error) {
-	if r.policy == nil {
+	if r.opts.Policy == nil {
 		return Allow, nil
 	}
 	var decision Decision
 	err := callPolicy(func() error {
 		var policyErr error
-		decision, policyErr = r.policy.BeforeTool(ctx, &ToolRequest{Step: step, Call: call, Spec: spec})
+		decision, policyErr = r.opts.Policy.BeforeTool(ctx, &ToolRequest{Step: step, Call: call, Spec: spec})
 		return policyErr
 	})
 	if err != nil {
@@ -581,11 +576,11 @@ func (r *runner) beforeTool(ctx context.Context, step int, call tool.Call, spec 
 }
 
 func (r *runner) afterTool(ctx context.Context, step int, call tool.Call, result *tool.Result, err error) error {
-	if r.policy == nil {
+	if r.opts.Policy == nil {
 		return nil
 	}
 	return callPolicy(func() error {
-		return r.policy.AfterTool(ctx, &ToolResult{Step: step, Call: call, Result: result, Err: err})
+		return r.opts.Policy.AfterTool(ctx, &ToolResult{Step: step, Call: call, Result: result, Err: err})
 	})
 }
 
