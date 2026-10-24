@@ -183,27 +183,36 @@ func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response,
 		emit(StepStart{Step: step})
 		request := r.request(conversation)
 		if r.opts.Policy != nil {
+			modelRequest := &ModelRequest{Step: step, Request: request}
 			if policyErr := callPolicy(func() error {
-				return r.opts.Policy.BeforeModel(budgetCtx, &ModelRequest{Step: step, Request: request})
+				return r.opts.Policy.BeforeModel(budgetCtx, modelRequest)
 			}); policyErr != nil {
 				emit(StepEnd{Step: step, Err: policyErr})
 				return nil, policyErr
+			}
+			if modelRequest.Request != nil {
+				request = modelRequest.Request
 			}
 		}
 
 		response, callErr := r.callModel(budgetCtx, request, step)
 		if r.opts.Policy != nil {
+			modelResult := &ModelResult{
+				Step:     step,
+				Request:  request,
+				Response: response,
+				Err:      callErr,
+			}
 			if policyErr := callPolicy(func() error {
-				return r.opts.Policy.AfterModel(budgetCtx, &ModelResult{
-					Step:     step,
-					Request:  request,
-					Response: response,
-					Err:      callErr,
-				})
+				return r.opts.Policy.AfterModel(budgetCtx, modelResult)
 			}); policyErr != nil {
 				emit(StepEnd{Step: step, Err: policyErr})
 				return nil, policyErr
 			}
+			response, callErr = modelResult.Response, modelResult.Err
+		}
+		if callErr == nil && response == nil {
+			callErr = ErrResponseRequired
 		}
 		if callErr != nil {
 			if budgetCtx.Err() != nil {
@@ -396,6 +405,9 @@ func (r *runner) callModelOnce(ctx context.Context, request *llm.Request, step i
 		response, err := callGenerate(ctx, r.opts.Model, request)
 		if err != nil {
 			return nil, err
+		}
+		if response == nil {
+			return nil, ErrResponseRequired
 		}
 		message := r.finalizeAssistant(response.Message, step)
 		emitMessageDeltasFromMessage(r.opts.Sink, step, message)

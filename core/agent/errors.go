@@ -39,6 +39,9 @@ var (
 	// ErrOutputSchema is returned when a structured output schema cannot be
 	// generated from the requested type.
 	ErrOutputSchema = errors.New("agent: invalid output schema")
+	// ErrResponseRequired is returned when a model or policy produces no
+	// response.
+	ErrResponseRequired = errors.New("agent: response is required")
 	// ErrRunCanceled is returned when a run is canceled without a more
 	// specific cause.
 	ErrRunCanceled = errors.New("agent: run canceled")

@@ -800,6 +800,55 @@ func TestAgent_PolicyDeniesAndApproves(t *testing.T) {
 	}
 }
 
+func TestAgent_NilResponseIsAnError(t *testing.T) {
+	model := &scriptModel{steps: []step{{}}}
+	a := mustAgent(t, agent.Config{Name: "empty", Model: model})
+
+	if _, err := a.Generate(context.Background(), "go"); !errors.Is(err, agent.ErrResponseRequired) {
+		t.Fatalf("err = %v, want ErrResponseRequired", err)
+	}
+}
+
+func TestAgent_PolicyCanReplaceModelRequest(t *testing.T) {
+	model := &scriptModel{steps: []step{finalText("done")}}
+	a := mustAgent(t, agent.Config{Name: "policy", Model: model})
+	policy := agent.Hooks{
+		OnBeforeModel: func(_ context.Context, req *agent.ModelRequest) error {
+			req.Request = &llm.Request{Messages: []llm.Message{llm.UserMessage("replacement")}}
+			return nil
+		},
+	}
+
+	if _, err := a.Generate(context.Background(), "original", agent.WithPolicy(policy)); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	messages := model.Calls()[0].Messages
+	if len(messages) != 1 || messages[0].Text() != "replacement" {
+		t.Fatalf("model request messages = %+v, want the replacement", messages)
+	}
+}
+
+func TestAgent_PolicyCanReplaceModelResponse(t *testing.T) {
+	model := &scriptModel{steps: []step{finalText("original")}}
+	a := mustAgent(t, agent.Config{Name: "policy", Model: model})
+	policy := agent.Hooks{
+		OnAfterModel: func(_ context.Context, result *agent.ModelResult) {
+			result.Response = &llm.Response{
+				Message:      llm.AssistantMessage("replaced"),
+				FinishReason: llm.FinishReasonStop,
+			}
+		},
+	}
+
+	resp, err := a.Generate(context.Background(), "go", agent.WithPolicy(policy))
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if resp.Text != "replaced" {
+		t.Errorf("Text = %q, want replaced", resp.Text)
+	}
+}
+
 func TestAgent_PolicyMutationDoesNotAlterTranscript(t *testing.T) {
 	model := &scriptModel{steps: []step{finalText("done")}}
 	a := mustAgent(t, agent.Config{Name: "policy", Model: model})
