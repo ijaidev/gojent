@@ -113,6 +113,14 @@ func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response,
 	defer func() {
 		emit(RunEnd{Response: resp, Err: err})
 	}()
+	// A panic in a dependency must not escape an asynchronous run. Convert it
+	// to an error before RunEnd so observers see the failure.
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			resp = nil
+			err = &PanicError{Value: recovered, Stack: debug.Stack()}
+		}
+	}()
 
 	var budgetCtx context.Context
 	var cancel context.CancelFunc

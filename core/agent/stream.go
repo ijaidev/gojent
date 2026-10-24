@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"runtime/debug"
 	"sync"
 
 	"github.com/ijaidev/gojent/core/llm"
@@ -76,12 +77,25 @@ func (r *runner) start(ctx context.Context, input ...llm.Message) (*Run, error) 
 	}
 	go func() {
 		defer close(run.done)
+		defer queue.Close()
+		// r.run converts panics to errors. Recover here as a last resort so a
+		// panic before that guard still closes the event stream and Run.Wait.
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				panicErr := &PanicError{Value: recovered, Stack: debug.Stack()}
+				run.mu.Lock()
+				run.response = nil
+				run.err = panicErr
+				run.mu.Unlock()
+				safeEmit(r.opts.Sink, RunEnd{Err: panicErr})
+			}
+		}()
+
 		response, err := r.run(runCtx, input...)
 		run.mu.Lock()
 		run.response = response
 		run.err = err
 		run.mu.Unlock()
-		queue.Close()
 	}()
 	return run, nil
 }
