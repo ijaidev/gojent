@@ -75,6 +75,10 @@ type RunOptions struct {
 	optionErr error
 }
 
+// errDurationBudget identifies the run's own duration deadline so it can be
+// distinguished from a caller's context deadline.
+var errDurationBudget = errors.New("agent: duration budget exceeded")
+
 // newRunner resolves and validates the configuration for one execution.
 func newRunner(a *Agent, opts RunOptions) (*runner, error) {
 	if a == nil {
@@ -132,7 +136,7 @@ func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response,
 	var budgetCtx context.Context
 	var cancel context.CancelFunc
 	if r.opts.Budget.MaxDuration > 0 {
-		budgetCtx, cancel = context.WithTimeout(ctx, r.opts.Budget.MaxDuration)
+		budgetCtx, cancel = context.WithTimeoutCause(ctx, r.opts.Budget.MaxDuration, errDurationBudget)
 		defer cancel()
 	} else {
 		budgetCtx = ctx
@@ -328,16 +332,16 @@ func (r *runner) tokenBudgetExceeded() bool {
 
 func (r *runner) contextError(ctx context.Context) error {
 	cause := context.Cause(ctx)
-	if errors.Is(cause, context.DeadlineExceeded) {
-		return fmt.Errorf("%w: %w", ErrBudgetExceeded, cause)
+	if errors.Is(cause, errDurationBudget) {
+		return fmt.Errorf("%w: duration %s", ErrBudgetExceeded, r.opts.Budget.MaxDuration)
 	}
-	if cause == nil {
-		cause = ctx.Err()
+	if cause != nil {
+		return cause
 	}
-	if cause == nil {
-		return ErrRunCanceled
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return cause
+	return ErrRunCanceled
 }
 
 func (r *runner) callModel(ctx context.Context, request *llm.Request, step int) (*llm.Response, error) {
