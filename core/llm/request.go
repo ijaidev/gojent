@@ -80,6 +80,9 @@ func (rf *ResponseFormat) Clone() *ResponseFormat {
 }
 
 func cloneSchema(schema map[string]any) map[string]any {
+	if schema == nil {
+		return nil
+	}
 	out := make(map[string]any, len(schema))
 	for k, v := range schema {
 		switch value := v.(type) {
@@ -130,7 +133,11 @@ func (r *Request) Clone() *Request {
 	for i := range r.Messages {
 		clone.Messages[i] = r.Messages[i].Clone()
 	}
-	clone.Tools = append([]ToolDefinition(nil), r.Tools...)
+	clone.Tools = make([]ToolDefinition, len(r.Tools))
+	for i, definition := range r.Tools {
+		clone.Tools[i] = definition
+		clone.Tools[i].Parameters = cloneSchema(definition.Parameters)
+	}
 	clone.Thinking = r.Thinking.Clone()
 	clone.ResponseFormat = r.ResponseFormat.Clone()
 	if r.MaxTokens != nil {
