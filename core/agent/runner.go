@@ -66,8 +66,6 @@ type RunOptions struct {
 	MaxTokens *int
 	// TopP overrides nucleus sampling.
 	TopP *float64
-	// MaxSteps overrides Budget.MaxSteps.
-	MaxSteps int
 	// Media attaches parts to the trailing user message.
 	Media []llm.Part
 	// ToolChoice constrains tool selection.
@@ -148,10 +146,7 @@ func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response,
 		}
 	}
 
-	maxSteps := r.opts.MaxSteps
-	if maxSteps <= 0 {
-		maxSteps = r.opts.Budget.steps()
-	}
+	maxSteps := r.opts.Budget.steps()
 	finish := llm.FinishReasonStop
 
 	for step := 0; ; step++ {

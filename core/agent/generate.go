@@ -106,10 +106,10 @@ func WithMedia(parts ...llm.Part) Option {
 	}
 }
 
-// WithMaxSteps overrides the step budget for one run.
+// WithMaxSteps sets the step budget for one run.
 func WithMaxSteps(steps int) Option {
 	return func(cfg *RunOptions) {
-		cfg.MaxSteps = steps
+		cfg.Budget.MaxSteps = steps
 	}
 }
 

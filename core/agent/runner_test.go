@@ -507,6 +507,22 @@ func TestAgent_MaxStepsKeepsTranscriptComplete(t *testing.T) {
 	assertNoDanglingToolCalls(t, messages)
 }
 
+func TestAgent_WithMaxStepsOption(t *testing.T) {
+	model := &scriptModel{steps: []step{
+		toolCallStep(llm.ToolCall{ID: "one", Name: "echo", Arguments: `{"value":"one"}`}),
+	}}
+	echo := newEchoTool(t, "echo", nil)
+	a := mustAgent(t, agent.Config{Name: "looper", Model: model, Tools: []tool.Tool{echo}})
+
+	_, err := a.Generate(context.Background(), "go", agent.WithMaxSteps(1))
+	if !errors.Is(err, agent.ErrMaxSteps) {
+		t.Fatalf("err = %v, want ErrMaxSteps", err)
+	}
+	if model.CallCount() != 1 {
+		t.Errorf("model calls = %d, want 1", model.CallCount())
+	}
+}
+
 func TestAgent_ToolPanicIsContained(t *testing.T) {
 	model := &scriptModel{steps: []step{
 		toolCallStep(llm.ToolCall{ID: "boom", Name: "boom", Arguments: `{}`}),
