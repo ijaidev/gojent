@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -120,7 +121,7 @@ func validateValue(schema map[string]any, value any, path string) error {
 	return nil
 }
 
-func validateType(rawType any, value any, path string) error {
+func validateType(rawType, value any, path string) error {
 	switch typed := rawType.(type) {
 	case string:
 		if !matchesType(typed, value) {
@@ -173,7 +174,7 @@ func matchesType(name string, value any) bool {
 	}
 }
 
-func validateObject(schema map[string]any, object map[string]any, path string) error {
+func validateObject(schema, object map[string]any, path string) error {
 	if required, ok := schema["required"]; ok {
 		for _, name := range stringList(required) {
 			if _, exists := object[name]; !exists {
@@ -183,19 +184,17 @@ func validateObject(schema map[string]any, object map[string]any, path string) e
 	}
 
 	properties, _ := schema["properties"].(map[string]any)
-	if properties != nil {
-		for name, rawProperty := range properties {
-			property, ok := rawProperty.(map[string]any)
-			if !ok {
-				continue
-			}
-			value, exists := object[name]
-			if !exists {
-				continue
-			}
-			if err := validateValue(property, value, path+"."+name); err != nil {
-				return err
-			}
+	for name, rawProperty := range properties {
+		property, ok := rawProperty.(map[string]any)
+		if !ok {
+			continue
+		}
+		value, exists := object[name]
+		if !exists {
+			continue
+		}
+		if err := validateValue(property, value, path+"."+name); err != nil {
+			return err
 		}
 	}
 
@@ -230,11 +229,11 @@ func validateObject(schema map[string]any, object map[string]any, path string) e
 }
 
 func validateArray(schema map[string]any, array []any, path string) error {
-	if min, ok := integerKeyword(schema, "minItems"); ok && len(array) < min {
-		return invalid(path, "must contain at least %d items", min)
+	if minimum, ok := integerKeyword(schema, "minItems"); ok && len(array) < minimum {
+		return invalid(path, "must contain at least %d items", minimum)
 	}
-	if max, ok := integerKeyword(schema, "maxItems"); ok && len(array) > max {
-		return invalid(path, "must contain at most %d items", max)
+	if maximum, ok := integerKeyword(schema, "maxItems"); ok && len(array) > maximum {
+		return invalid(path, "must contain at most %d items", maximum)
 	}
 	items, ok := schema["items"].(map[string]any)
 	if !ok {
@@ -248,20 +247,18 @@ func validateArray(schema map[string]any, array []any, path string) error {
 	return nil
 }
 
-func validateString(schema map[string]any, value string, path string) error {
+func validateString(schema map[string]any, value, path string) error {
 	length := utf8.RuneCountInString(value)
-	if min, ok := integerKeyword(schema, "minLength"); ok && length < min {
-		return invalid(path, "must be at least %d characters", min)
+	if minimum, ok := integerKeyword(schema, "minLength"); ok && length < minimum {
+		return invalid(path, "must be at least %d characters", minimum)
 	}
-	if max, ok := integerKeyword(schema, "maxLength"); ok && length > max {
-		return invalid(path, "must be at most %d characters", max)
+	if maximum, ok := integerKeyword(schema, "maxLength"); ok && length > maximum {
+		return invalid(path, "must be at most %d characters", maximum)
 	}
 	if pattern, ok := schema["pattern"].(string); ok && pattern != "" {
-		compiled, err := regexp.Compile(pattern)
-		if err != nil {
-			return nil
-		}
-		if !compiled.MatchString(value) {
+		// An invalid pattern means the schema itself is malformed. Ignoring it
+		// is safer than rejecting otherwise valid input at runtime.
+		if compiled, err := regexp.Compile(pattern); err == nil && !compiled.MatchString(value) {
 			return invalid(path, "does not match pattern %q", pattern)
 		}
 	}
@@ -344,7 +341,7 @@ func stringList(value any) []string {
 	}
 }
 
-func enumContains(raw any, value any) bool {
+func enumContains(raw, value any) bool {
 	switch values := raw.(type) {
 	case []any:
 		for _, candidate := range values {
@@ -372,7 +369,7 @@ func enumContains(raw any, value any) bool {
 func jsonEqual(a, b any) bool {
 	left, errLeft := json.Marshal(a)
 	right, errRight := json.Marshal(b)
-	return errLeft == nil && errRight == nil && string(left) == string(right)
+	return errLeft == nil && errRight == nil && bytes.Equal(left, right)
 }
 
 func invalid(path, format string, args ...any) error {

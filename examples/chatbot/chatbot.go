@@ -159,24 +159,24 @@ func Run(ctx context.Context, model llm.Model, opts ...Option) error {
 	runner := &agent.Runner{Store: cfg.Store}
 	sess := &session.Session{ID: cfg.SessionID, ResourceID: cfg.ResourceID}
 
-	println := func(a ...any) { _, _ = fmt.Fprintln(cfg.Output, a...) }
+	printLine := func(a ...any) { _, _ = fmt.Fprintln(cfg.Output, a...) }
 	printf := func(format string, a ...any) { _, _ = fmt.Fprintf(cfg.Output, format, a...) }
 
 	if cfg.Banner != "" {
-		println(cfg.Banner)
+		printLine(cfg.Banner)
 	} else {
-		println("============================================================")
+		printLine("============================================================")
 		printf("Gojent Interactive Chatbot (%s)\n", cfg.AgentName)
-		println("Type your message and press Enter.")
-		println("Type 'exit' or 'quit' to end the conversation.")
-		println("============================================================")
+		printLine("Type your message and press Enter.")
+		printLine("Type 'exit' or 'quit' to end the conversation.")
+		printLine("============================================================")
 	}
 
 	scanner := bufio.NewScanner(cfg.Input)
 	for {
 		select {
 		case <-ctx.Done():
-			println("\nChat session closed.")
+			printLine("\nChat session closed.")
 			return ctx.Err()
 		default:
 		}
@@ -186,7 +186,7 @@ func Run(ctx context.Context, model llm.Model, opts ...Option) error {
 			if scanErr := scanner.Err(); scanErr != nil {
 				return fmt.Errorf("chatbot: input error: %w", scanErr)
 			}
-			println("\nGoodbye!")
+			printLine("\nGoodbye!")
 			return nil
 		}
 
@@ -195,7 +195,7 @@ func Run(ctx context.Context, model llm.Model, opts ...Option) error {
 			continue
 		}
 		if isExitCommand(input, cfg.ExitCommands) {
-			println("Goodbye!")
+			printLine("Goodbye!")
 			return nil
 		}
 
@@ -215,14 +215,14 @@ func Run(ctx context.Context, model llm.Model, opts ...Option) error {
 			printf("\n[Error: %v]\n", err)
 			continue
 		}
-		println()
+		printLine()
 	}
 }
 
 func isExitCommand(input string, commands []string) bool {
-	lower := strings.ToLower(strings.TrimSpace(input))
+	trimmed := strings.TrimSpace(input)
 	for _, command := range commands {
-		if lower == strings.ToLower(command) {
+		if strings.EqualFold(trimmed, command) {
 			return true
 		}
 	}

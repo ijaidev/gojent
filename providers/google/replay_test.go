@@ -1,6 +1,7 @@
 package google
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 
@@ -39,7 +40,7 @@ func TestProviderData_RoundTripPreservesThoughtSignature(t *testing.T) {
 	if part.FunctionCall == nil || part.FunctionCall.ID != "call-1" || part.FunctionCall.Name != "lookup" {
 		t.Errorf("function call lost: %+v", part.FunctionCall)
 	}
-	if string(part.ThoughtSignature) != string(original.Parts[0].ThoughtSignature) {
+	if !bytes.Equal(part.ThoughtSignature, original.Parts[0].ThoughtSignature) {
 		t.Errorf("thought signature = %v, want %v", part.ThoughtSignature, original.Parts[0].ThoughtSignature)
 	}
 }
@@ -165,7 +166,11 @@ func TestWrapError_Taxonomy(t *testing.T) {
 			if providerErr.Kind != tc.kind || providerErr.StatusCode != tc.code {
 				t.Errorf("error = %+v, want kind %s code %d", providerErr, tc.kind, tc.code)
 			}
-			if _, ok := tc.err.(genai.APIError); !ok && !errors.Is(wrapped, tc.err) {
+			var (
+				valueErr   genai.APIError
+				pointerErr *genai.APIError
+			)
+			if !errors.As(wrapped, &valueErr) && !errors.As(wrapped, &pointerErr) {
 				t.Error("wrapped error does not unwrap to the provider error")
 			}
 		})

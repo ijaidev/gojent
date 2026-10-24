@@ -106,8 +106,8 @@ func (s *recordingStore) Load(_ context.Context, sess session.Session) ([]llm.Me
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]llm.Message, len(s.msgs))
-	for i, msg := range s.msgs {
-		out[i] = msg.Clone()
+	for i := range s.msgs {
+		out[i] = s.msgs[i].Clone()
 	}
 	return out, nil
 }
@@ -119,8 +119,8 @@ func (s *recordingStore) Append(_ context.Context, sess session.Session, message
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	batch := make([]llm.Message, len(messages))
-	for i, msg := range messages {
-		batch[i] = msg.Clone()
+	for i := range messages {
+		batch[i] = messages[i].Clone()
 	}
 	s.msgs = append(s.msgs, batch...)
 	s.batches = append(s.batches, batch)
@@ -131,8 +131,8 @@ func (s *recordingStore) Messages() []llm.Message {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]llm.Message, len(s.msgs))
-	for i, msg := range s.msgs {
-		out[i] = msg.Clone()
+	for i := range s.msgs {
+		out[i] = s.msgs[i].Clone()
 	}
 	return out
 }
@@ -141,10 +141,11 @@ func (s *recordingStore) Batches() [][]llm.Message {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([][]llm.Message, len(s.batches))
-	for i, batch := range s.batches {
+	for i := range s.batches {
+		batch := s.batches[i]
 		out[i] = make([]llm.Message, len(batch))
-		for j, msg := range batch {
-			out[i][j] = msg.Clone()
+		for j := range batch {
+			out[i][j] = batch[j].Clone()
 		}
 	}
 	return out
@@ -200,7 +201,8 @@ func mustAgent(t *testing.T, cfg agent.Config) *agent.Agent {
 func assertNoDanglingToolCalls(t *testing.T, messages []llm.Message) {
 	t.Helper()
 	pending := make(map[string]bool)
-	for index, msg := range messages {
+	for index := range messages {
+		msg := &messages[index]
 		switch msg.Role {
 		case llm.RoleAssistant:
 			if len(pending) > 0 {

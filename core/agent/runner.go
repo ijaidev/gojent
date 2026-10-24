@@ -282,11 +282,11 @@ func (e *execution) request(conversation []llm.Message) *llm.Request {
 	if instructions := e.agent.Instructions(); instructions != "" {
 		messages = append(messages, llm.SystemMessage(instructions))
 	}
-	for _, message := range conversation {
-		if isEmptyAssistant(message) {
+	for i := range conversation {
+		if isEmptyAssistant(conversation[i]) {
 			continue
 		}
-		messages = append(messages, message)
+		messages = append(messages, conversation[i])
 	}
 	return &llm.Request{
 		Messages:       messages,
@@ -540,7 +540,9 @@ func (e *execution) runTools(ctx context.Context, calls []llm.ToolCall, step int
 		if !found {
 			err := fmt.Errorf("agent: tool %q not found", call.Name)
 			message := toolErrorMessage(call, err)
-			e.afterTool(ctx, step, call, nil, err)
+			if afterErr := e.afterTool(ctx, step, call, nil, err); afterErr != nil {
+				return nil, false, afterErr
+			}
 			safeEmit(e.sink, ToolEnd{Step: step, Call: call, Message: &message, Err: err})
 			results = append(results, message)
 			continue
@@ -680,7 +682,7 @@ func toolErrorMessage(call tool.Call, err error) llm.Message {
 }
 
 // accumulateToolCalls merges streamed fragments by ID or index.
-func accumulateToolCalls(existing []llm.ToolCall, incoming []llm.ToolCall) []llm.ToolCall {
+func accumulateToolCalls(existing, incoming []llm.ToolCall) []llm.ToolCall {
 	for _, fragment := range incoming {
 		index := -1
 		if fragment.ID != "" {
@@ -842,8 +844,8 @@ func cloneMessages(messages []llm.Message) []llm.Message {
 		return nil
 	}
 	out := make([]llm.Message, len(messages))
-	for i, message := range messages {
-		out[i] = message.Clone()
+	for i := range messages {
+		out[i] = messages[i].Clone()
 	}
 	return out
 }

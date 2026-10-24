@@ -138,7 +138,8 @@ func runNonStreaming(ctx context.Context) error {
 	fmt.Printf("Agent: %s\n[usage] %d total tokens\n\n", response.Text, response.Usage.TotalTokens)
 
 	fmt.Println("--- trajectory ---")
-	for i, message := range response.Messages {
+	for i := range response.Messages {
+		message := &response.Messages[i]
 		switch message.Role {
 		case llm.RoleAssistant:
 			if len(message.ToolCalls) > 0 {

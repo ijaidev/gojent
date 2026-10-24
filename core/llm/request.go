@@ -127,8 +127,8 @@ func (r *Request) Clone() *Request {
 	}
 	clone := *r
 	clone.Messages = make([]Message, len(r.Messages))
-	for i, msg := range r.Messages {
-		clone.Messages[i] = msg.Clone()
+	for i := range r.Messages {
+		clone.Messages[i] = r.Messages[i].Clone()
 	}
 	clone.Tools = append([]ToolDefinition(nil), r.Tools...)
 	clone.Thinking = r.Thinking.Clone()

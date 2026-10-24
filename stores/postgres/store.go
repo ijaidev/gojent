@@ -62,8 +62,8 @@ func (s *Store) Append(ctx context.Context, sess session.Session, messages ...ll
 	}
 
 	encoded := make([][]byte, len(messages))
-	for i, message := range messages {
-		data, err := json.Marshal(message)
+	for i := range messages {
+		data, err := json.Marshal(messages[i])
 		if err != nil {
 			return fmt.Errorf("postgres: encode message %d: %w", i, err)
 		}

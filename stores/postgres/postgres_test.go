@@ -32,8 +32,8 @@ func newTestStore(t *testing.T, opts ...postgres.Option) (*postgres.Store, sqlmo
 func encoded(t *testing.T, messages ...llm.Message) [][]byte {
 	t.Helper()
 	out := make([][]byte, len(messages))
-	for i, message := range messages {
-		data, err := json.Marshal(message)
+	for i := range messages {
+		data, err := json.Marshal(messages[i])
 		if err != nil {
 			t.Fatalf("marshal message %d: %v", i, err)
 		}

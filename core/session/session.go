@@ -129,8 +129,8 @@ func cloneMessages(messages []llm.Message) []llm.Message {
 		return nil
 	}
 	out := make([]llm.Message, len(messages))
-	for i, msg := range messages {
-		out[i] = msg.Clone()
+	for i := range messages {
+		out[i] = messages[i].Clone()
 	}
 	return out
 }

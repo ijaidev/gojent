@@ -101,7 +101,7 @@ func TestMessage_JSONRoundTripReplayState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if string(encoded) == "" || jsonContains(encoded, `"content"`) {
+	if len(encoded) == 0 || jsonContains(encoded, `"content"`) {
 		t.Errorf("empty content was not omitted: %s", encoded)
 	}
 

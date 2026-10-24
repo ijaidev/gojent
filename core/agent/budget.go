@@ -45,11 +45,6 @@ type RetryPolicy struct {
 	MaxDelay time.Duration
 }
 
-// enabled reports whether retries are configured.
-func (p RetryPolicy) enabled() bool {
-	return p.MaxAttempts > 1
-}
-
 // delay returns the backoff before the given attempt (1-based).
 func (p RetryPolicy) delay(attempt int) time.Duration {
 	base := p.InitialDelay
