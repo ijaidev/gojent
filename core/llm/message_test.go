@@ -81,3 +81,88 @@ func TestMessage_WithThinking(t *testing.T) {
 		t.Errorf("expected thinking 'Pre-thought', got %q", msg.Thinking)
 	}
 }
+
+func TestMessage_JSONRoundTripReplayState(t *testing.T) {
+	original := llm.Message{
+		Role:     llm.RoleAssistant,
+		Content:  []llm.Part{llm.TextPart("")},
+		Thinking: "reasoning",
+		ToolCalls: []llm.ToolCall{
+			{Index: 0, ID: "call-1", Name: "lookup", Arguments: `{"q":"go"}`},
+		},
+		ProviderData: &llm.ProviderData{
+			Provider: "test",
+			Version:  2,
+			Data:     []byte(`{"signature":"xyz"}`),
+		},
+	}
+
+	encoded, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if string(encoded) == "" || jsonContains(encoded, `"content"`) {
+		t.Errorf("empty content was not omitted: %s", encoded)
+	}
+
+	var decoded llm.Message
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(decoded.Content) != 0 {
+		t.Errorf("expected no content parts, got %+v", decoded.Content)
+	}
+	if decoded.Thinking != "reasoning" {
+		t.Errorf("Thinking = %q", decoded.Thinking)
+	}
+	if len(decoded.ToolCalls) != 1 || decoded.ToolCalls[0].ID != "call-1" || decoded.ToolCalls[0].Index != 0 {
+		t.Errorf("ToolCalls = %+v", decoded.ToolCalls)
+	}
+	if decoded.ProviderData == nil || decoded.ProviderData.Provider != "test" || decoded.ProviderData.Version != 2 {
+		t.Errorf("ProviderData = %+v", decoded.ProviderData)
+	}
+	if string(decoded.ProviderData.Data) != `{"signature":"xyz"}` {
+		t.Errorf("ProviderData.Data = %s", decoded.ProviderData.Data)
+	}
+}
+
+func TestProviderData_CloneIsIndependent(t *testing.T) {
+	original := &llm.ProviderData{Provider: "test", Data: []byte(`{"a":1}`)}
+	clone := original.Clone()
+	clone.Data[0] = '['
+	if original.Data[0] == '[' {
+		t.Error("ProviderData.Clone aliases the original payload")
+	}
+	var nilData *llm.ProviderData
+	if nilData.Clone() != nil {
+		t.Error("nil ProviderData.Clone should return nil")
+	}
+}
+
+func TestMessage_CloneIsIndependent(t *testing.T) {
+	original := llm.Message{
+		Role:    llm.RoleUser,
+		Content: []llm.Part{llm.TextPart("hello")},
+		Data:    []byte(`{"a":1}`),
+		ProviderData: &llm.ProviderData{
+			Provider: "test",
+			Data:     []byte(`{"b":2}`),
+		},
+	}
+	clone := original.Clone()
+	clone.Content[0].Text = "changed"
+	clone.Data[0] = '['
+	clone.ProviderData.Data[0] = '['
+	if original.Content[0].Text != "hello" || original.Data[0] == '[' || original.ProviderData.Data[0] == '[' {
+		t.Error("Message.Clone shares mutable state with the original")
+	}
+}
+
+func jsonContains(data []byte, needle string) bool {
+	for i := 0; i+len(needle) <= len(data); i++ {
+		if string(data[i:i+len(needle)]) == needle {
+			return true
+		}
+	}
+	return false
+}

@@ -201,6 +201,9 @@ func (e *execution) run(ctx context.Context, input []llm.Message) (resp *Respons
 			}
 		}
 		if callErr != nil {
+			if budgetCtx.Err() != nil {
+				callErr = e.contextError(budgetCtx)
+			}
 			emit(StepEnd{Step: step, Err: callErr})
 			return nil, callErr
 		}
@@ -211,18 +214,14 @@ func (e *execution) run(ctx context.Context, input []llm.Message) (resp *Respons
 		e.calls = append(e.calls, assistant.ToolCalls...)
 		finish = response.FinishReason
 
-		if e.runner.Budget.MaxTotalTokens > 0 && e.usage.TotalTokens > e.runner.Budget.MaxTotalTokens {
-			if err := e.append(budgetCtx, assistant); err != nil {
-				return nil, err
-			}
-			return e.response(conversation, finish), fmt.Errorf("%w: %d tokens", ErrBudgetExceeded, e.usage.TotalTokens)
-		}
-
 		if len(assistant.ToolCalls) == 0 {
 			if err := e.append(budgetCtx, assistant); err != nil {
 				return nil, err
 			}
 			emit(StepEnd{Step: step, Usage: response.Usage})
+			if e.tokenBudgetExceeded() {
+				return e.response(conversation, finish), fmt.Errorf("%w: %d tokens", ErrBudgetExceeded, e.usage.TotalTokens)
+			}
 			return e.response(conversation, finish), nil
 		}
 
@@ -244,6 +243,10 @@ func (e *execution) run(ctx context.Context, input []llm.Message) (resp *Respons
 		if budgetExceeded {
 			return e.response(conversation, llm.FinishReasonLength), fmt.Errorf("%w: %d tool calls", ErrBudgetExceeded, e.toolCalls)
 		}
+		if e.tokenBudgetExceeded() {
+			return e.response(conversation, finish), fmt.Errorf("%w: %d tokens", ErrBudgetExceeded, e.usage.TotalTokens)
+		}
+		// Replay defense: a hung tool must not outlive its run.
 		if err := budgetCtx.Err(); err != nil {
 			return e.response(conversation, finish), e.contextError(budgetCtx)
 		}
@@ -279,7 +282,12 @@ func (e *execution) request(conversation []llm.Message) *llm.Request {
 	if instructions := e.agent.Instructions(); instructions != "" {
 		messages = append(messages, llm.SystemMessage(instructions))
 	}
-	messages = append(messages, conversation...)
+	for _, message := range conversation {
+		if isEmptyAssistant(message) {
+			continue
+		}
+		messages = append(messages, message)
+	}
 	return &llm.Request{
 		Messages:       messages,
 		Tools:          e.registry.definitions(),
@@ -290,6 +298,17 @@ func (e *execution) request(conversation []llm.Message) *llm.Request {
 		MaxTokens:      cloneInt(e.opts.MaxTokens),
 		TopP:           cloneFloat(e.opts.TopP),
 	}
+}
+
+// isEmptyAssistant reports whether an assistant message carries nothing a
+// provider can replay. Persisted empty responses are harmless, but sending
+// them back to a provider is not portable.
+func isEmptyAssistant(message llm.Message) bool {
+	return message.Role == llm.RoleAssistant &&
+		len(message.Content) == 0 &&
+		len(message.ToolCalls) == 0 &&
+		message.Thinking == "" &&
+		message.ProviderData == nil
 }
 
 func (e *execution) response(conversation []llm.Message, finish llm.FinishReason) *Response {
@@ -315,6 +334,11 @@ func (e *execution) response(conversation []llm.Message, finish llm.FinishReason
 		FinishReason: finish,
 		Usage:        e.usage,
 	}
+}
+
+func (e *execution) tokenBudgetExceeded() bool {
+	maxTokens := e.runner.Budget.MaxTotalTokens
+	return maxTokens > 0 && e.usage.TotalTokens > maxTokens
 }
 
 func (e *execution) contextError(ctx context.Context) error {
@@ -590,13 +614,34 @@ func (e *execution) executeTool(ctx context.Context, impl tool.Tool, call tool.C
 	if timeout == 0 {
 		timeout = DefaultToolTimeout
 	}
-	toolCtx := ctx
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		toolCtx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
+	if timeout <= 0 {
+		return callTool(ctx, impl, call)
 	}
-	return callTool(toolCtx, impl, call)
+
+	toolCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	type outcome struct {
+		result tool.Result
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				done <- outcome{err: &PanicError{Value: recovered, Stack: debug.Stack()}}
+			}
+		}()
+		result, err := impl.Execute(toolCtx, call)
+		done <- outcome{result: result, err: err}
+	}()
+
+	select {
+	case out := <-done:
+		return out.result, out.err
+	case <-toolCtx.Done():
+		return tool.Result{}, fmt.Errorf("agent: tool %q: %w", call.Name, toolCtx.Err())
+	}
 }
 
 func resultMessage(call tool.Call, result tool.Result) (llm.Message, error) {
