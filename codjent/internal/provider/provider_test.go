@@ -17,7 +17,7 @@ type fakeProvider struct {
 type providerInfo = Info
 
 func (p *fakeProvider) Info() Info { return p.info }
-func (p *fakeProvider) NewModel(context.Context, string) (llm.LLM, error) {
+func (p *fakeProvider) NewModel(context.Context, string) (llm.Model, error) {
 	if p.err != nil {
 		return nil, p.err
 	}
@@ -26,10 +26,10 @@ func (p *fakeProvider) NewModel(context.Context, string) (llm.LLM, error) {
 
 type fakeModel struct{}
 
-func (fakeModel) Generate(context.Context, llm.GenerateRequest) (*llm.GenerateResponse, error) {
+func (fakeModel) Generate(context.Context, *llm.Request) (*llm.Response, error) {
 	return nil, nil
 }
-func (fakeModel) Stream(context.Context, llm.GenerateRequest) (llm.Stream, error) {
+func (fakeModel) Stream(context.Context, *llm.Request) (llm.Stream, error) {
 	return nil, nil
 }
 func (fakeModel) ModelID() string { return "fake" }

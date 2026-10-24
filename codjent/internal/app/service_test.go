@@ -461,18 +461,18 @@ type scriptedModel struct {
 	mu       sync.Mutex
 	steps    []scriptedStep
 	calls    int
-	requests []llm.GenerateRequest
+	requests []*llm.Request
 }
 
-func (m *scriptedModel) Generate(context.Context, llm.GenerateRequest) (*llm.GenerateResponse, error) {
+func (m *scriptedModel) Generate(context.Context, *llm.Request) (*llm.Response, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *scriptedModel) Stream(ctx context.Context, req llm.GenerateRequest) (llm.Stream, error) {
+func (m *scriptedModel) Stream(ctx context.Context, req *llm.Request) (llm.Stream, error) {
 	m.mu.Lock()
 	index := m.calls
 	m.calls++
-	m.requests = append(m.requests, req)
+	m.requests = append(m.requests, req.Clone())
 	if index >= len(m.steps) {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("scripted model exhausted after %d calls", index)
@@ -514,7 +514,7 @@ func (m *scriptedModel) ModelID() string {
 	return "test-model"
 }
 
-func (m *scriptedModel) snapshotRequests() []llm.GenerateRequest {
+func (m *scriptedModel) snapshotRequests() []*llm.Request {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return slices.Clone(m.requests)
@@ -531,7 +531,7 @@ func (f *fakeModels) List() []provider.Info {
 	return []provider.Info{info}
 }
 
-func (f *fakeModels) NewModel(_ context.Context, providerID, modelID string) (llm.LLM, error) {
+func (f *fakeModels) NewModel(_ context.Context, providerID, modelID string) (llm.Model, error) {
 	if providerID != f.info.ID {
 		return nil, provider.ErrUnknownProvider
 	}

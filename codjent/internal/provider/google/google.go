@@ -75,7 +75,7 @@ func (p *Provider) Info() provider.Info {
 }
 
 // NewModel implements provider.Provider.
-func (p *Provider) NewModel(ctx context.Context, modelID string) (llm.LLM, error) {
+func (p *Provider) NewModel(ctx context.Context, modelID string) (llm.Model, error) {
 	if modelID == "" {
 		modelID = p.defaultModel
 	}

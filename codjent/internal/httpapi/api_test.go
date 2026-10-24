@@ -212,7 +212,7 @@ func TestCORSAndErrors(t *testing.T) {
 
 type staticModelSource struct {
 	info  provider.Info
-	model llm.LLM
+	model llm.Model
 }
 
 func (s *staticModelSource) List() []provider.Info {
@@ -221,7 +221,7 @@ func (s *staticModelSource) List() []provider.Info {
 	return []provider.Info{info}
 }
 
-func (s *staticModelSource) NewModel(_ context.Context, providerID, modelID string) (llm.LLM, error) {
+func (s *staticModelSource) NewModel(_ context.Context, providerID, modelID string) (llm.Model, error) {
 	if providerID != s.info.ID {
 		return nil, provider.ErrUnknownProvider
 	}
@@ -231,7 +231,7 @@ func (s *staticModelSource) NewModel(_ context.Context, providerID, modelID stri
 	return s.model, nil
 }
 
-func newTestServer(t *testing.T, model llm.LLM, modelID string, mode app.AccessMode) (*httptest.Server, *app.Service) {
+func newTestServer(t *testing.T, model llm.Model, modelID string, mode app.AccessMode) (*httptest.Server, *app.Service) {
 	t.Helper()
 
 	store, err := sqlite.New(context.Background(), filepath.Join(t.TempDir(), "codjent.db"))
@@ -384,11 +384,11 @@ type toolModel struct {
 	calls int
 }
 
-func (m *toolModel) Generate(context.Context, llm.GenerateRequest) (*llm.GenerateResponse, error) {
+func (m *toolModel) Generate(context.Context, *llm.Request) (*llm.Response, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (m *toolModel) Stream(ctx context.Context, _ llm.GenerateRequest) (llm.Stream, error) {
+func (m *toolModel) Stream(ctx context.Context, _ *llm.Request) (llm.Stream, error) {
 	m.mu.Lock()
 	call := m.calls
 	m.calls++

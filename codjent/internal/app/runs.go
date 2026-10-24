@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 	"time"
@@ -332,17 +331,14 @@ func (s *Service) execute(r *run) {
 	}
 
 	a, err := agent.New(agent.Config{
-		ID:           "codjent",
+		Name:         "codjent",
+		Description:  "A coding agent that inspects and edits the workspace.",
 		Instructions: s.instructions,
 		Model:        model,
 		Tools:        s.tools,
-		MaxSteps:     s.maxSteps,
-		Hooks: agent.Hooks{
-			BeforeTool: func(ctx context.Context, ev *agent.ToolEvent) error {
-				return s.beforeTool(r, ctx, ev)
-			},
-			AfterTool: func(_ context.Context, ev *agent.ToolEvent) {
-				afterTool(r, ev)
+		Policy: agent.Hooks{
+			OnBeforeTool: func(ctx context.Context, req *agent.ToolRequest) (agent.Decision, error) {
+				return s.beforeTool(r, ctx, req)
 			},
 		},
 	})
@@ -357,89 +353,108 @@ func (s *Service) execute(r *run) {
 	}
 	input = append(input, r.user.ToLLM())
 
-	stream, err := a.StreamMessages(r.ctx, input)
+	execution, err := a.StreamMessagesWith(r.ctx, input, agent.RunOptions{
+		Budget: agent.Budget{MaxSteps: s.maxSteps},
+	})
 	if err != nil {
-		s.failRun(r, fmt.Errorf("start stream: %w", err))
+		s.failRun(r, fmt.Errorf("start run: %w", err))
 		return
 	}
-	defer func() { _ = stream.Close() }()
+	defer func() { _ = execution.Close() }()
 
-	for {
-		chunk, recvErr := stream.Recv()
-		if errors.Is(recvErr, io.EOF) {
-			resp, responseErr := stream.Response()
-			if responseErr != nil {
-				s.failRun(r, fmt.Errorf("read response: %w", responseErr))
-				return
+	var final agent.RunEnd
+	for event := range execution.Events() {
+		switch typed := event.(type) {
+		case agent.TextDelta:
+			if typed.Text != "" {
+				r.emit(EventTextDelta, TextDeltaEvent{Text: typed.Text})
 			}
-			messageIDs, persistErr := s.persistResponse(r, resp)
-			if persistErr != nil {
-				s.failRun(r, fmt.Errorf("persist response: %w", persistErr))
-				return
+		case agent.ThinkingDelta:
+			if typed.Text != "" {
+				r.emit(EventThinkingDelta, ThinkingDeltaEvent{Text: typed.Text})
 			}
-			r.complete(resp, messageIDs)
-			return
-		}
-		if recvErr != nil {
-			s.failRun(r, fmt.Errorf("stream: %w", recvErr))
-			return
-		}
-
-		if chunk.Delta != "" {
-			r.emit(EventTextDelta, TextDeltaEvent{Text: chunk.Delta})
-		}
-		if chunk.ThinkingDelta != "" {
-			r.emit(EventThinkingDelta, ThinkingDeltaEvent{Text: chunk.ThinkingDelta})
+		case agent.ToolEnd:
+			// Denials are reported by beforeTool before the runner records
+			// them; do not emit a duplicate result.
+			if errors.Is(typed.Err, agent.ErrToolDenied) {
+				continue
+			}
+			emitToolResult(r, typed)
+		case agent.RunEnd:
+			final = typed
 		}
 	}
+	if final.Err != nil {
+		s.failRun(r, fmt.Errorf("run: %w", final.Err))
+		return
+	}
+	if final.Response == nil {
+		s.failRun(r, errors.New("run returned no response"))
+		return
+	}
+	messageIDs, err := s.persistResponse(r, final.Response)
+	if err != nil {
+		s.failRun(r, fmt.Errorf("persist response: %w", err))
+		return
+	}
+	r.complete(final.Response, messageIDs)
 }
 
-func (s *Service) beforeTool(r *run, ctx context.Context, ev *agent.ToolEvent) error {
-	if ev.Call == nil {
-		return nil
+func (s *Service) beforeTool(r *run, ctx context.Context, req *agent.ToolRequest) (agent.Decision, error) {
+	call := req.Call
+	arguments := string(call.Arguments)
+	if arguments == "" {
+		arguments = "{}"
 	}
-	call := *ev.Call
 	r.emit(EventToolCall, ToolCallEvent{
 		ID:        call.ID,
 		Name:      call.Name,
-		Arguments: call.Arguments,
+		Arguments: arguments,
 	})
 
 	if r.thread.AccessMode == AccessFull || !requiresApproval(call.Name) {
-		return nil
+		return agent.Allow, nil
 	}
 
 	decision, err := r.awaitApproval(ctx, PendingApproval{
 		ID:         newID("apr"),
 		ToolCallID: call.ID,
 		ToolName:   call.Name,
-		Arguments:  call.Arguments,
+		Arguments:  arguments,
 		CreatedAt:  nowUTC(),
 	})
 	if err != nil {
-		return fmt.Errorf("approval interrupted: %w", err)
+		return agent.Deny, fmt.Errorf("approval interrupted: %w", err)
 	}
 	if !decision.Allow {
+		message := fmt.Sprintf("tool %q denied by user", call.Name)
 		if decision.Note != "" {
-			return fmt.Errorf("tool %q denied by user: %s", call.Name, decision.Note)
+			message += ": " + decision.Note
 		}
-		return fmt.Errorf("tool %q denied by user", call.Name)
+		r.emit(EventToolResult, ToolResultEvent{
+			ID:      call.ID,
+			Name:    call.Name,
+			Error:   message,
+			Skipped: true,
+		})
+		return agent.Deny, nil
 	}
-	return nil
+	return agent.Allow, nil
 }
 
-func afterTool(r *run, ev *agent.ToolEvent) {
-	if ev.Call == nil {
-		return
-	}
+func emitToolResult(r *run, event agent.ToolEnd) {
 	data := ToolResultEvent{
-		ID:      ev.Call.ID,
-		Name:    ev.Call.Name,
-		Output:  ev.Output,
-		Skipped: ev.Skipped,
+		ID:   event.Call.ID,
+		Name: event.Call.Name,
 	}
-	if ev.Err != nil {
-		data.Error = ev.Err.Error()
+	if event.Result != nil {
+		data.Output = event.Result.Text()
+	}
+	if event.Err != nil {
+		data.Error = event.Err.Error()
+	}
+	if data.Output == "" && data.Error == "" && event.Message != nil {
+		data.Output = event.Message.Text()
 	}
 	r.emit(EventToolResult, data)
 }

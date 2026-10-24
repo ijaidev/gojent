@@ -1,6 +1,6 @@
 // Package provider defines the model-provider seam used by codjent.
 //
-// A Registry resolves a provider/model pair to an llm.LLM. Providers are
+// A Registry resolves a provider/model pair to an llm.Model. Providers are
 // registered at startup; the app stores only their string identifiers.
 package provider
 
@@ -38,14 +38,14 @@ type Info struct {
 // configuration and client construction.
 type Provider interface {
 	Info() Info
-	NewModel(ctx context.Context, modelID string) (llm.LLM, error)
+	NewModel(ctx context.Context, modelID string) (llm.Model, error)
 }
 
 // ModelSource is the read-only seam the app uses: list choices and construct a
 // model for one run.
 type ModelSource interface {
 	List() []Info
-	NewModel(ctx context.Context, providerID, modelID string) (llm.LLM, error)
+	NewModel(ctx context.Context, providerID, modelID string) (llm.Model, error)
 }
 
 // Registry is an immutable set of providers in registration order.
@@ -91,7 +91,7 @@ func (r *Registry) List() []Info {
 
 // NewModel resolves and constructs a model. Empty IDs select the first
 // provider and its default model.
-func (r *Registry) NewModel(ctx context.Context, providerID, modelID string) (llm.LLM, error) {
+func (r *Registry) NewModel(ctx context.Context, providerID, modelID string) (llm.Model, error) {
 	if providerID == "" {
 		if len(r.order) == 0 {
 			return nil, ErrUnknownProvider
