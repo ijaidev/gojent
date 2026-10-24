@@ -24,17 +24,19 @@ type AsToolConfig struct {
 	Options RunOptions
 }
 
-// AsTool exposes the agent as a tool so another agent can delegate to it.
-func (a *Agent) AsTool(cfg ...AsToolConfig) tool.Tool {
-	var config AsToolConfig
-	if len(cfg) > 0 {
-		config = cfg[0]
-	}
-	name := config.Name
+// AsTool exposes the agent as a tool with default configuration so another
+// agent can delegate to it.
+func (a *Agent) AsTool() tool.Tool {
+	return a.AsToolWith(AsToolConfig{})
+}
+
+// AsToolWith exposes the agent as a tool so another agent can delegate to it.
+func (a *Agent) AsToolWith(cfg AsToolConfig) tool.Tool {
+	name := cfg.Name
 	if name == "" {
 		name = sanitizeToolName(a.Name())
 	}
-	description := config.Description
+	description := cfg.Description
 	if description == "" {
 		description = a.Description()
 	}
@@ -46,7 +48,7 @@ func (a *Agent) AsTool(cfg ...AsToolConfig) tool.Tool {
 		ID:          name,
 		Description: description,
 		Execute: func(ctx context.Context, input SubagentInput) (tool.Result, error) {
-			r, err := newRunner(a, config.Options)
+			r, err := newRunner(a, cfg.Options)
 			if err != nil {
 				return tool.Result{}, err
 			}

@@ -77,7 +77,7 @@ func TestAgent_AsToolDelegatesToSubagent(t *testing.T) {
 
 func TestAgent_AsToolCustomNameAndDescription(t *testing.T) {
 	sub := mustAgent(t, agent.Config{Name: "helper", Model: &scriptModel{steps: []step{finalText("ok")}}})
-	subTool := sub.AsTool(agent.AsToolConfig{Name: "delegate", Description: "custom"})
+	subTool := sub.AsToolWith(agent.AsToolConfig{Name: "delegate", Description: "custom"})
 
 	spec := subTool.Spec()
 	if spec.Name != "delegate" || spec.Description != "custom" {
