@@ -87,7 +87,8 @@ func (m *Model) Stream(ctx context.Context, req *llm.Request) (llm.Stream, error
 		defer close(errCh)
 
 		var accumulatedParts []*genai.Part
-		emittedCalls := make(map[int]bool)
+		emittedCallCounts := make(map[string]int)
+		nextCallIndex := 0
 		iterSeq := m.client.Models.GenerateContentStream(streamCtx, m.modelID, contents, config)
 		for resp, recvErr := range iterSeq {
 			if recvErr != nil {
@@ -123,12 +124,21 @@ func (m *Model) Stream(ctx context.Context, req *llm.Request) (llm.Stream, error
 			}
 
 			var toolCalls []llm.ToolCall
-			for index, call := range extractToolCalls(resp) {
-				if emittedCalls[index] {
+			chunkCallCounts := make(map[string]int)
+			for _, call := range extractToolCalls(resp) {
+				key := toolCallKey(call)
+				chunkCallCounts[key]++
+				if chunkCallCounts[key] <= emittedCallCounts[key] {
 					continue
 				}
-				emittedCalls[index] = true
+				call.Index = nextCallIndex
+				nextCallIndex++
 				toolCalls = append(toolCalls, call)
+			}
+			for key, count := range chunkCallCounts {
+				if count > emittedCallCounts[key] {
+					emittedCallCounts[key] = count
+				}
 			}
 			if len(toolCalls) > 0 && (finish == "" || finish == llm.FinishReasonStop) {
 				finish = llm.FinishReasonTool
@@ -165,6 +175,17 @@ func (m *Model) Stream(ctx context.Context, req *llm.Request) (llm.Stream, error
 	}()
 
 	return llm.NewChannelStream(streamCtx, cancel, ch, errCh), nil
+}
+
+// toolCallKey identifies a complete streamed tool call so repeated emissions
+// of the same call are not duplicated. Gemini can repeat a function call
+// across chunks; partial argument streaming would need a provider-supplied
+// index instead.
+func toolCallKey(call llm.ToolCall) string {
+	if call.ID != "" {
+		return "id:" + call.ID
+	}
+	return "call:" + call.Name + "\x00" + call.Arguments
 }
 
 func extractToolCalls(resp *genai.GenerateContentResponse) []llm.ToolCall {
