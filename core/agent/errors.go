@@ -19,6 +19,8 @@ var (
 	ErrDuplicateTool = errors.New("agent: duplicate tool name")
 	// ErrToolNil is returned when a tool list contains a typed nil.
 	ErrToolNil = errors.New("agent: tool is nil")
+	// ErrToolNameRequired is returned when a tool spec has no name.
+	ErrToolNameRequired = errors.New("agent: tool name is required")
 	// ErrSessionRequired is returned when a store is configured without a
 	// session.
 	ErrSessionRequired = errors.New("agent: session is required when a store is configured")

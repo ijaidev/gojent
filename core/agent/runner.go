@@ -83,6 +83,9 @@ func newRunner(a *Agent, opts RunOptions) (*runner, error) {
 	if opts.optionErr != nil {
 		return nil, opts.optionErr
 	}
+	if err := validateTools(opts.Tools); err != nil {
+		return nil, err
+	}
 	if opts.Model == nil {
 		opts.Model = a.Model()
 	}

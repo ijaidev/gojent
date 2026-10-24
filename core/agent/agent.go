@@ -47,19 +47,10 @@ func New(cfg Config) (*Agent, error) {
 		return nil, ErrModelRequired
 	}
 
-	tools := make([]tool.Tool, 0, len(cfg.Tools))
-	seen := make(map[string]struct{}, len(cfg.Tools))
-	for _, candidate := range cfg.Tools {
-		if tool.IsNilTool(candidate) {
-			return nil, ErrToolNil
-		}
-		name := candidate.Spec().Name
-		if _, exists := seen[name]; exists {
-			return nil, fmt.Errorf("%w: %q", ErrDuplicateTool, name)
-		}
-		seen[name] = struct{}{}
-		tools = append(tools, candidate)
+	if err := validateTools(cfg.Tools); err != nil {
+		return nil, err
 	}
+	tools := slices.Clone(cfg.Tools)
 	slices.SortFunc(tools, func(a, b tool.Tool) int {
 		return cmp.Compare(a.Spec().Name, b.Spec().Name)
 	})
@@ -142,6 +133,27 @@ func (a *Agent) Tool(name string) (tool.Tool, bool) {
 type toolRegistry struct {
 	ordered []tool.Tool
 	byName  map[string]tool.Tool
+}
+
+// validateTools rejects tools that cannot be registered by name. Names must be
+// unique within a list; replacing an agent tool with a run tool is handled
+// separately by newToolRegistry.
+func validateTools(tools []tool.Tool) error {
+	seen := make(map[string]struct{}, len(tools))
+	for _, candidate := range tools {
+		if tool.IsNilTool(candidate) {
+			return ErrToolNil
+		}
+		name := candidate.Spec().Name
+		if name == "" {
+			return ErrToolNameRequired
+		}
+		if _, exists := seen[name]; exists {
+			return fmt.Errorf("%w: %q", ErrDuplicateTool, name)
+		}
+		seen[name] = struct{}{}
+	}
+	return nil
 }
 
 func newToolRegistry(agentTools, extra []tool.Tool) *toolRegistry {
