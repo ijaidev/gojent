@@ -220,7 +220,7 @@ func TestStore_Validation(t *testing.T) {
 	if err := store.Append(ctx, session.Session{}, llm.UserMessage("x")); !errors.Is(err, session.ErrIDRequired) {
 		t.Errorf("Append without ID = %v", err)
 	}
-	if err := store.Append(ctx, session.Session{ID: "s"}); !errors.Is(err, session.ErrNilStoreMessage) {
+	if err := store.Append(ctx, session.Session{ID: "s"}); !errors.Is(err, session.ErrMessagesRequired) {
 		t.Errorf("Append without messages = %v", err)
 	}
 	if err := store.Delete(ctx, session.Session{}); !errors.Is(err, session.ErrIDRequired) {

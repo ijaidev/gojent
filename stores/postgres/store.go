@@ -55,7 +55,7 @@ func (s *Store) Append(ctx context.Context, sess session.Session, messages ...ll
 		return err
 	}
 	if len(messages) == 0 {
-		return session.ErrNilStoreMessage
+		return session.ErrMessagesRequired
 	}
 	if err := s.available(); err != nil {
 		return err

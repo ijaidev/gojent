@@ -9,8 +9,6 @@ package session
 import (
 	"context"
 	"errors"
-	"fmt"
-	"slices"
 	"sync"
 
 	"github.com/ijaidev/gojent/core/llm"
@@ -20,8 +18,8 @@ var (
 	// ErrIDRequired is returned when a store operation receives a session
 	// without an ID.
 	ErrIDRequired = errors.New("session: id is required")
-	// ErrNilStoreMessage is returned when Append receives no messages.
-	ErrNilStoreMessage = errors.New("session: no messages to append")
+	// ErrMessagesRequired is returned when Append receives no messages.
+	ErrMessagesRequired = errors.New("session: at least one message is required")
 	// ErrClosed is returned when the in-memory store is used after Close.
 	ErrClosed = errors.New("session: store is closed")
 )
@@ -92,7 +90,7 @@ func (m *Memory) Append(ctx context.Context, session Session, messages ...llm.Me
 		return ErrIDRequired
 	}
 	if len(messages) == 0 {
-		return ErrNilStoreMessage
+		return ErrMessagesRequired
 	}
 
 	m.mu.Lock()
@@ -138,16 +136,9 @@ func cloneMessages(messages []llm.Message) []llm.Message {
 // Validate checks the session before a store operation.
 func (s Session) Validate() error {
 	if s.ID == "" {
-		return fmt.Errorf("%w", ErrIDRequired)
+		return ErrIDRequired
 	}
 	return nil
-}
-
-// Messages is a convenience wrapper that snapshots a message slice before
-// exposing it. It exists to keep adapters from accidentally aliasing store
-// state.
-func Messages(messages []llm.Message) []llm.Message {
-	return slices.Clone(messages)
 }
 
 var _ Store = (*Memory)(nil)

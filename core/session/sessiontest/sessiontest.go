@@ -186,8 +186,8 @@ func testValidation(t *testing.T, store session.Store) {
 	if err := store.Append(ctx, session.Session{}, llm.UserMessage("x")); !errors.Is(err, session.ErrIDRequired) {
 		t.Errorf("Append without ID = %v, want ErrIDRequired", err)
 	}
-	if err := store.Append(ctx, session.Session{ID: "s"}); !errors.Is(err, session.ErrNilStoreMessage) {
-		t.Errorf("Append without messages = %v, want ErrNilStoreMessage", err)
+	if err := store.Append(ctx, session.Session{ID: "s"}); !errors.Is(err, session.ErrMessagesRequired) {
+		t.Errorf("Append without messages = %v, want ErrMessagesRequired", err)
 	}
 }
 
