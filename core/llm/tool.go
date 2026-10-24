@@ -56,8 +56,9 @@ const (
 
 // ToolChoice constrains tool selection. An empty Mode means provider default.
 type ToolChoice struct {
-	Mode ToolChoiceMode
+	// Mode selects whether and how the model may call tools.
+	Mode ToolChoiceMode `json:"mode,omitempty"`
 	// Name optionally forces a specific tool. Providers that do not support a
 	// named choice may ignore it.
-	Name string
+	Name string `json:"name,omitempty"`
 }

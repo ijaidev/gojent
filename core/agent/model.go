@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/ijaidev/gojent/core/llm"
@@ -65,7 +66,7 @@ func (r *runner) callModelOnce(ctx context.Context, request *llm.Request, step i
 	}()
 
 	safeEmit(r.opts.Sink, MessageStart{Step: step})
-	var text, thinking string
+	var text, thinking strings.Builder
 	var calls []llm.ToolCall
 	var usage llm.Usage
 	var finish llm.FinishReason
@@ -80,11 +81,11 @@ func (r *runner) callModelOnce(ctx context.Context, request *llm.Request, step i
 			return nil, recvErr
 		}
 		if chunk.Delta != "" {
-			text += chunk.Delta
+			text.WriteString(chunk.Delta)
 			safeEmit(r.opts.Sink, TextDelta{Step: step, Text: chunk.Delta})
 		}
 		if chunk.ThinkingDelta != "" {
-			thinking += chunk.ThinkingDelta
+			thinking.WriteString(chunk.ThinkingDelta)
 			safeEmit(r.opts.Sink, ThinkingDelta{Step: step, Text: chunk.ThinkingDelta})
 		}
 		if len(chunk.ToolCalls) > 0 {
@@ -112,12 +113,12 @@ func (r *runner) callModelOnce(ctx context.Context, request *llm.Request, step i
 
 	message := llm.Message{
 		Role:         llm.RoleAssistant,
-		Thinking:     thinking,
+		Thinking:     thinking.String(),
 		ToolCalls:    calls,
 		ProviderData: providerData,
 	}
-	if text != "" {
-		message.Content = []llm.Part{llm.TextPart(text)}
+	if text.Len() > 0 {
+		message.Content = []llm.Part{llm.TextPart(text.String())}
 	}
 	message = r.finalizeAssistant(message, step)
 	if finish == "" {

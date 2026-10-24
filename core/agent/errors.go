@@ -52,5 +52,8 @@ type PanicError struct {
 
 // Error implements the error interface.
 func (e *PanicError) Error() string {
+	if e == nil {
+		return "agent: panic: <nil>"
+	}
 	return fmt.Sprintf("agent: panic: %v", e.Value)
 }

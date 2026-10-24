@@ -11,8 +11,11 @@ import (
 type Decision int
 
 const (
+	// DecisionUnknown is the zero value. It is treated as Deny so a policy
+	// that fails to return a decision fails closed.
+	DecisionUnknown Decision = iota
 	// Allow executes the tool.
-	Allow Decision = iota
+	Allow
 	// Deny skips the tool and reports the denial to the model.
 	Deny
 	// Ask requires an approver. Without one, the call is denied.
@@ -34,6 +37,22 @@ func (d Decision) String() string {
 		return "terminate"
 	default:
 		return "unknown"
+	}
+}
+
+// severity ranks decisions by restrictiveness. Unrecognized values, including
+// DecisionUnknown, rank with Deny so a policy cannot accidentally allow a call
+// by returning an out-of-range value.
+func (d Decision) severity() int {
+	switch d {
+	case Terminate:
+		return 4
+	case Ask:
+		return 3
+	case Allow:
+		return 1
+	default:
+		return 2
 	}
 }
 
@@ -162,8 +181,8 @@ func (c PolicyChain) AfterModel(ctx context.Context, result *ModelResult) error 
 	return nil
 }
 
-// BeforeTool implements Policy. The most restrictive decision wins, and
-// Terminate wins over Ask, which wins over Deny.
+// BeforeTool implements Policy. The most restrictive decision wins:
+// Terminate, then Ask, then Deny (including DecisionUnknown).
 func (c PolicyChain) BeforeTool(ctx context.Context, req *ToolRequest) (Decision, error) {
 	decision := Allow
 	for _, policy := range c {
@@ -174,7 +193,7 @@ func (c PolicyChain) BeforeTool(ctx context.Context, req *ToolRequest) (Decision
 		if err != nil {
 			return Deny, err
 		}
-		if next > decision {
+		if next.severity() > decision.severity() {
 			decision = next
 		}
 	}

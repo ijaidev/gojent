@@ -726,6 +726,7 @@ func TestAgent_PolicyDeniesAndApproves(t *testing.T) {
 			wantExecuted: false,
 		},
 		{name: "terminate", decision: agent.Terminate, wantExecuted: false, terminalError: agent.ErrTerminated},
+		{name: "unknown fails closed", decision: agent.DecisionUnknown, wantExecuted: false},
 	}
 
 	for _, tc := range tests {
@@ -797,6 +798,61 @@ func TestAgent_PolicyDeniesAndApproves(t *testing.T) {
 				assertNoDanglingToolCalls(t, messages)
 			}
 		})
+	}
+}
+
+func TestAgent_ToolResultDropsEmptyTextParts(t *testing.T) {
+	empty := tool.MustNew(tool.Config[struct{}, tool.Result]{
+		ID: "empty",
+		Execute: func(_ context.Context, _ struct{}) (tool.Result, error) {
+			return tool.Result{Content: []llm.Part{llm.TextPart("")}}, nil
+		},
+	})
+	model := &scriptModel{steps: []step{
+		toolCallStep(llm.ToolCall{ID: "c1", Name: "empty", Arguments: `{}`}),
+		finalText("done"),
+	}}
+	a := mustAgent(t, agent.Config{Name: "empty-parts", Model: model, Tools: []tool.Tool{empty}})
+
+	if _, err := a.Generate(context.Background(), "go"); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	calls := model.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("model calls = %d, want 2", len(calls))
+	}
+	for _, message := range calls[1].Messages {
+		for _, part := range message.Content {
+			if part.Type == llm.PartTypeText && part.Text == "" {
+				t.Fatalf("empty text part reached the provider: %+v", calls[1].Messages)
+			}
+		}
+	}
+	last := calls[1].Messages[len(calls[1].Messages)-1]
+	if last.Role != llm.RoleTool || last.Text() != "{}" {
+		t.Errorf("tool message = %+v, want a single {} text part", last)
+	}
+}
+
+func TestAgent_RequestDropsEmptyTextPartsFromInput(t *testing.T) {
+	model := &scriptModel{steps: []step{finalText("done")}}
+	a := mustAgent(t, agent.Config{Name: "sanitize", Model: model})
+
+	input := llm.Message{
+		Role:    llm.RoleUser,
+		Content: []llm.Part{llm.TextPart(""), llm.TextPart("hi")},
+	}
+	if _, err := a.GenerateMessages(context.Background(), []llm.Message{input}); err != nil {
+		t.Fatalf("GenerateMessages: %v", err)
+	}
+
+	messages := model.Calls()[0].Messages
+	if len(messages) != 1 {
+		t.Fatalf("request messages = %+v", messages)
+	}
+	if len(messages[0].Content) != 1 || messages[0].Text() != "hi" {
+		t.Errorf("request content = %+v, want only %q", messages[0].Content, "hi")
 	}
 }
 

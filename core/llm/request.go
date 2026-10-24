@@ -4,7 +4,7 @@ package llm
 type Request struct {
 	Messages       []Message        `json:"messages"`
 	Tools          []ToolDefinition `json:"tools,omitempty"`
-	ToolChoice     ToolChoice       `json:"tool_choice,omitempty"`
+	ToolChoice     ToolChoice       `json:"tool_choice,omitzero"`
 	Thinking       *ThinkingConfig  `json:"thinking,omitempty"`
 	ResponseFormat *ResponseFormat  `json:"response_format,omitempty"`
 	Temperature    *float64         `json:"temperature,omitempty"`
@@ -22,10 +22,7 @@ func (r *Request) Clone() *Request {
 		return nil
 	}
 	clone := *r
-	clone.Messages = make([]Message, len(r.Messages))
-	for i := range r.Messages {
-		clone.Messages[i] = r.Messages[i].Clone()
-	}
+	clone.Messages = CloneMessages(r.Messages)
 	clone.Tools = make([]ToolDefinition, len(r.Tools))
 	for i, definition := range r.Tools {
 		clone.Tools[i] = definition

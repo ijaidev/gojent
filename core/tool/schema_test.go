@@ -3,6 +3,7 @@ package tool_test
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +32,21 @@ type ComplexPost struct {
 type RecursiveNode struct {
 	Val  int            `json:"val"`
 	Next *RecursiveNode `json:"next,omitempty"`
+}
+
+type RecursiveList []RecursiveList
+
+type RecursiveMap map[string]RecursiveMap
+
+type RecursivePointer *RecursivePointer
+
+type UnsupportedMapKeyInput struct {
+	Values map[float64]string `json:"values"`
+}
+
+type OmitZeroInput struct {
+	Value string `json:"value,omitzero"`
+	Other string `json:"other,omitempty"`
 }
 
 type EmbeddedID struct {
@@ -200,6 +216,54 @@ func TestGenerateSchema_RecursiveStrictPlaceholder(t *testing.T) {
 	next := props["next"].(map[string]any)
 	if next["additionalProperties"] != false {
 		t.Errorf("expected strict recursive placeholder, got %+v", next)
+	}
+}
+
+func TestGenerateSchema_RecursiveContainers(t *testing.T) {
+	list, err := tool.GenerateSchema[RecursiveList]()
+	if err != nil {
+		t.Fatalf("recursive list: %v", err)
+	}
+	if list["type"] != "array" {
+		t.Fatalf("recursive list type = %v", list["type"])
+	}
+	if items, ok := list["items"].(map[string]any); !ok || items["type"] != "array" {
+		t.Errorf("recursive list items = %+v", list["items"])
+	}
+
+	mapping, err := tool.GenerateSchema[RecursiveMap]()
+	if err != nil {
+		t.Fatalf("recursive map: %v", err)
+	}
+	if mapping["type"] != "object" {
+		t.Fatalf("recursive map type = %v", mapping["type"])
+	}
+	if values, ok := mapping["additionalProperties"].(map[string]any); !ok || values["type"] != "object" {
+		t.Errorf("recursive map values = %+v", mapping["additionalProperties"])
+	}
+}
+
+func TestGenerateSchema_RejectsUnsupportedMapKeys(t *testing.T) {
+	_, err := tool.GenerateSchema[UnsupportedMapKeyInput]()
+	if err == nil || !strings.Contains(err.Error(), "map key") {
+		t.Fatalf("GenerateSchema error = %v, want unsupported map key", err)
+	}
+}
+
+func TestGenerateSchema_RejectsRecursivePointer(t *testing.T) {
+	_, err := tool.GenerateSchema[RecursivePointer]()
+	if err == nil || !strings.Contains(err.Error(), "recursive pointer") {
+		t.Fatalf("GenerateSchema error = %v, want recursive pointer", err)
+	}
+}
+
+func TestGenerateSchema_OmitZeroIsOptional(t *testing.T) {
+	schema, err := tool.GenerateSchema[OmitZeroInput]()
+	if err != nil {
+		t.Fatalf("GenerateSchema failed: %v", err)
+	}
+	if _, required := schema["required"]; required {
+		t.Errorf("omitzero/omitempty fields should be optional, got %v", schema["required"])
 	}
 }
 

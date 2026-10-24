@@ -20,8 +20,9 @@ type Model interface {
 }
 
 // Streamer is an optional capability implemented by models that support
-// incremental generation. A Streamer must also implement Model.
+// incremental generation.
 type Streamer interface {
+	Model
 	Stream(ctx context.Context, req *Request) (Stream, error)
 }
 

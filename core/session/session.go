@@ -26,10 +26,10 @@ var (
 // Session identifies a conversation and its owner scope.
 type Session struct {
 	// ID identifies the conversation.
-	ID string
+	ID string `json:"id"`
 	// ResourceID identifies the owner or tenant. Stores must use it to isolate
 	// conversations that happen to share an ID.
-	ResourceID string
+	ResourceID string `json:"resource_id,omitempty"`
 }
 
 // Validate checks the session before a store operation.

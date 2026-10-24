@@ -40,13 +40,15 @@ func (r *Response) Unmarshal(target any) error {
 
 func cleanJSONText(text string) string {
 	trimmed := strings.TrimSpace(text)
-	if strings.HasPrefix(trimmed, "```") {
-		if index := strings.Index(trimmed, "\n"); index != -1 {
-			trimmed = strings.TrimSpace(trimmed[index+1:])
-		}
-		if strings.HasSuffix(trimmed, "```") {
-			trimmed = strings.TrimSpace(trimmed[:len(trimmed)-3])
-		}
+	body, ok := strings.CutPrefix(trimmed, "```")
+	if !ok {
+		return trimmed
 	}
-	return trimmed
+	// Drop the rest of the opening fence line, which may hold a language tag.
+	if _, rest, found := strings.Cut(body, "\n"); found {
+		body = rest
+	} else {
+		return trimmed
+	}
+	return strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(body), "```"))
 }

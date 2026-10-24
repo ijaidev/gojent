@@ -40,7 +40,7 @@ func (m *Memory) Load(ctx context.Context, session Session) ([]llm.Message, erro
 		return nil, ErrClosed
 	}
 	messages := m.sessions[keyOf(session)]
-	return cloneMessages(messages), nil
+	return llm.CloneMessages(messages), nil
 }
 
 // Append atomically adds a deep copy of the messages.
@@ -61,7 +61,7 @@ func (m *Memory) Append(ctx context.Context, session Session, messages ...llm.Me
 		return ErrClosed
 	}
 	key := keyOf(session)
-	m.sessions[key] = append(m.sessions[key], cloneMessages(messages)...)
+	m.sessions[key] = append(m.sessions[key], llm.CloneMessages(messages)...)
 	return nil
 }
 
@@ -82,15 +82,4 @@ func (m *Memory) Clear() {
 
 func keyOf(session Session) sessionKey {
 	return sessionKey{id: session.ID, resourceID: session.ResourceID}
-}
-
-func cloneMessages(messages []llm.Message) []llm.Message {
-	if len(messages) == 0 {
-		return nil
-	}
-	out := make([]llm.Message, len(messages))
-	for i := range messages {
-		out[i] = messages[i].Clone()
-	}
-	return out
 }

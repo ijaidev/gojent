@@ -100,6 +100,19 @@ func (m Message) Clone() Message {
 	return clone
 }
 
+// CloneMessages deep-copies a slice of messages. Empty and nil slices return
+// nil.
+func CloneMessages(messages []Message) []Message {
+	if len(messages) == 0 {
+		return nil
+	}
+	out := make([]Message, len(messages))
+	for i := range messages {
+		out[i] = messages[i].Clone()
+	}
+	return out
+}
+
 // MarshalJSON omits empty text parts so persisted transcripts always replay.
 func (m Message) MarshalJSON() ([]byte, error) {
 	type wireMessage struct {

@@ -18,20 +18,9 @@ func mergeMedia(messages []llm.Message, media []llm.Part) []llm.Message {
 		merged = append(merged, messages...)
 		return append(merged, llm.UserMessageWithParts(media...))
 	}
-	merged := cloneMessages(messages)
+	merged := llm.CloneMessages(messages)
 	merged[last].Content = llm.NonEmptyParts(append(cloneParts(merged[last].Content), media...))
 	return merged
-}
-
-func cloneMessages(messages []llm.Message) []llm.Message {
-	if len(messages) == 0 {
-		return nil
-	}
-	out := make([]llm.Message, len(messages))
-	for i := range messages {
-		out[i] = messages[i].Clone()
-	}
-	return out
 }
 
 func cloneParts(parts []llm.Part) []llm.Part {

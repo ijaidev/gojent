@@ -36,6 +36,17 @@ func (v validatingInput) Validate() error {
 	return nil
 }
 
+type pointerValidatingInput struct {
+	Name string `json:"name"`
+}
+
+func (v *pointerValidatingInput) Validate() error {
+	if v.Name == "" {
+		return errors.New("name is required")
+	}
+	return nil
+}
+
 type customTool struct {
 	id string
 }
@@ -397,6 +408,44 @@ func TestTool_Execute_Validator(t *testing.T) {
 	}
 	if result.Text() != "ok" {
 		t.Errorf("expected ok, got %q", result.Text())
+	}
+}
+
+func TestTool_Execute_PointerReceiverValidator(t *testing.T) {
+	validatingTool := tool.MustNew(tool.Config[pointerValidatingInput, string]{
+		ID: "validated",
+		Execute: func(_ context.Context, in pointerValidatingInput) (string, error) {
+			return in.Name, nil
+		},
+	})
+
+	if _, err := validatingTool.Execute(context.Background(), tool.Call{Arguments: []byte(`{}`)}); !errors.Is(err, tool.ErrInvalidInput) {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+
+	result, err := validatingTool.Execute(context.Background(), tool.Call{Arguments: []byte(`{"name":"ok"}`)})
+	if err != nil {
+		t.Fatalf("expected valid input, got %v", err)
+	}
+	if result.Text() != "ok" {
+		t.Errorf("expected ok, got %q", result.Text())
+	}
+}
+
+func TestTool_Execute_InvalidInputWrapsSentinelOnce(t *testing.T) {
+	weatherTool := tool.MustNew(tool.Config[WeatherInput, WeatherOutput]{
+		ID: "weather",
+		Execute: func(_ context.Context, _ WeatherInput) (WeatherOutput, error) {
+			return WeatherOutput{}, nil
+		},
+	})
+
+	_, err := weatherTool.Execute(context.Background(), tool.Call{Arguments: []byte(`{"location":42}`)})
+	if !errors.Is(err, tool.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+	if count := strings.Count(err.Error(), "invalid input"); count != 1 {
+		t.Errorf("error wraps ErrInvalidInput %d times: %v", count, err)
 	}
 }
 

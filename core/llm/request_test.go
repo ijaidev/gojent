@@ -1,6 +1,7 @@
 package llm_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/ijaidev/gojent/core/llm"
@@ -89,5 +90,40 @@ func TestRequest_CloneIsDeep(t *testing.T) {
 	}
 	if request.Metadata["tenant"] != "a" {
 		t.Errorf("metadata = %v", request.Metadata)
+	}
+}
+
+func TestRequest_ToolChoiceJSON(t *testing.T) {
+	encoded, err := json.Marshal(llm.Request{
+		ToolChoice: llm.ToolChoice{Mode: llm.ToolChoiceRequired, Name: "lookup"},
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(encoded, &raw); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	choice, ok := raw["tool_choice"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool_choice = %v, want object", raw["tool_choice"])
+	}
+	if choice["mode"] != "required" || choice["name"] != "lookup" {
+		t.Errorf("tool_choice = %v", choice)
+	}
+
+	empty, err := json.Marshal(llm.Request{})
+	if err != nil {
+		t.Fatalf("Marshal empty: %v", err)
+	}
+	if len(empty) == 0 {
+		t.Fatal("empty request encoded as nothing")
+	}
+	var emptyRaw map[string]any
+	if err := json.Unmarshal(empty, &emptyRaw); err != nil {
+		t.Fatalf("Unmarshal empty: %v", err)
+	}
+	if _, present := emptyRaw["tool_choice"]; present {
+		t.Errorf("zero ToolChoice should be omitted, got %s", empty)
 	}
 }

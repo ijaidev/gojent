@@ -13,6 +13,7 @@ func resultMessage(call tool.Call, result tool.Result) (llm.Message, error) {
 	if err != nil {
 		return llm.Message{}, err
 	}
+	parts = llm.NonEmptyParts(parts)
 	if len(parts) == 0 {
 		parts = []llm.Part{llm.TextPart("{}")}
 	}

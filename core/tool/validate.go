@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -112,6 +114,9 @@ func validateValue(schema map[string]any, value any, path string) error {
 		switch keyword {
 		case "allOf":
 			if matches != len(branches) {
+				if lastErr == nil {
+					lastErr = invalid(path, "value does not match all allowed schemas")
+				}
 				return lastErr
 			}
 		case "anyOf":
@@ -191,8 +196,8 @@ func validateObject(schema, object map[string]any, path string) error {
 	}
 
 	properties, _ := schema["properties"].(map[string]any)
-	for name, rawProperty := range properties {
-		property, ok := rawProperty.(map[string]any)
+	for _, name := range slices.Sorted(maps.Keys(properties)) {
+		property, ok := properties[name].(map[string]any)
 		if !ok {
 			continue
 		}
@@ -209,23 +214,18 @@ func validateObject(schema, object map[string]any, path string) error {
 		switch typed := additional.(type) {
 		case bool:
 			if !typed {
-				for name := range object {
-					if properties == nil {
-						return invalid(path, "additional property %q is not allowed", name)
-					}
+				for _, name := range slices.Sorted(maps.Keys(object)) {
 					if _, declared := properties[name]; !declared {
 						return invalid(path, "additional property %q is not allowed", name)
 					}
 				}
 			}
 		case map[string]any:
-			for name, value := range object {
-				if properties != nil {
-					if _, declared := properties[name]; declared {
-						continue
-					}
+			for _, name := range slices.Sorted(maps.Keys(object)) {
+				if _, declared := properties[name]; declared {
+					continue
 				}
-				if err := validateValue(typed, value, path+"."+name); err != nil {
+				if err := validateValue(typed, object[name], path+"."+name); err != nil {
 					return err
 				}
 			}

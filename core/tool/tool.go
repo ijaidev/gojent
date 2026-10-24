@@ -60,7 +60,8 @@ type Config[In any, Out any] struct {
 	SchemaOptions []SchemaOption
 	// Annotations describes side effects.
 	Annotations Annotations
-	// ExecutionMode controls scheduling. The zero value is parallel.
+	// ExecutionMode declares the tool's scheduling preference. The zero value
+	// is parallel. The runner currently executes calls sequentially.
 	ExecutionMode ExecutionMode
 	// Strict marks the schema as strict for providers that support it.
 	Strict bool
@@ -185,16 +186,16 @@ func (t *BaseTool[In, Out]) Execute(ctx context.Context, call Call) (Result, err
 	var in In
 	if len(input) > 0 && !bytes.Equal(input, []byte("null")) {
 		if err := Validate(t.spec.InputSchema, input); err != nil {
-			return Result{}, fmt.Errorf("%w: tool %s: %w", ErrInvalidInput, t.spec.Name, err)
+			// Validate already wraps ErrInvalidInput; add only the tool
+			// context instead of repeating the sentinel.
+			return Result{}, fmt.Errorf("tool %s: %w", t.spec.Name, err)
 		}
 		if err := json.Unmarshal(input, &in); err != nil {
 			return Result{}, fmt.Errorf("%w: tool %s: %w", ErrInvalidInput, t.spec.Name, err)
 		}
 	}
-	if validator, ok := any(in).(Validator); ok {
-		if err := validator.Validate(); err != nil {
-			return Result{}, fmt.Errorf("%w: tool %s: %w", ErrInvalidInput, t.spec.Name, err)
-		}
+	if err := validateStruct(in); err != nil {
+		return Result{}, fmt.Errorf("%w: tool %s: %w", ErrInvalidInput, t.spec.Name, err)
 	}
 
 	out, err := t.execute(ctx, in)
@@ -220,4 +221,17 @@ func IsNilTool(t Tool) bool {
 	default:
 		return false
 	}
+}
+
+// validateStruct invokes Validator on the decoded value. Both value and
+// pointer receivers are accepted: a handler input is often a struct with a
+// pointer-receiver Validate method, which the plain type assertion misses.
+func validateStruct[In any](in In) error {
+	if validator, ok := any(in).(Validator); ok {
+		return validator.Validate()
+	}
+	if validator, ok := any(&in).(Validator); ok {
+		return validator.Validate()
+	}
+	return nil
 }

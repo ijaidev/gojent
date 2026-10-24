@@ -66,8 +66,17 @@ func (g *schemaGenerator) schema(t reflect.Type) (map[string]any, error) {
 		return map[string]any{}, nil
 	}
 
-	for t.Kind() == reflect.Pointer {
-		t = t.Elem()
+	// Defined pointer types can cycle (for example `type P *P`). Reject the
+	// cycle instead of looping forever while unwrapping pointers.
+	if t.Kind() == reflect.Pointer {
+		seen := make(map[reflect.Type]bool)
+		for t.Kind() == reflect.Pointer {
+			if seen[t] {
+				return nil, fmt.Errorf("unsupported recursive pointer type %s", t)
+			}
+			seen[t] = true
+			t = t.Elem()
+		}
 	}
 
 	if isTimeType(t) {
@@ -93,8 +102,18 @@ func (g *schemaGenerator) schema(t reflect.Type) (map[string]any, error) {
 
 	switch t.Kind() {
 	case reflect.Struct:
+		if g.visited[t] {
+			return g.objectPlaceholder(), nil
+		}
+		g.visited[t] = true
+		defer delete(g.visited, t)
 		return g.structSchema(t)
 	case reflect.Slice, reflect.Array:
+		if g.visited[t] {
+			return g.containerPlaceholder(t), nil
+		}
+		g.visited[t] = true
+		defer delete(g.visited, t)
 		items, err := g.schema(t.Elem())
 		if err != nil {
 			return nil, err
@@ -104,6 +123,14 @@ func (g *schemaGenerator) schema(t reflect.Type) (map[string]any, error) {
 			"items": items,
 		}, nil
 	case reflect.Map:
+		if !supportsMapKey(t.Key()) {
+			return nil, fmt.Errorf("unsupported map key type %s", t.Key())
+		}
+		if g.visited[t] {
+			return g.containerPlaceholder(t), nil
+		}
+		g.visited[t] = true
+		defer delete(g.visited, t)
 		values, err := g.schema(t.Elem())
 		if err != nil {
 			return nil, err
@@ -129,12 +156,6 @@ func (g *schemaGenerator) schema(t reflect.Type) (map[string]any, error) {
 }
 
 func (g *schemaGenerator) structSchema(t reflect.Type) (map[string]any, error) {
-	if g.visited[t] {
-		return g.objectPlaceholder(), nil
-	}
-	g.visited[t] = true
-	defer delete(g.visited, t)
-
 	properties := make(map[string]any)
 	var required []string
 	requiredSet := make(map[string]bool)
@@ -168,7 +189,7 @@ func (g *schemaGenerator) addFields(t reflect.Type, properties map[string]any, r
 		}
 
 		fieldType := field.Type
-		optional := forceOptional || tag.omitempty
+		optional := forceOptional || tag.optional
 		for fieldType.Kind() == reflect.Pointer {
 			fieldType = fieldType.Elem()
 			optional = true
@@ -234,11 +255,25 @@ func (g *schemaGenerator) objectPlaceholder() map[string]any {
 	return placeholder
 }
 
+// containerPlaceholder terminates self-referential slice and map schemas.
+// There is no finite strict schema for an infinitely nested container, so the
+// placeholder describes only the immediate shape.
+func (g *schemaGenerator) containerPlaceholder(t reflect.Type) map[string]any {
+	switch t.Kind() {
+	case reflect.Slice, reflect.Array:
+		return map[string]any{"type": "array", "items": map[string]any{}}
+	case reflect.Map:
+		return map[string]any{"type": "object", "additionalProperties": map[string]any{}}
+	default:
+		return g.objectPlaceholder()
+	}
+}
+
 type jsonFieldTag struct {
-	name      string
-	omitempty bool
-	asString  bool
-	skip      bool
+	name     string
+	optional bool
+	asString bool
+	skip     bool
 }
 
 func parseJSONFieldTag(raw string) jsonFieldTag {
@@ -253,8 +288,8 @@ func parseJSONFieldTag(raw string) jsonFieldTag {
 	tag := jsonFieldTag{name: parts[0]}
 	for _, option := range parts[1:] {
 		switch option {
-		case "omitempty":
-			tag.omitempty = true
+		case "omitempty", "omitzero":
+			tag.optional = true
 		case "string":
 			tag.asString = true
 		}
@@ -334,6 +369,18 @@ func isFlattenableStruct(t reflect.Type) bool {
 
 func implementsTextMarshaler(t reflect.Type) bool {
 	return t.Implements(textMarshalerType) || reflect.PointerTo(t).Implements(textMarshalerType)
+}
+
+// supportsMapKey mirrors encoding/json's map key rules: strings, integers, and
+// types with a value-receiver MarshalText method.
+func supportsMapKey(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return true
+	}
+	return t.Implements(textMarshalerType)
 }
 
 func dateTimeSchema() map[string]any {

@@ -46,16 +46,11 @@ func (r *runner) runTools(ctx context.Context, calls []llm.ToolCall, step int) (
 		if policyErr != nil {
 			return nil, false, policyErr
 		}
-		switch decision {
-		case Terminate:
+		if decision == Terminate {
 			return nil, false, ErrTerminated
-		case Deny, Ask:
-			message := toolErrorMessage(call, ErrToolDenied)
-			safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Message: &message, Err: ErrToolDenied})
-			results = append(results, message)
-			continue
-		case Allow:
-		default:
+		}
+		if decision != Allow {
+			// Deny, an unresolved Ask, and unknown decisions all fail closed.
 			message := toolErrorMessage(call, ErrToolDenied)
 			safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Message: &message, Err: ErrToolDenied})
 			results = append(results, message)

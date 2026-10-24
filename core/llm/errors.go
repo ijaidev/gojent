@@ -95,10 +95,11 @@ func (e *Error) Retryable() bool {
 	}
 }
 
-// AsError extracts an *Error from err, if present.
+// AsError extracts an *Error from err, if present. A typed-nil *Error is
+// reported as absent so callers can safely dereference the result.
 func AsError(err error) (*Error, bool) {
 	var target *Error
-	if errors.As(err, &target) {
+	if errors.As(err, &target) && target != nil {
 		return target, true
 	}
 	return nil, false

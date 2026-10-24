@@ -10,7 +10,13 @@ import (
 func recoveryError(err error) string {
 	var panicErr *PanicError
 	if errors.As(err, &panicErr) {
+		if panicErr == nil {
+			return "panic: <nil>"
+		}
 		return fmt.Sprintf("panic: %v", panicErr.Value)
+	}
+	if err == nil {
+		return "unknown error"
 	}
 	return err.Error()
 }

@@ -96,7 +96,7 @@ func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response,
 		return nil, err
 	}
 	if len(input) > 0 {
-		conversation = append(conversation, cloneMessages(input)...)
+		conversation = append(conversation, llm.CloneMessages(input)...)
 		if err := r.append(budgetCtx, input...); err != nil {
 			return nil, err
 		}
@@ -197,9 +197,6 @@ func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response,
 		if err := budgetCtx.Err(); err != nil {
 			return r.response(conversation, finish), r.contextError(budgetCtx)
 		}
-		if step+1 >= maxSteps {
-			return r.response(conversation, llm.FinishReasonLength), ErrMaxSteps
-		}
 	}
 }
 
@@ -230,10 +227,12 @@ func (r *runner) request(conversation []llm.Message) *llm.Request {
 		messages = append(messages, llm.SystemMessage(instructions))
 	}
 	for i := range conversation {
-		if isEmptyAssistant(conversation[i]) {
+		message := conversation[i].Clone()
+		message.Content = llm.NonEmptyParts(message.Content)
+		if isEmptyAssistant(message) {
 			continue
 		}
-		messages = append(messages, conversation[i].Clone())
+		messages = append(messages, message)
 	}
 	return &llm.Request{
 		Messages:       messages,
@@ -272,7 +271,7 @@ func (r *runner) response(conversation []llm.Message, finish llm.FinishReason) *
 	if instructions := r.agent.Instructions(); instructions != "" {
 		display = append(display, llm.SystemMessage(instructions))
 	}
-	display = append(display, cloneMessages(conversation)...)
+	display = append(display, llm.CloneMessages(conversation)...)
 	return &Response{
 		Text:         text,
 		Thinking:     thinking,

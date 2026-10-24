@@ -3,6 +3,7 @@ package tool_test
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/ijaidev/gojent/core/tool"
@@ -88,5 +89,70 @@ func TestValidate_ComparesNumbersNumerically(t *testing.T) {
 	}
 	if err := tool.Validate(schema, []byte(`3`)); !errors.Is(err, tool.ErrInvalidInput) {
 		t.Errorf("Validate(3) = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestValidate_ObjectErrorsAreDeterministic(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"c": map[string]any{"type": "integer"},
+			"b": map[string]any{"type": "integer"},
+			"a": map[string]any{"type": "integer"},
+		},
+	}
+	input := []byte(`{"c":"x","b":"y","a":"z"}`)
+
+	var first string
+	for range 50 {
+		err := tool.Validate(schema, input)
+		if err == nil {
+			t.Fatal("expected a validation error")
+		}
+		if first == "" {
+			first = err.Error()
+			continue
+		}
+		if err.Error() != first {
+			t.Fatalf("validation error is nondeterministic: %q then %q", first, err.Error())
+		}
+	}
+	if !strings.Contains(first, "$.a") {
+		t.Errorf("error should report the first property in sorted order: %v", first)
+	}
+}
+
+func TestValidate_AdditionalPropertiesErrorIsDeterministic(t *testing.T) {
+	schema := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+	}
+	input := []byte(`{"c":1,"b":2,"a":3}`)
+
+	var first string
+	for range 50 {
+		err := tool.Validate(schema, input)
+		if err == nil {
+			t.Fatal("expected a validation error")
+		}
+		if first == "" {
+			first = err.Error()
+			continue
+		}
+		if err.Error() != first {
+			t.Fatalf("validation error is nondeterministic: %q then %q", first, err.Error())
+		}
+	}
+	if !strings.Contains(first, `"a"`) {
+		t.Errorf("error should report the first property in sorted order: %v", first)
+	}
+}
+
+func TestValidate_AllOfMalformedBranchFailsClosed(t *testing.T) {
+	err := tool.Validate(map[string]any{
+		"allOf": []any{"not a schema"},
+	}, []byte(`1`))
+	if !errors.Is(err, tool.ErrInvalidInput) {
+		t.Fatalf("Validate = %v, want ErrInvalidInput", err)
 	}
 }

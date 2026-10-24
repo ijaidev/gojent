@@ -66,7 +66,8 @@ type ToolStart struct {
 	Spec tool.Spec
 }
 
-// ToolUpdate is emitted when a tool reports progress.
+// ToolUpdate reports tool progress. The current runner does not emit it;
+// it is reserved for tools and schedulers that surface progress events.
 type ToolUpdate struct {
 	CallID   string
 	Progress string

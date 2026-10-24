@@ -2,14 +2,17 @@ package tool
 
 import "encoding/json"
 
-// ExecutionMode controls how a tool may be scheduled.
+// ExecutionMode is a tool's scheduling preference.
+//
+// The runner currently executes every call sequentially, so the mode is
+// advisory metadata for schedulers that can parallelize safely.
 type ExecutionMode string
 
 const (
-	// ExecutionParallel allows the runner to execute the tool alongside other
-	// calls from the same assistant message.
+	// ExecutionParallel marks a tool as safe to run alongside other calls from
+	// the same assistant message.
 	ExecutionParallel ExecutionMode = "parallel"
-	// ExecutionSequential requires the runner to finish this call before
+	// ExecutionSequential requires a scheduler to finish this call before
 	// starting the next one.
 	ExecutionSequential ExecutionMode = "sequential"
 )
@@ -36,7 +39,7 @@ type Spec struct {
 	InputSchema map[string]any
 	// Annotations describes side effects.
 	Annotations Annotations
-	// ExecutionMode controls scheduling.
+	// ExecutionMode declares the tool's scheduling preference.
 	ExecutionMode ExecutionMode
 	// Strict asks the provider to enforce the input schema exactly.
 	Strict bool
