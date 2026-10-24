@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"regexp"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -33,6 +33,13 @@ func Validate(schema map[string]any, input []byte) error {
 	decoder := json.NewDecoder(strings.NewReader(trimmed))
 	decoder.UseNumber()
 	if err := decoder.Decode(&value); err != nil {
+		return fmt.Errorf("%w: malformed JSON: %w", ErrInvalidInput, err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("%w: unexpected data after the JSON value", ErrInvalidInput)
+		}
 		return fmt.Errorf("%w: malformed JSON: %w", ErrInvalidInput, err)
 	}
 	return validateValue(schema, value, "$")
@@ -316,9 +323,6 @@ func toFloat(value any) (float64, bool) {
 		return float64(typed), true
 	case uint64:
 		return float64(typed), true
-	case string:
-		number, err := strconv.ParseFloat(typed, 64)
-		return number, err == nil
 	default:
 		return 0, false
 	}
@@ -367,6 +371,12 @@ func enumContains(raw, value any) bool {
 }
 
 func jsonEqual(a, b any) bool {
+	// Compare numeric values numerically so 1 and 1.0 are equal, as JSON
+	// Schema requires.
+	if left, ok := toFloat(a); ok {
+		right, ok := toFloat(b)
+		return ok && left == right
+	}
 	left, errLeft := json.Marshal(a)
 	right, errRight := json.Marshal(b)
 	return errLeft == nil && errRight == nil && bytes.Equal(left, right)
