@@ -123,8 +123,8 @@ func WithExitCommands(cmds ...string) Option {
 
 // Run starts an interactive, stateful, streaming chatbot loop.
 //
-// Each turn runs through the same Runner, so history is loaded from and
-// appended to the configured store. Events are consumed for streaming output.
+// Each turn reuses the same RunOptions, so history is loaded from and appended
+// to the configured store. Events are consumed for streaming output.
 func Run(ctx context.Context, model llm.Model, opts ...Option) error {
 	if model == nil {
 		return errors.New("chatbot: model is required")
@@ -156,8 +156,7 @@ func Run(ctx context.Context, model llm.Model, opts ...Option) error {
 	if err != nil {
 		return fmt.Errorf("chatbot: failed to create agent: %w", err)
 	}
-	runner := &agent.Runner{Store: cfg.Store}
-	sess := &session.Session{ID: cfg.SessionID, ResourceID: cfg.ResourceID}
+	runOptions := agent.RunOptions{Store: cfg.Store, Session: &session.Session{ID: cfg.SessionID, ResourceID: cfg.ResourceID}}
 
 	printLine := func(a ...any) { _, _ = fmt.Fprintln(cfg.Output, a...) }
 	printf := func(format string, a ...any) { _, _ = fmt.Fprintf(cfg.Output, format, a...) }
@@ -200,7 +199,7 @@ func Run(ctx context.Context, model llm.Model, opts ...Option) error {
 		}
 
 		printf("%s > ", cfg.AgentName)
-		run, err := runner.Start(ctx, bot, sess, llm.UserMessage(input))
+		run, err := bot.StreamWith(ctx, input, runOptions)
 		if err != nil {
 			printf("\n[Error starting response: %v]\n", err)
 			continue
