@@ -1,137 +1,212 @@
 package google
 
 import (
+	"fmt"
+	"math"
 	"strings"
 
 	"github.com/ijaidev/gojent/core/llm"
 	"google.golang.org/genai"
 )
 
-// convertConfig prepares the genai.GenerateContentConfig from Gojent request parameters.
-func (m *Model) convertConfig(req *llm.Request, systemInstruction *genai.Content) *genai.GenerateContentConfig {
+// convertConfig prepares the genai.GenerateContentConfig from Gojent request
+// parameters. It rejects capabilities the adapter cannot honor instead of
+// silently dropping them.
+func (m *Model) convertConfig(req *llm.Request, systemInstruction *genai.Content) (*genai.GenerateContentConfig, error) {
+	if req == nil {
+		req = &llm.Request{}
+	}
+	if err := req.State.Validate(); err != nil {
+		return nil, err
+	}
+	if req.State.EffectiveMode() != llm.StateModeReplay {
+		return nil, fmt.Errorf("%w: google generateContent requires replay state", llm.ErrUnsupported)
+	}
+	if req.State.PreviousID != "" || req.State.Store != nil {
+		return nil, fmt.Errorf("%w: google generateContent does not support previous ids or stored responses", llm.ErrUnsupported)
+	}
+
 	cfg := &genai.GenerateContentConfig{
 		SystemInstruction: systemInstruction,
 	}
 
-	thinkingCfg := m.resolveThinking(req)
-	if thinkingCfg != nil {
-		var gCfg genai.ThinkingConfig
-		includeThoughts := true
-		if thinkingCfg.IncludeThoughts != nil {
-			includeThoughts = *thinkingCfg.IncludeThoughts
+	reasoning := m.resolveReasoning(req)
+	if reasoning != nil {
+		gCfg := &genai.ThinkingConfig{IncludeThoughts: true}
+		if reasoning.IncludeThoughts != nil {
+			gCfg.IncludeThoughts = *reasoning.IncludeThoughts
 		}
-		gCfg.IncludeThoughts = includeThoughts
 
 		hasLevel := false
-		if thinkingCfg.Level != "" {
-			switch strings.ToUpper(string(thinkingCfg.Level)) {
-			case "NONE":
-				zero := int32(0)
-				gCfg.ThinkingBudget = &zero
-				hasLevel = true
-			case "MINIMAL":
-				gCfg.ThinkingLevel = genai.ThinkingLevelMinimal
-				hasLevel = true
-			case "LOW":
-				gCfg.ThinkingLevel = genai.ThinkingLevelLow
-				hasLevel = true
-			case "MEDIUM":
-				gCfg.ThinkingLevel = genai.ThinkingLevelMedium
-				hasLevel = true
-			case "HIGH":
-				gCfg.ThinkingLevel = genai.ThinkingLevelHigh
-				hasLevel = true
+		switch reasoning.Level {
+		case "":
+		case llm.ReasoningLevelNone:
+			zero := int32(0)
+			gCfg.ThinkingBudget = &zero
+			hasLevel = true
+		case llm.ReasoningLevelMinimal:
+			gCfg.ThinkingLevel = genai.ThinkingLevelMinimal
+			hasLevel = true
+		case llm.ReasoningLevelLow:
+			gCfg.ThinkingLevel = genai.ThinkingLevelLow
+			hasLevel = true
+		case llm.ReasoningLevelMedium:
+			gCfg.ThinkingLevel = genai.ThinkingLevelMedium
+			hasLevel = true
+		case llm.ReasoningLevelHigh:
+			gCfg.ThinkingLevel = genai.ThinkingLevelHigh
+			hasLevel = true
+		default:
+			return nil, fmt.Errorf("%w: reasoning level %q", llm.ErrUnsupported, reasoning.Level)
+		}
+
+		// Gemini rejects thinking_budget and thinking_level together.
+		if !hasLevel && reasoning.BudgetTokens != nil {
+			if *reasoning.BudgetTokens < 0 {
+				return nil, fmt.Errorf("%w: negative reasoning budget %d", llm.ErrUnsupported, *reasoning.BudgetTokens)
 			}
+			budget := int32(*reasoning.BudgetTokens)
+			gCfg.ThinkingBudget = &budget
 		}
-
-		// Only apply BudgetTokens if ThinkingLevel is not set, to avoid the Gemini 4/GenAI
-		// 400 INVALID_ARGUMENT (thinking_budget and thinking_level are not supported together) error.
-		if !hasLevel && thinkingCfg.BudgetTokens != nil {
-			b := int32(*thinkingCfg.BudgetTokens)
-			gCfg.ThinkingBudget = &b
-		}
-
-		cfg.ThinkingConfig = &gCfg
+		cfg.ThinkingConfig = gCfg
 	}
 
-	if len(req.Tools) > 0 {
-		var decls []*genai.FunctionDeclaration
-		for _, t := range req.Tools {
-			decl := &genai.FunctionDeclaration{
-				Name:                 t.Name,
-				Description:          t.Description,
-				ParametersJsonSchema: t.Parameters,
-			}
-			decls = append(decls, decl)
-		}
-		cfg.Tools = []*genai.Tool{
-			{
-				FunctionDeclarations: decls,
-			},
-		}
+	if err := convertTools(req, cfg); err != nil {
+		return nil, err
 	}
-
-	if req.ResponseFormat != nil {
-		switch req.ResponseFormat.Type {
-		case llm.ResponseFormatJSON:
-			cfg.ResponseMIMEType = "application/json"
-		case llm.ResponseFormatJSONSchema:
-			cfg.ResponseMIMEType = "application/json"
-			if req.ResponseFormat.Schema != nil {
-				cfg.ResponseJsonSchema = req.ResponseFormat.Schema
-			}
-		case llm.ResponseFormatText:
-			cfg.ResponseMIMEType = "text/plain"
-		}
+	if err := convertResponseFormat(req.ResponseFormat, cfg); err != nil {
+		return nil, err
 	}
 
 	if req.Temperature != nil {
-		t := float32(*req.Temperature)
-		cfg.Temperature = &t
+		temperature := float32(*req.Temperature)
+		cfg.Temperature = &temperature
 	}
-
 	if req.TopP != nil {
-		p := float32(*req.TopP)
-		cfg.TopP = &p
+		topP := float32(*req.TopP)
+		cfg.TopP = &topP
 	}
-
 	if req.MaxTokens != nil {
+		if *req.MaxTokens <= 0 || int64(*req.MaxTokens) > math.MaxInt32 {
+			return nil, fmt.Errorf("%w: max tokens %d", llm.ErrUnsupported, *req.MaxTokens)
+		}
 		cfg.MaxOutputTokens = int32(*req.MaxTokens)
 	}
-
-	if len(req.StopWords) > 0 {
-		cfg.StopSequences = req.StopWords
+	if len(req.Stop) > 0 {
+		cfg.StopSequences = append([]string(nil), req.Stop...)
 	}
 
-	return cfg
+	return cfg, nil
 }
 
-// mapGenaiLevelToLLM maps genai.ThinkingLevel to llm.ThinkingLevel.
-func mapGenaiLevelToLLM(l genai.ThinkingLevel) llm.ThinkingLevel {
-	switch l {
-	case genai.ThinkingLevelMinimal:
-		return llm.ThinkingLevelMinimal
-	case genai.ThinkingLevelLow:
-		return llm.ThinkingLevelLow
-	case genai.ThinkingLevelMedium:
-		return llm.ThinkingLevelMedium
-	case genai.ThinkingLevelHigh:
-		return llm.ThinkingLevelHigh
+func convertTools(req *llm.Request, cfg *genai.GenerateContentConfig) error {
+	if len(req.Tools) == 0 {
+		// Auto and none are no-ops without tools; requiring a call is not.
+		if req.ToolChoice.Mode == llm.ToolChoiceRequired || req.ToolChoice.Name != "" {
+			return fmt.Errorf("%w: tool choice without tools", llm.ErrUnsupported)
+		}
+		return nil
+	}
+
+	declarations := make([]*genai.FunctionDeclaration, 0, len(req.Tools))
+	for _, definition := range req.Tools {
+		if definition.EffectiveKind() != llm.ToolKindFunction {
+			return fmt.Errorf("%w: google does not support %q tools", llm.ErrUnsupported, definition.EffectiveKind())
+		}
+		if definition.Name == "" {
+			return fmt.Errorf("%w: tool definition has no name", llm.ErrInvalidToolCall)
+		}
+		declarations = append(declarations, &genai.FunctionDeclaration{
+			Name:                 definition.Name,
+			Description:          definition.Description,
+			ParametersJsonSchema: definition.Parameters,
+		})
+	}
+	cfg.Tools = []*genai.Tool{{FunctionDeclarations: declarations}}
+
+	if req.ToolChoice.Mode == "" && req.ToolChoice.Name == "" {
+		return nil
+	}
+	config := &genai.FunctionCallingConfig{}
+	switch req.ToolChoice.Mode {
+	case "", llm.ToolChoiceAuto:
+		config.Mode = genai.FunctionCallingConfigModeAuto
+	case llm.ToolChoiceNone:
+		config.Mode = genai.FunctionCallingConfigModeNone
+	case llm.ToolChoiceRequired:
+		config.Mode = genai.FunctionCallingConfigModeAny
 	default:
-		return llm.ThinkingLevel(l)
+		return fmt.Errorf("%w: tool choice mode %q", llm.ErrUnsupported, req.ToolChoice.Mode)
+	}
+	if req.ToolChoice.Name != "" {
+		config.Mode = genai.FunctionCallingConfigModeAny
+		config.AllowedFunctionNames = []string{req.ToolChoice.Name}
+	}
+	cfg.ToolConfig = &genai.ToolConfig{FunctionCallingConfig: config}
+	return nil
+}
+
+func convertResponseFormat(format *llm.ResponseFormat, cfg *genai.GenerateContentConfig) error {
+	if format == nil {
+		return nil
+	}
+	switch format.Type {
+	case llm.ResponseFormatText:
+		cfg.ResponseMIMEType = "text/plain"
+	case llm.ResponseFormatJSON:
+		cfg.ResponseMIMEType = "application/json"
+	case llm.ResponseFormatJSONSchema:
+		if len(format.Schema) == 0 {
+			return fmt.Errorf("%w: json_schema response format without a schema", llm.ErrUnsupported)
+		}
+		cfg.ResponseMIMEType = "application/json"
+		cfg.ResponseJsonSchema = format.Schema
+	default:
+		return fmt.Errorf("%w: response format %q", llm.ErrUnsupported, format.Type)
+	}
+	return nil
+}
+
+// mapGenaiLevelToLLM maps Gemini's thinking levels to canonical reasoning
+// levels.
+func mapGenaiLevelToLLM(level genai.ThinkingLevel) llm.ReasoningLevel {
+	switch level {
+	case genai.ThinkingLevelUnspecified:
+		return ""
+	case genai.ThinkingLevelMinimal:
+		return llm.ReasoningLevelMinimal
+	case genai.ThinkingLevelLow:
+		return llm.ReasoningLevelLow
+	case genai.ThinkingLevelMedium:
+		return llm.ReasoningLevelMedium
+	case genai.ThinkingLevelHigh:
+		return llm.ReasoningLevelHigh
+	default:
+		return llm.ReasoningLevel(level)
 	}
 }
 
-// mapFinishReason maps Gen AI finish reason strings to standard Gojent finish reasons.
-func mapFinishReason(fr genai.FinishReason) llm.FinishReason {
-	switch fr {
+// mapFinishReason maps Gemini finish reasons to canonical reasons.
+func mapFinishReason(reason genai.FinishReason) llm.FinishReason {
+	switch reason {
+	case genai.FinishReasonUnspecified:
+		return ""
 	case genai.FinishReasonStop:
 		return llm.FinishReasonStop
 	case genai.FinishReasonMaxTokens:
 		return llm.FinishReasonLength
-	case genai.FinishReasonUnexpectedToolCall:
+	case genai.FinishReasonSafety,
+		genai.FinishReasonRecitation,
+		genai.FinishReasonBlocklist,
+		genai.FinishReasonProhibitedContent,
+		genai.FinishReasonSPII,
+		genai.FinishReasonImageSafety,
+		genai.FinishReasonImageProhibitedContent,
+		genai.FinishReasonImageRecitation:
+		return llm.FinishReasonContentFilter
+	case genai.FinishReasonUnexpectedToolCall, genai.FinishReasonTooManyToolCalls:
 		return llm.FinishReasonTool
 	default:
-		return llm.FinishReason(strings.ToLower(string(fr)))
+		return llm.FinishReason(strings.ToLower(string(reason)))
 	}
 }

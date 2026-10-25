@@ -151,17 +151,25 @@ func run() error {
 		case llm.RoleSystem:
 			fmt.Printf("  Step %d [%s]: %s\n", i+1, msg.Role, msg.Text())
 		case llm.RoleUser:
+			if results := msg.ToolResults(); len(results) > 0 {
+				for resultIndex := range results {
+					result := &results[resultIndex]
+					fmt.Printf("  Step %d [tool result]: Name=%s, Content=%s\n",
+						i+1, result.Name, result.Text())
+				}
+				continue
+			}
 			fmt.Printf("  Step %d [%s]: %s\n", i+1, msg.Role, msg.Text())
 		case llm.RoleAssistant:
-			if len(msg.ToolCalls) > 0 {
-				fmt.Printf("  Step %d [%s Tool Call]: Name=%s, Args=%s\n",
-					i+1, msg.Role, msg.ToolCalls[0].Name, msg.ToolCalls[0].Arguments)
+			calls := msg.ToolCalls()
+			if len(calls) > 0 {
+				for _, call := range calls {
+					fmt.Printf("  Step %d [%s Tool Call]: Name=%s, Args=%s\n",
+						i+1, msg.Role, call.Name, call.Input)
+				}
 			} else {
 				fmt.Printf("  Step %d [%s Reply]: %s\n", i+1, msg.Role, msg.Text())
 			}
-		case llm.RoleTool:
-			fmt.Printf("  Step %d [%s Result]: Name=%s, Content=%s\n",
-				i+1, msg.Role, msg.Name, msg.Text())
 		}
 	}
 
@@ -196,7 +204,7 @@ func run() error {
 	if len(finalRes.ToolCalls) > 0 {
 		fmt.Printf("[Tools Invoked]\n")
 		for _, tc := range finalRes.ToolCalls {
-			fmt.Printf("  - %s (arguments: %s)\n", tc.Name, tc.Arguments)
+			fmt.Printf("  - %s (arguments: %s)\n", tc.Name, tc.Input)
 		}
 	}
 

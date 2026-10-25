@@ -55,8 +55,8 @@ func main() {
 		Execute: func(_ context.Context, in struct {
 			Metric string `json:"metric" description:"Metric to plot"`
 		}) (tool.Result, error) {
-			img := llm.ImageFromBytes(samplePngBytes, "image/png")
-			return tool.NewImageResult(
+			img := llm.FileFromBytes(samplePngBytes, "image/png")
+			return tool.NewFileResult(
 				fmt.Sprintf(`{"status":"success","metric":%q,"points":10}`, in.Metric),
 				img,
 			), nil
@@ -75,7 +75,7 @@ func main() {
 	}
 
 	// 4. Run agent with multipart media input
-	imageInput := llm.ImageFromBytes(samplePngBytes, "image/png")
+	imageInput := llm.FileFromBytes(samplePngBytes, "image/png")
 	fmt.Println("Running agent with multimodal image input...")
 	res, err := analyst.Generate(
 		ctx,

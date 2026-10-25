@@ -1,4 +1,5 @@
-// Package google provides a Google Gen AI model provider implementing Gojent's core LLM interface.
+// Package google provides a Google Gen AI model provider implementing Gojent's
+// core LLM interface.
 package google
 
 import (
@@ -64,22 +65,28 @@ type Config struct {
 	// It is copied before use, and its APIKey takes precedence over the
 	// GEMINI_API_KEY / GOOGLE_API_KEY environment variables.
 	ClientConfig *genai.ClientConfig
-	// Thinking optionally configures provider-level default thinking settings.
-	Thinking *llm.ThinkingConfig
-	// ThinkingLevel optionally configures provider-level default thinking level (e.g. ThinkingLevelLow, ThinkingLevelHigh).
-	ThinkingLevel ThinkingLevel
-	// ThinkingBudget optionally configures the thinking token budget (legacy, 0 to disable thinking on supported models).
-	ThinkingBudget *int32
+	// Reasoning optionally configures provider-level default reasoning settings.
+	Reasoning *llm.ReasoningConfig
+	// ReasoningLevel optionally configures the provider-level default thinking
+	// level (e.g. ThinkingLevelLow, ThinkingLevelHigh).
+	ReasoningLevel ThinkingLevel
+	// ReasoningBudget optionally configures the thinking token budget (0 to
+	// disable thinking on supported models).
+	ReasoningBudget *int
 }
 
 // Model implements the llm.Model and llm.Streamer interfaces using Google's
 // Gen AI SDK.
 type Model struct {
-	modelID        string
-	client         *genai.Client
-	thinking       *llm.ThinkingConfig
-	thinkingBudget *int32
+	modelID   string
+	client    *genai.Client
+	reasoning *llm.ReasoningConfig
 }
+
+var (
+	_ llm.Model    = (*Model)(nil)
+	_ llm.Streamer = (*Model)(nil)
+)
 
 // New creates and initializes a new Google Gen AI model provider.
 func New(ctx context.Context, cfg Config) (*Model, error) {
@@ -106,19 +113,25 @@ func New(ctx context.Context, cfg Config) (*Model, error) {
 		}
 	}
 
-	thinking := cfg.Thinking.Clone()
-	if cfg.ThinkingLevel != "" {
-		if thinking == nil {
-			thinking = &llm.ThinkingConfig{}
+	reasoning := cfg.Reasoning.Clone()
+	if cfg.ReasoningLevel != "" {
+		if reasoning == nil {
+			reasoning = &llm.ReasoningConfig{}
 		}
-		thinking.Level = mapGenaiLevelToLLM(cfg.ThinkingLevel)
+		reasoning.Level = mapGenaiLevelToLLM(cfg.ReasoningLevel)
+	}
+	if cfg.ReasoningBudget != nil {
+		if reasoning == nil {
+			reasoning = &llm.ReasoningConfig{}
+		}
+		budget := *cfg.ReasoningBudget
+		reasoning.BudgetTokens = &budget
 	}
 
 	return &Model{
-		modelID:        modelID,
-		client:         client,
-		thinking:       thinking,
-		thinkingBudget: cfg.ThinkingBudget,
+		modelID:   modelID,
+		client:    client,
+		reasoning: reasoning,
 	}, nil
 }
 
@@ -148,26 +161,32 @@ func (m *Model) ModelID() string {
 	return m.modelID
 }
 
-// resolveThinking resolves the effective thinking config taking into account request-level
-// configuration and provider-level defaults.
-func (m *Model) resolveThinking(req *llm.Request) *llm.ThinkingConfig {
-	// 1. Request-level thinking configuration
-	if req.Thinking != nil {
-		return req.Thinking
+// Info reports static model metadata. Limits and pricing are unknown here
+// because they vary by model and deployment.
+func (m *Model) Info() llm.Info {
+	return llm.Info{
+		Provider: providerName,
+		Model:    m.modelID,
+		Features: llm.Features{
+			Streaming:         true,
+			Tools:             true,
+			ParallelToolCalls: true,
+			StrictJSONSchema:  true,
+			Reasoning:         true,
+			ReasoningSummary:  true,
+			Vision:            true,
+			AudioIn:           true,
+			Video:             true,
+			Documents:         true,
+			PromptCaching:     llm.CacheModeAutomatic,
+		},
 	}
+}
 
-	// 2. Provider default
-	if m.thinking != nil {
-		return m.thinking
+// resolveReasoning merges request-level reasoning with provider defaults.
+func (m *Model) resolveReasoning(req *llm.Request) *llm.ReasoningConfig {
+	if req != nil && req.Reasoning != nil {
+		return req.Reasoning
 	}
-
-	// 3. Legacy thinkingBudget
-	if m.thinkingBudget != nil {
-		b := int(*m.thinkingBudget)
-		return &llm.ThinkingConfig{
-			BudgetTokens: &b,
-		}
-	}
-
-	return nil
+	return m.reasoning
 }
