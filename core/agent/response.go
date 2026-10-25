@@ -10,9 +10,9 @@ import (
 
 // Response is the final result of a run.
 type Response struct {
-	// Text is the final assistant text.
+	// Text is the last assistant message's text.
 	Text string `json:"text"`
-	// Thinking is the final assistant reasoning trace.
+	// Thinking is the last assistant message's reasoning trace.
 	Thinking string `json:"thinking,omitempty"`
 	// ToolCalls contains every tool call made during the run.
 	ToolCalls []llm.ToolCall `json:"tool_calls,omitempty"`

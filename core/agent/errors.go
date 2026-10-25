@@ -31,7 +31,9 @@ var (
 	ErrBudgetExceeded = errors.New("agent: budget exceeded")
 	// ErrTerminated is returned when a policy terminates a run.
 	ErrTerminated = errors.New("agent: run terminated by policy")
-	// ErrToolDenied is returned internally when a tool call is denied.
+	// ErrToolDenied marks a call a policy denied or left unresolved. It is
+	// reported on ToolEnd.Err and in the tool result message; the run
+	// continues.
 	ErrToolDenied = errors.New("agent: tool call denied")
 	// ErrOutputSchema is returned when a structured output schema cannot be
 	// generated from the requested type.

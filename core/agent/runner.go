@@ -219,14 +219,18 @@ func isEmptyAssistant(message llm.Message) bool {
 }
 
 func (r *runner) response(conversation []llm.Message, finish llm.FinishReason) *Response {
+	// A run can stop on tool results at a budget or step boundary. Look past
+	// them so the last assistant message is still reported.
 	text := ""
 	thinking := ""
-	if len(conversation) > 0 {
-		last := conversation[len(conversation)-1]
-		if last.Role == llm.RoleAssistant {
-			text = last.Text()
-			thinking = last.Thinking
+	for i := len(conversation) - 1; i >= 0; i-- {
+		message := conversation[i]
+		if message.Role != llm.RoleAssistant {
+			continue
 		}
+		text = message.Text()
+		thinking = message.Thinking
+		break
 	}
 	display := make([]llm.Message, 0, len(conversation)+1)
 	if instructions := r.agent.Instructions(); instructions != "" {

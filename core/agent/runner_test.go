@@ -1166,6 +1166,35 @@ func TestAgent_ToolBudgetPersistsAllResults(t *testing.T) {
 	}
 }
 
+func TestAgent_PartialResponseKeepsLastAssistantText(t *testing.T) {
+	model := &scriptModel{steps: []step{
+		{response: &llm.Response{
+			Message: llm.Message{
+				Role:      llm.RoleAssistant,
+				Content:   []llm.Part{llm.TextPart("checking")},
+				Thinking:  "need data",
+				ToolCalls: []llm.ToolCall{{ID: "c1", Name: "echo", Arguments: `{"value":"x"}`}},
+			},
+			FinishReason: llm.FinishReasonTool,
+		}},
+		finalText("never reached"),
+	}}
+	a := mustAgent(t, agent.Config{Name: "partial", Model: model, Tools: []tool.Tool{newEchoTool(t, "echo", nil)}})
+
+	resp, err := a.GenerateWith(context.Background(), "go", agent.RunOptions{
+		Budget: agent.Budget{MaxSteps: 1},
+	})
+	if !errors.Is(err, agent.ErrMaxSteps) {
+		t.Fatalf("err = %v, want ErrMaxSteps", err)
+	}
+	if resp == nil {
+		t.Fatal("expected a partial response")
+	}
+	if resp.Text != "checking" || resp.Thinking != "need data" {
+		t.Errorf("Text/Thinking = %q / %q, want checking / need data", resp.Text, resp.Thinking)
+	}
+}
+
 func TestAgent_TokenBudget(t *testing.T) {
 	t.Run("final answer", func(t *testing.T) {
 		response := finalText("done")
