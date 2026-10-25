@@ -36,11 +36,9 @@ func newRunner(a *Agent, opts RunOptions) (*runner, error) {
 	if opts.optionErr != nil {
 		return nil, opts.optionErr
 	}
+	opts = a.ApplyAgentOptions(opts)
 	if err := validateTools(opts.Tools); err != nil {
 		return nil, err
-	}
-	if opts.Model == nil {
-		opts.Model = a.Model()
 	}
 	if opts.Model == nil {
 		return nil, ErrModelRequired
@@ -52,9 +50,6 @@ func newRunner(a *Agent, opts RunOptions) (*runner, error) {
 		if opts.Session.ID == "" {
 			return nil, ErrSessionIDRequired
 		}
-	}
-	if opts.Policy == nil {
-		opts.Policy = a.Policy()
 	}
 	return &runner{
 		agent:      a,

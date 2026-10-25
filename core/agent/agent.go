@@ -6,13 +6,17 @@ package agent
 import (
 	"cmp"
 	"slices"
+	"time"
 
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/core/session"
 	"github.com/ijaidev/gojent/core/tool"
 )
 
-// Agent is reusable behavior: instructions, a model, tools, and an optional
-// default policy. It does not own storage or execution state.
+// Agent is reusable behavior: instructions, a model, tools, and optional
+// defaults for policy, persistence, and run options. It does not own per-run
+// execution state. ApplyAgentOptions layers those defaults over one run's
+// RunOptions.
 type Agent struct {
 	name         string
 	description  string
@@ -20,7 +24,19 @@ type Agent struct {
 	model        llm.Model
 	tools        []tool.Tool
 	toolByName   map[string]tool.Tool
-	policy       Policy
+
+	policy         Policy
+	approver       Approver
+	store          session.Store
+	budget         Budget
+	retry          RetryPolicy
+	toolTimeout    time.Duration
+	thinking       *llm.ThinkingConfig
+	responseFormat *llm.ResponseFormat
+	temperature    *float64
+	maxTokens      *int
+	topP           *float64
+	toolChoice     llm.ToolChoice
 }
 
 // Config configures an Agent.
@@ -38,6 +54,34 @@ type Config struct {
 	Tools []tool.Tool
 	// Policy is the agent's default policy. A RunOptions policy may override it.
 	Policy Policy
+	// Approver resolves Ask decisions. A run approver replaces it.
+	Approver Approver
+	// Store persists conversations. The session identity remains per-run: a
+	// run without a Session fails with ErrSessionRequired.
+	Store session.Store
+	// Budget bounds each run. Non-zero run budget fields override individual
+	// values.
+	Budget Budget
+	// Retry configures transient model retries. Non-zero run fields override
+	// individual values; set MaxAttempts to 1 in RunOptions to disable
+	// inherited retries.
+	Retry RetryPolicy
+	// ToolTimeout bounds each tool execution. Zero uses DefaultToolTimeout; a
+	// negative value disables the timeout.
+	ToolTimeout time.Duration
+
+	// Thinking configures reasoning.
+	Thinking *llm.ThinkingConfig
+	// ResponseFormat constrains structured output.
+	ResponseFormat *llm.ResponseFormat
+	// Temperature sets sampling temperature.
+	Temperature *float64
+	// MaxTokens sets the output token limit.
+	MaxTokens *int
+	// TopP sets nucleus sampling.
+	TopP *float64
+	// ToolChoice constrains tool selection.
+	ToolChoice llm.ToolChoice
 }
 
 // New creates an immutable Agent.
@@ -63,13 +107,24 @@ func New(cfg Config) (*Agent, error) {
 	}
 
 	return &Agent{
-		name:         cfg.Name,
-		description:  cfg.Description,
-		instructions: cfg.Instructions,
-		model:        cfg.Model,
-		tools:        tools,
-		toolByName:   byName,
-		policy:       cfg.Policy,
+		name:           cfg.Name,
+		description:    cfg.Description,
+		instructions:   cfg.Instructions,
+		model:          cfg.Model,
+		tools:          tools,
+		toolByName:     byName,
+		policy:         cfg.Policy,
+		approver:       cfg.Approver,
+		store:          cfg.Store,
+		budget:         cfg.Budget,
+		retry:          cfg.Retry,
+		toolTimeout:    cfg.ToolTimeout,
+		thinking:       cfg.Thinking.Clone(),
+		responseFormat: cfg.ResponseFormat.Clone(),
+		temperature:    cloneFloat(cfg.Temperature),
+		maxTokens:      cloneInt(cfg.MaxTokens),
+		topP:           cloneFloat(cfg.TopP),
+		toolChoice:     cfg.ToolChoice,
 	}, nil
 }
 

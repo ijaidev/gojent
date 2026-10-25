@@ -168,6 +168,9 @@ search belong in store modules, not in the core.
 `session.Memory` is built in for tests and ephemeral applications. Use
 `stores/sqlite` or `stores/postgres` when transcripts must survive a restart.
 
+A store can be configured once on the agent (`agent.Config.Store`). The session
+identity remains per-run, which keeps tenant scoping explicit.
+
 ## Tools
 
 Tools receive validated, typed input:
@@ -228,6 +231,39 @@ response, err := assistant.GenerateWith(ctx, "Clean up the build directory.", op
 `Ask` without an approver is denied. `Terminate` aborts the run. `RunOptions`
 is the only public per-run configuration type; execution internals are not
 exported.
+
+## Agent defaults and run overrides
+
+Behavior that should apply to every run belongs on `agent.Config`. A run
+overrides it with `RunOptions`; unset values inherit the agent configuration.
+
+```go
+assistant, _ := agent.New(agent.Config{
+	// ...
+	Approver:    approver,
+	Store:       session.NewMemory(),
+	Budget:      agent.Budget{MaxSteps: 16, MaxDuration: 10 * time.Minute},
+	Retry:       agent.RetryPolicy{MaxAttempts: 3},
+	ToolTimeout: 30 * time.Second,
+	Temperature: &temperature,
+})
+
+// This run raises only the step limit. The duration cap, store, approver,
+// retry policy, and tool timeout still apply.
+response, err := assistant.Generate(ctx, "Analyze this repository.",
+	agent.WithMaxSteps(32),
+	agent.WithSession("review-1", "user-1"),
+)
+```
+
+Precedence is package defaults, then `agent.Config`, then `RunOptions`. `Budget`
+and `RetryPolicy` merge field by field, so overriding one field keeps the
+others. `Session` is always per-run; an agent `Store` still requires a session.
+`Sink` and `Media` stay per-run because they belong to a specific execution.
+
+`(*Agent).ApplyAgentOptions` applies the same layering to a `RunOptions` value.
+The runtime calls it for every run, so custom execution engines can reuse it
+instead of duplicating the merge rules.
 
 ## Subagents
 
