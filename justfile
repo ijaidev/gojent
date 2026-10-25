@@ -2,9 +2,9 @@
 test:
     go test -v ./... ./providers/google/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/... ./codjent/...
 
-# Run the database integration tests (requires GOJENT_TEST_POSTGRES_DSN)
+# Run the database integration tests (requires GOJENT_POSTGRES_DSN)
 test-integration:
-    go test -race -v ./stores/postgres/... -run TestStore_Integration
+    go test -race -v ./stores/postgres/... -run 'TestIntegration|TestConformance'
 
 # Run static analysis and linting across all packages
 lint:

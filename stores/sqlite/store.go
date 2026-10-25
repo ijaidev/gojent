@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/ijaidev/gojent/core/llm"
@@ -21,7 +20,7 @@ func (s *Store) Load(ctx context.Context, sess session.Session) ([]llm.Message, 
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT message
+		SELECT message, format_version
 		FROM session_messages
 		WHERE resource_id = ? AND session_id = ?
 		ORDER BY position ASC`,
@@ -33,12 +32,19 @@ func (s *Store) Load(ctx context.Context, sess session.Session) ([]llm.Message, 
 
 	var messages []llm.Message
 	for rows.Next() {
-		var encoded []byte
-		if err := rows.Scan(&encoded); err != nil {
+		var (
+			encoded       []byte
+			formatVersion int
+		)
+		if err := rows.Scan(&encoded, &formatVersion); err != nil {
 			return nil, fmt.Errorf("sqlite: scan message: %w", err)
 		}
-		var message llm.Message
-		if err := json.Unmarshal(encoded, &message); err != nil {
+		if formatVersion != llm.FormatVersion {
+			return nil, fmt.Errorf("sqlite: decode message: %w: got %d, want %d",
+				llm.ErrUnsupportedFormatVersion, formatVersion, llm.FormatVersion)
+		}
+		message, err := llm.UnmarshalMessage(encoded)
+		if err != nil {
 			return nil, fmt.Errorf("sqlite: decode message: %w", err)
 		}
 		messages = append(messages, message)
@@ -63,7 +69,7 @@ func (s *Store) Append(ctx context.Context, sess session.Session, messages ...ll
 
 	encoded := make([][]byte, len(messages))
 	for i := range messages {
-		data, err := json.Marshal(messages[i])
+		data, err := llm.MarshalMessage(messages[i])
 		if err != nil {
 			return fmt.Errorf("sqlite: encode message %d: %w", i, err)
 		}
@@ -77,15 +83,15 @@ func (s *Store) Append(ctx context.Context, sess session.Session, messages ...ll
 	defer func() { _ = tx.Rollback() }()
 
 	statement, err := tx.PrepareContext(ctx, `
-		INSERT INTO session_messages (resource_id, session_id, message, created_at)
-		VALUES (?, ?, ?, datetime('now'))`)
+		INSERT INTO session_messages (resource_id, session_id, format_version, message, created_at)
+		VALUES (?, ?, ?, ?, datetime('now'))`)
 	if err != nil {
 		return fmt.Errorf("sqlite: prepare append: %w", err)
 	}
 	defer func() { _ = statement.Close() }()
 
 	for i, data := range encoded {
-		if _, err := statement.ExecContext(ctx, sess.ResourceID, sess.ID, data); err != nil {
+		if _, err := statement.ExecContext(ctx, sess.ResourceID, sess.ID, llm.FormatVersion, data); err != nil {
 			return fmt.Errorf("sqlite: append message %d: %w", i, err)
 		}
 	}

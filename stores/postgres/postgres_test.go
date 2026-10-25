@@ -33,7 +33,7 @@ func encoded(t *testing.T, messages ...llm.Message) [][]byte {
 	t.Helper()
 	out := make([][]byte, len(messages))
 	for i := range messages {
-		data, err := json.Marshal(messages[i])
+		data, err := llm.MarshalMessage(messages[i])
 		if err != nil {
 			t.Fatalf("marshal message %d: %v", i, err)
 		}
@@ -47,12 +47,12 @@ func TestStore_LoadPreservesOrder(t *testing.T) {
 	sess := session.Session{ID: "thread", ResourceID: "tenant"}
 	rows := encoded(t, llm.SystemMessage("be brief"), llm.UserMessage("hello"), llm.AssistantMessage("hi"))
 
-	mock.ExpectQuery("SELECT message").
+	mock.ExpectQuery("SELECT message, format_version").
 		WithArgs("tenant", "thread").
-		WillReturnRows(sqlmock.NewRows([]string{"message"}).
-			AddRow(rows[0]).
-			AddRow(rows[1]).
-			AddRow(rows[2]))
+		WillReturnRows(sqlmock.NewRows([]string{"message", "format_version"}).
+			AddRow(rows[0], llm.FormatVersion).
+			AddRow(rows[1], llm.FormatVersion).
+			AddRow(rows[2], llm.FormatVersion))
 
 	messages, err := store.Load(context.Background(), sess)
 	if err != nil {
@@ -82,7 +82,7 @@ func TestStore_AppendIsAtomicTransaction(t *testing.T) {
 	prepared := mock.ExpectPrepare("INSERT INTO session_messages")
 	for _, payload := range payloads {
 		prepared.ExpectExec().
-			WithArgs("tenant", "thread", payload).
+			WithArgs("tenant", "thread", llm.FormatVersion, payload).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 	}
 	mock.ExpectCommit()
@@ -104,10 +104,10 @@ func TestStore_AppendRollsBackOnFailure(t *testing.T) {
 	mock.ExpectBegin()
 	prepared := mock.ExpectPrepare("INSERT INTO session_messages")
 	prepared.ExpectExec().
-		WithArgs("tenant", "thread", payloads[0]).
+		WithArgs("tenant", "thread", llm.FormatVersion, payloads[0]).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	prepared.ExpectExec().
-		WithArgs("tenant", "thread", payloads[1]).
+		WithArgs("tenant", "thread", llm.FormatVersion, payloads[1]).
 		WillReturnError(errors.New("write failed"))
 	mock.ExpectRollback()
 
@@ -124,7 +124,10 @@ func TestStore_AppendEncodingFailureDoesNotTouchDatabase(t *testing.T) {
 	store, mock := newTestStore(t)
 	sess := session.Session{ID: "thread", ResourceID: "tenant"}
 
-	invalid := llm.Message{Role: llm.RoleTool, Data: json.RawMessage(`{`)}
+	invalid := llm.ToolResultsMessage(llm.ToolResult{
+		CallID:     "call-1",
+		Structured: json.RawMessage(`{`),
+	})
 	err := store.Append(context.Background(), sess, llm.UserMessage("valid"), invalid)
 	if err == nil {
 		t.Fatal("expected an encoding error")
@@ -138,17 +141,27 @@ func TestStore_LoadDecodesReplayState(t *testing.T) {
 	store, mock := newTestStore(t)
 	sess := session.Session{ID: "replay"}
 
-	original := llm.Message{
-		Role:         llm.RoleAssistant,
-		Content:      []llm.Part{llm.TextPart("")},
-		Thinking:     "reasoning",
-		ToolCalls:    []llm.ToolCall{{Index: 0, ID: "call-1", Name: "lookup", Arguments: `{"q":"go"}`}},
-		ProviderData: &llm.ProviderData{Provider: "test", Version: 2, Data: []byte(`{"signature":"abc"}`)},
+	reasoning := llm.NewReasoningPart("reasoning")
+	if err := reasoning.Meta().Set("test", map[string]string{"signature": "abc"}); err != nil {
+		t.Fatalf("Set reasoning metadata: %v", err)
 	}
-	row := encoded(t, original)[0]
-	mock.ExpectQuery("SELECT message").
+	call := llm.NewToolCallPart(llm.ToolCall{
+		ItemID: "item-1",
+		CallID: "call-1",
+		Name:   "lookup",
+		Status: llm.ToolStatusCompleted,
+		Input:  json.RawMessage(`{"q":"go"}`),
+	})
+	assistant := llm.AssistantMessageWithParts(reasoning, call)
+	assistant.Provider = make(llm.ProviderData)
+	if err := assistant.Provider.Set("test", map[string]string{"response_id": "resp-1"}); err != nil {
+		t.Fatalf("Set message metadata: %v", err)
+	}
+
+	row := encoded(t, assistant)[0]
+	mock.ExpectQuery("SELECT message, format_version").
 		WithArgs("", "replay").
-		WillReturnRows(sqlmock.NewRows([]string{"message"}).AddRow(row))
+		WillReturnRows(sqlmock.NewRows([]string{"message", "format_version"}).AddRow(row, llm.FormatVersion))
 
 	messages, err := store.Load(context.Background(), sess)
 	if err != nil {
@@ -157,25 +170,52 @@ func TestStore_LoadDecodesReplayState(t *testing.T) {
 	if len(messages) != 1 {
 		t.Fatalf("messages = %d", len(messages))
 	}
-	assistant := messages[0]
-	if len(assistant.Content) != 0 {
-		t.Errorf("empty text part survived persistence: %+v", assistant.Content)
+	assistant = messages[0]
+	if len(assistant.Content) != 2 {
+		t.Fatalf("parts = %d, want 2", len(assistant.Content))
 	}
-	if assistant.Thinking != "reasoning" || len(assistant.ToolCalls) != 1 {
-		t.Errorf("message = %+v", assistant)
+	if reasoningPart, ok := assistant.Content[0].(*llm.ReasoningPart); !ok || reasoningPart.Text != "reasoning" {
+		t.Errorf("reasoning part = %+v", assistant.Content[0])
 	}
-	if assistant.ProviderData == nil || assistant.ProviderData.Provider != "test" {
-		t.Fatalf("ProviderData = %+v", assistant.ProviderData)
+	calls := assistant.ToolCalls()
+	if len(calls) != 1 || calls[0].ItemID != "item-1" || calls[0].CallID != "call-1" ||
+		calls[0].Status != llm.ToolStatusCompleted {
+		t.Errorf("tool calls = %+v", calls)
 	}
-	if string(assistant.ProviderData.Data) != `{"signature":"abc"}` {
-		t.Errorf("ProviderData.Data = %s", assistant.ProviderData.Data)
+	var signature map[string]string
+	if err := assistant.Content[0].Meta().Get("test", &signature); err != nil {
+		t.Fatalf("Get reasoning metadata: %v", err)
+	}
+	if signature["signature"] != "abc" {
+		t.Errorf("reasoning metadata = %v", signature)
+	}
+	var responseID map[string]string
+	if err := assistant.Provider.Get("test", &responseID); err != nil {
+		t.Fatalf("Get message metadata: %v", err)
+	}
+	if responseID["response_id"] != "resp-1" {
+		t.Errorf("message metadata = %v", responseID)
+	}
+}
+
+func TestStore_LoadRejectsUnknownFormatVersion(t *testing.T) {
+	store, mock := newTestStore(t)
+	row := encoded(t, llm.UserMessage("legacy"))[0]
+
+	mock.ExpectQuery("SELECT message, format_version").
+		WithArgs("", "old").
+		WillReturnRows(sqlmock.NewRows([]string{"message", "format_version"}).AddRow(row, llm.FormatVersion-1))
+
+	if _, err := store.Load(context.Background(), session.Session{ID: "old"}); !errors.Is(err, llm.ErrUnsupportedFormatVersion) {
+		t.Fatalf("Load = %v, want ErrUnsupportedFormatVersion", err)
 	}
 }
 
 func TestStore_LoadDecodeError(t *testing.T) {
 	store, mock := newTestStore(t)
-	mock.ExpectQuery("SELECT message").
-		WillReturnRows(sqlmock.NewRows([]string{"message"}).AddRow([]byte("not-json")))
+	mock.ExpectQuery("SELECT message, format_version").
+		WillReturnRows(sqlmock.NewRows([]string{"message", "format_version"}).
+			AddRow([]byte("not-json"), llm.FormatVersion))
 
 	if _, err := store.Load(context.Background(), session.Session{ID: "s"}); err == nil {
 		t.Fatal("expected a decode error")

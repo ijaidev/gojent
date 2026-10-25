@@ -5,13 +5,17 @@ import (
 	"fmt"
 )
 
+// schema creates the canonical session table. The SDK is unreleased, so there
+// is no migration from the v1 layout: drop old development tables and let
+// Migrate recreate them.
 const schema = `
 CREATE TABLE IF NOT EXISTS session_messages (
-    position    INTEGER PRIMARY KEY AUTOINCREMENT,
-    resource_id TEXT NOT NULL,
-    session_id  TEXT NOT NULL,
-    message     TEXT NOT NULL,
-    created_at  TEXT NOT NULL
+    position       INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_id    TEXT NOT NULL,
+    session_id     TEXT NOT NULL,
+    format_version INTEGER NOT NULL DEFAULT 2,
+    message        TEXT NOT NULL,
+    created_at     TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_messages_session

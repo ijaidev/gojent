@@ -125,8 +125,10 @@ func testReplayState(t *testing.T, store session.Store) {
 	sess := session.Session{ID: "replay", ResourceID: "tenant"}
 	reasoning := llm.NewReasoningPart("reasoning")
 	call := llm.NewToolCallPart(llm.ToolCall{
+		ItemID: "item-1",
 		CallID: "call-1",
 		Name:   "lookup",
+		Status: llm.ToolStatusCompleted,
 		Input:  json.RawMessage(`{"q":"go"}`),
 	})
 	if err := call.Set("test", map[string]string{"signature": "abc"}); err != nil {
@@ -137,7 +139,15 @@ func testReplayState(t *testing.T, store session.Store) {
 	if err := original.Provider.Set("test", map[string]string{"response_id": "resp-1"}); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
-	if err := store.Append(ctx, sess, llm.UserMessage("find"), original); err != nil {
+	result := llm.ToolResultsMessage(llm.ToolResult{
+		CallID:        "call-1",
+		Name:          "lookup",
+		Status:        llm.ToolStatusError,
+		Content:       []llm.Part{llm.NewTextPart("boom")},
+		Structured:    json.RawMessage(`{"code":"E_TIMEOUT"}`),
+		InputRequests: json.RawMessage(`{"field":"city"}`),
+	})
+	if err := store.Append(ctx, sess, llm.UserMessage("find"), original, result); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
 
@@ -145,15 +155,16 @@ func testReplayState(t *testing.T, store session.Store) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(messages) != 2 {
-		t.Fatalf("messages = %d, want 2", len(messages))
+	if len(messages) != 3 {
+		t.Fatalf("messages = %d, want 3", len(messages))
 	}
 	assistant := messages[1]
 	if got := reasoningTextOf(assistant); got != "reasoning" {
 		t.Errorf("reasoning = %q", got)
 	}
 	calls := assistant.ToolCalls()
-	if len(calls) != 1 || calls[0].CallID != "call-1" || string(calls[0].Input) != `{"q":"go"}` {
+	if len(calls) != 1 || calls[0].ItemID != "item-1" || calls[0].CallID != "call-1" ||
+		calls[0].Status != llm.ToolStatusCompleted || string(calls[0].Input) != `{"q":"go"}` {
 		t.Errorf("ToolCalls = %+v", calls)
 	}
 	loadedCall := assistant.Content[1].(*llm.ToolCallPart)
@@ -172,10 +183,21 @@ func testReplayState(t *testing.T, store session.Store) {
 		t.Errorf("message provider data = %v", responseID)
 	}
 
+	loadedResult, ok := messages[2].Content[0].(*llm.ToolResultPart)
+	if !ok {
+		t.Fatalf("tool result part = %T", messages[2].Content[0])
+	}
+	if loadedResult.CallID != "call-1" || loadedResult.Status != llm.ToolStatusError ||
+		loadedResult.Text() != "boom" || string(loadedResult.Structured) != `{"code":"E_TIMEOUT"}` ||
+		string(loadedResult.InputRequests) != `{"field":"city"}` {
+		t.Errorf("tool result = %+v", loadedResult.ToolResult)
+	}
+
 	// Loaded messages must not alias store state.
 	loadedCall.Input[0] = '['
 	loadedCall.Provider["test"] = json.RawMessage(`{"signature":"mutated"}`)
 	assistant.Provider["test"] = json.RawMessage(`{"response_id":"mutated"}`)
+	loadedResult.Structured[0] = '['
 	reloaded, err := store.Load(ctx, sess)
 	if err != nil {
 		t.Fatalf("Load again: %v", err)
@@ -189,6 +211,10 @@ func testReplayState(t *testing.T, store session.Store) {
 	}
 	if string(reloaded[1].Provider["test"]) != `{"response_id":"resp-1"}` {
 		t.Error("mutating loaded message provider data changed store state")
+	}
+	reloadedResult := reloaded[2].Content[0].(*llm.ToolResultPart)
+	if string(reloadedResult.Structured) != `{"code":"E_TIMEOUT"}` {
+		t.Error("mutating loaded structured output changed store state")
 	}
 }
 

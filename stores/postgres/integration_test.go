@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -44,13 +45,14 @@ func TestIntegration(t *testing.T) {
 
 	messages := []llm.Message{
 		llm.UserMessage("hello"),
-		{
-			Role:         llm.RoleAssistant,
-			Content:      []llm.Part{llm.TextPart("hi")},
-			ToolCalls:    []llm.ToolCall{{Index: 0, ID: "call-1", Name: "lookup", Arguments: `{"q":"go"}`}},
-			ProviderData: &llm.ProviderData{Provider: "test", Version: 1, Data: []byte(`{"sig":"x"}`)},
-		},
-		{Role: llm.RoleTool, ToolCallID: "call-1", Name: "lookup", Content: []llm.Part{llm.TextPart(`{"answer":42}`)}},
+		canonicalAssistant(t),
+		llm.ToolResultsMessage(llm.ToolResult{
+			CallID:     "call-1",
+			Name:       "lookup",
+			Status:     llm.ToolStatusCompleted,
+			Content:    []llm.Part{llm.NewTextPart(`{"answer":42}`)},
+			Structured: json.RawMessage(`{"answer":42}`),
+		}),
 	}
 	if err := store.Append(ctx, sess, messages...); err != nil {
 		t.Fatalf("Append: %v", err)
@@ -63,11 +65,24 @@ func TestIntegration(t *testing.T) {
 	if len(loaded) != len(messages) {
 		t.Fatalf("messages = %d, want %d", len(loaded), len(messages))
 	}
-	if loaded[1].ProviderData == nil || string(loaded[1].ProviderData.Data) != `{"sig":"x"}` {
-		t.Errorf("provider data did not round-trip: %+v", loaded[1].ProviderData)
+	var signature map[string]string
+	if err := loaded[1].Content[0].Meta().Get("test", &signature); err != nil {
+		t.Fatalf("Get provider data: %v", err)
 	}
-	if loaded[2].ToolCallID != "call-1" || loaded[2].Text() != `{"answer":42}` {
-		t.Errorf("tool result did not round-trip: %+v", loaded[2])
+	if signature["sig"] != "x" {
+		t.Errorf("provider data did not round-trip: %v", signature)
+	}
+	calls := loaded[1].ToolCalls()
+	if len(calls) != 1 || calls[0].CallID != "call-1" || string(calls[0].Input) != `{"q":"go"}` {
+		t.Errorf("tool call did not round-trip: %+v", calls)
+	}
+	resultPart, ok := loaded[2].Content[0].(*llm.ToolResultPart)
+	if !ok {
+		t.Fatalf("tool result part = %T", loaded[2].Content[0])
+	}
+	if resultPart.CallID != "call-1" || resultPart.Text() != `{"answer":42}` ||
+		string(resultPart.Structured) != `{"answer":42}` {
+		t.Errorf("tool result did not round-trip: %+v", resultPart)
 	}
 
 	other := session.Session{ID: sess.ID, ResourceID: "other-tenant"}
@@ -104,4 +119,35 @@ func TestConformance(t *testing.T) {
 		}
 		return store
 	})
+}
+
+// canonicalAssistant builds an assistant turn with per-part replay state,
+// generated call IDs, and message-level provider metadata.
+func canonicalAssistant(t *testing.T) llm.Message {
+	t.Helper()
+
+	reasoning := llm.NewReasoningPart("reasoning")
+	if err := reasoning.Meta().Set("test", map[string]string{"sig": "x"}); err != nil {
+		t.Fatalf("Set reasoning metadata: %v", err)
+	}
+	text := llm.NewTextPart("hi")
+	if err := text.Meta().Set("test", map[string]string{"encrypted": "secret"}); err != nil {
+		t.Fatalf("Set text metadata: %v", err)
+	}
+	message := llm.AssistantMessageWithParts(
+		reasoning,
+		text,
+		llm.NewToolCallPart(llm.ToolCall{
+			ItemID: "item-1",
+			CallID: "call-1",
+			Name:   "lookup",
+			Status: llm.ToolStatusCompleted,
+			Input:  json.RawMessage(`{"q":"go"}`),
+		}),
+	)
+	message.Provider = make(llm.ProviderData)
+	if err := message.Provider.Set("test", map[string]string{"response_id": "resp-1"}); err != nil {
+		t.Fatalf("Set message metadata: %v", err)
+	}
+	return message
 }

@@ -106,18 +106,36 @@ func TestStore_PersistsReplayState(t *testing.T) {
 	store := newStore(t)
 	sess := session.Session{ID: "replay"}
 
-	original := llm.Message{
-		Role:      llm.RoleAssistant,
-		Content:   []llm.Part{llm.TextPart("")},
-		Thinking:  "reasoning",
-		ToolCalls: []llm.ToolCall{{Index: 0, ID: "call-1", Name: "lookup", Arguments: `{"q":"go"}`}},
-		ProviderData: &llm.ProviderData{
-			Provider: "test",
-			Version:  2,
-			Data:     []byte(`{"signature":"abc"}`),
-		},
+	reasoning := llm.NewReasoningPart("reasoning")
+	if err := reasoning.Meta().Set("test", map[string]string{"signature": "abc"}); err != nil {
+		t.Fatalf("Set reasoning metadata: %v", err)
 	}
-	if err := store.Append(ctx, sess, llm.UserMessage("find"), original); err != nil {
+	call := llm.NewToolCallPart(llm.ToolCall{
+		ItemID: "item-1",
+		CallID: "call-1",
+		Name:   "lookup",
+		Status: llm.ToolStatusCompleted,
+		Input:  json.RawMessage(`{"q":"go"}`),
+	})
+	if err := call.Meta().Set("test", map[string]string{"call_signature": "xyz"}); err != nil {
+		t.Fatalf("Set call metadata: %v", err)
+	}
+
+	assistant := llm.AssistantMessageWithParts(reasoning, llm.NewTextPart("checking"), call)
+	assistant.Provider = make(llm.ProviderData)
+	if err := assistant.Provider.Set("test", map[string]string{"response_id": "resp-1"}); err != nil {
+		t.Fatalf("Set message metadata: %v", err)
+	}
+
+	result := llm.ToolResultsMessage(llm.ToolResult{
+		CallID:     "call-1",
+		Name:       "lookup",
+		Status:     llm.ToolStatusCompleted,
+		Content:    []llm.Part{llm.NewTextPart(`{"answer":42}`)},
+		Structured: json.RawMessage(`{"answer":42}`),
+	})
+
+	if err := store.Append(ctx, sess, llm.UserMessage("find"), assistant, result); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
 
@@ -125,24 +143,107 @@ func TestStore_PersistsReplayState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(loaded) != 2 {
-		t.Fatalf("messages = %d", len(loaded))
+	if len(loaded) != 3 {
+		t.Fatalf("messages = %d, want 3", len(loaded))
 	}
-	assistant := loaded[1]
-	if len(assistant.Content) != 0 {
-		t.Errorf("empty text part survived persistence: %+v", assistant.Content)
+
+	assistant = loaded[1]
+	if len(assistant.Content) != 3 {
+		t.Fatalf("assistant parts = %d, want 3", len(assistant.Content))
 	}
-	if assistant.Thinking != "reasoning" {
-		t.Errorf("Thinking = %q", assistant.Thinking)
+	if reasoningPart, ok := assistant.Content[0].(*llm.ReasoningPart); !ok || reasoningPart.Text != "reasoning" {
+		t.Errorf("reasoning part = %+v", assistant.Content[0])
 	}
-	if len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].ID != "call-1" {
-		t.Errorf("ToolCalls = %+v", assistant.ToolCalls)
+	calls := assistant.ToolCalls()
+	if len(calls) != 1 || calls[0].ItemID != "item-1" || calls[0].CallID != "call-1" ||
+		calls[0].Status != llm.ToolStatusCompleted || string(calls[0].Input) != `{"q":"go"}` {
+		t.Errorf("ToolCalls = %+v", calls)
 	}
-	if assistant.ProviderData == nil || assistant.ProviderData.Provider != "test" || assistant.ProviderData.Version != 2 {
-		t.Fatalf("ProviderData = %+v", assistant.ProviderData)
+	var signature map[string]string
+	if err := assistant.Content[0].Meta().Get("test", &signature); err != nil {
+		t.Fatalf("Get reasoning metadata: %v", err)
 	}
-	if string(assistant.ProviderData.Data) != `{"signature":"abc"}` {
-		t.Errorf("ProviderData.Data = %s", assistant.ProviderData.Data)
+	if signature["signature"] != "abc" {
+		t.Errorf("reasoning metadata = %v", signature)
+	}
+	var callSignature map[string]string
+	if err := call.Meta().Get("test", &callSignature); err != nil {
+		t.Fatalf("Get call metadata: %v", err)
+	}
+	if callSignature["call_signature"] != "xyz" {
+		t.Errorf("call metadata = %v", callSignature)
+	}
+	var responseID map[string]string
+	if err := assistant.Provider.Get("test", &responseID); err != nil {
+		t.Fatalf("Get message metadata: %v", err)
+	}
+	if responseID["response_id"] != "resp-1" {
+		t.Errorf("message metadata = %v", responseID)
+	}
+
+	resultPart, ok := loaded[2].Content[0].(*llm.ToolResultPart)
+	if !ok {
+		t.Fatalf("tool result part = %T", loaded[2].Content[0])
+	}
+	if resultPart.CallID != "call-1" || resultPart.Status != llm.ToolStatusCompleted {
+		t.Errorf("tool result = %+v", resultPart.ToolResult)
+	}
+	if string(resultPart.Structured) != `{"answer":42}` || resultPart.Text() != `{"answer":42}` {
+		t.Errorf("tool result payload = %+v", resultPart)
+	}
+}
+
+func TestStore_PersistsFormatVersion(t *testing.T) {
+	ctx := context.Background()
+	store := newStore(t)
+	sess := session.Session{ID: "version"}
+
+	if err := store.Append(ctx, sess, llm.UserMessage("hello")); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	var (
+		formatVersion int
+		encoded       []byte
+	)
+	if err := store.DB().QueryRowContext(ctx, `
+		SELECT format_version, message FROM session_messages
+		WHERE resource_id = ? AND session_id = ?`,
+		sess.ResourceID, sess.ID).Scan(&formatVersion, &encoded); err != nil {
+		t.Fatalf("query persisted row: %v", err)
+	}
+	if formatVersion != llm.FormatVersion {
+		t.Errorf("format_version = %d, want %d", formatVersion, llm.FormatVersion)
+	}
+	var payload struct {
+		FormatVersion int `json:"format_version"`
+	}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("decode persisted message: %v", err)
+	}
+	if payload.FormatVersion != llm.FormatVersion {
+		t.Errorf("message format_version = %d, want %d", payload.FormatVersion, llm.FormatVersion)
+	}
+}
+
+func TestStore_RejectsUnknownFormatVersion(t *testing.T) {
+	ctx := context.Background()
+	store := newStore(t)
+	sess := session.Session{ID: "old"}
+
+	encoded, err := llm.MarshalMessage(llm.UserMessage("legacy"))
+	if err != nil {
+		t.Fatalf("MarshalMessage: %v", err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `
+		INSERT INTO session_messages (resource_id, session_id, format_version, message, created_at)
+		VALUES (?, ?, ?, ?, datetime('now'))`,
+		sess.ResourceID, sess.ID, llm.FormatVersion-1, encoded); err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+
+	if _, err := store.Load(ctx, sess); !errors.Is(err, llm.ErrUnsupportedFormatVersion) {
+		t.Fatalf("Load = %v, want ErrUnsupportedFormatVersion", err)
 	}
 }
 
@@ -152,11 +253,11 @@ func TestStore_AppendIsAtomic(t *testing.T) {
 	sess := session.Session{ID: "atomic"}
 
 	valid := llm.UserMessage("valid")
-	invalid := llm.Message{
-		Role: llm.RoleTool,
-		// Invalid raw JSON cannot be encoded, so the whole batch must fail.
-		Data: json.RawMessage(`{`),
-	}
+	// Invalid raw JSON cannot be encoded, so the whole batch must fail.
+	invalid := llm.ToolResultsMessage(llm.ToolResult{
+		CallID:     "call-1",
+		Structured: json.RawMessage(`{`),
+	})
 	if err := store.Append(ctx, sess, valid, invalid); err == nil {
 		t.Fatal("expected an encoding error")
 	}
