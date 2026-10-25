@@ -17,11 +17,16 @@ const DefaultToolTimeout = 2 * time.Minute
 // runTools executes locally-runnable calls and groups every result into one
 // user message, in call order (D17). Server calls are recorded in the
 // assistant message and never executed (D10, invariant 9).
-func (r *runner) runTools(ctx context.Context, calls []llm.ToolCall, step int) (llm.Message, bool, error) {
-	results := make([]llm.ToolResult, 0, len(calls))
+func (r *runner) runTools(ctx context.Context, assistant llm.Message, step int) (llm.Message, bool, error) {
+	results := make([]llm.ToolResult, 0, len(assistant.ToolCalls()))
 	budgetExceeded := false
 
-	for index, raw := range calls {
+	for index, part := range assistant.Content {
+		callPart, ok := part.(*llm.ToolCallPart)
+		if !ok {
+			continue
+		}
+		raw := callPart.ToolCall
 		if raw.EffectiveKind() == llm.ToolKindServer {
 			continue
 		}

@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -59,42 +60,270 @@ type Thread struct {
 	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
-// Message is one persisted conversation message.
+// Message is one persisted conversation message: the canonical provider-neutral
+// payload plus the app envelope (identity, thread, timestamp).
+//
+// There is no stored Thinking, ToolCalls, or ToolCallID. Those are read-only
+// views derived from canonical parts by MessageView (D22).
 type Message struct {
-	ID         string         `json:"id"`
-	ThreadID   string         `json:"thread_id"`
-	Role       llm.Role       `json:"role"`
-	Content    []llm.Part     `json:"content"`
-	Thinking   string         `json:"thinking,omitempty"`
-	Name       string         `json:"name,omitempty"`
-	ToolCalls  []llm.ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
-	CreatedAt  time.Time      `json:"created_at"`
+	ID        string      `json:"id"`
+	ThreadID  string      `json:"thread_id"`
+	Payload   llm.Message `json:"-"`
+	CreatedAt time.Time   `json:"created_at"`
+}
+
+// Role returns the canonical message role.
+func (m *Message) Role() llm.Role {
+	if m == nil {
+		return ""
+	}
+	return m.Payload.Role
 }
 
 // Text returns the textual content of a message.
 func (m *Message) Text() string {
-	return llm.TextFromParts(m.Content)
+	if m == nil {
+		return ""
+	}
+	return m.Payload.Text()
 }
 
-// ToLLM converts a persisted message to gojent's message type. Empty text
-// parts are omitted because some providers reject empty text content.
+// ToolCalls returns the canonical tool calls in content order.
+func (m *Message) ToolCalls() []llm.ToolCall {
+	if m == nil {
+		return nil
+	}
+	return m.Payload.ToolCalls()
+}
+
+// ToolResults returns the canonical tool results in content order.
+func (m *Message) ToolResults() []llm.ToolResult {
+	if m == nil {
+		return nil
+	}
+	return m.Payload.ToolResults()
+}
+
+// Thinking returns the readable reasoning content in part order.
+func (m *Message) Thinking() string {
+	if m == nil {
+		return ""
+	}
+	return reasoningText(m.Payload.Content)
+}
+
+// ToLLM returns a deep copy of the canonical payload with empty text parts
+// removed. Some providers reject empty text content.
 func (m *Message) ToLLM() llm.Message {
-	content := make([]llm.Part, 0, len(m.Content))
-	for _, part := range m.Content {
-		if part.Type == llm.PartTypeText && part.Text == "" {
+	if m == nil {
+		return llm.Message{}
+	}
+	payload := m.Payload.Clone()
+	payload.Content = llm.NonEmptyParts(payload.Content)
+	return payload
+}
+
+// MarshalJSON encodes the message as one display view. A message that expands
+// into multiple views (grouped tool results) must be serialized through
+// ThreadDetail or MessageViews.
+func (m Message) MarshalJSON() ([]byte, error) {
+	views := m.Views()
+	if len(views) != 1 {
+		return nil, fmt.Errorf("app: message %q expands to %d views; use MessageViews", m.ID, len(views))
+	}
+	return json.Marshal(views[0])
+}
+
+// PartView is the frontend-facing projection of a displayable canonical part.
+// Provider replay metadata is never exposed.
+type PartView struct {
+	Type     llm.PartType `json:"type"`
+	Text     string       `json:"text,omitempty"`
+	MIMEType string       `json:"mime_type,omitempty"`
+	Data     []byte       `json:"data,omitempty"`
+	URL      string       `json:"url,omitempty"`
+}
+
+// ToolCallView is the frontend-facing projection of a canonical tool call.
+type ToolCallView struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+// MessageView is the stable JSON contract served to the frontend. Thinking and
+// tool calls are derived from canonical parts; tool results are expanded into
+// one "tool" view per canonical result so the existing pairing logic works.
+type MessageView struct {
+	ID         string         `json:"id"`
+	ThreadID   string         `json:"thread_id"`
+	Role       string         `json:"role"`
+	Content    []PartView     `json:"content"`
+	Thinking   string         `json:"thinking,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	ToolCalls  []ToolCallView `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
+}
+
+// Views projects a canonical message onto the frontend contract. Tool results
+// become one "tool" message each, in content order.
+func (m *Message) Views() []MessageView {
+	if m == nil {
+		return nil
+	}
+	switch m.Payload.Role {
+	case llm.RoleAssistant:
+		return []MessageView{{
+			ID:        m.ID,
+			ThreadID:  m.ThreadID,
+			Role:      string(llm.RoleAssistant),
+			Content:   partViews(m.Payload.Content),
+			Thinking:  reasoningText(m.Payload.Content),
+			Name:      m.Payload.Name,
+			ToolCalls: toolCallViews(m.Payload.Content),
+			CreatedAt: m.CreatedAt,
+		}}
+	case llm.RoleSystem, llm.RoleDeveloper:
+		return []MessageView{{
+			ID:        m.ID,
+			ThreadID:  m.ThreadID,
+			Role:      string(llm.RoleSystem),
+			Content:   partViews(m.Payload.Content),
+			Name:      m.Payload.Name,
+			CreatedAt: m.CreatedAt,
+		}}
+	case llm.RoleUser:
+		return m.userViews()
+	default:
+		return nil
+	}
+}
+
+func (m *Message) userViews() []MessageView {
+	var views []MessageView
+	var pending []llm.Part
+	textSegments := 0
+	flush := func() {
+		if len(pending) == 0 {
+			return
+		}
+		id := m.ID
+		if textSegments > 0 {
+			// A user message can interleave text and tool results. Keep the
+			// canonical ID for the first text view and derive unique IDs for
+			// any later segment.
+			id = fmt.Sprintf("%s:text:%d", m.ID, textSegments)
+		}
+		textSegments++
+		views = append(views, MessageView{
+			ID:        id,
+			ThreadID:  m.ThreadID,
+			Role:      string(llm.RoleUser),
+			Content:   partViews(pending),
+			Name:      m.Payload.Name,
+			CreatedAt: m.CreatedAt,
+		})
+		pending = nil
+	}
+
+	for _, part := range m.Payload.Content {
+		if result, ok := part.(*llm.ToolResultPart); ok {
+			flush()
+			views = append(views, MessageView{
+				ID:         fmt.Sprintf("%s:result:%d", m.ID, len(views)),
+				ThreadID:   m.ThreadID,
+				Role:       "tool",
+				Content:    partViews(result.Content),
+				Name:       result.Name,
+				ToolCallID: result.CallID,
+				CreatedAt:  m.CreatedAt,
+			})
 			continue
 		}
-		content = append(content, part)
+		if displayable(part) {
+			pending = append(pending, part)
+		}
 	}
-	return llm.Message{
-		Role:       m.Role,
-		Content:    content,
-		Thinking:   m.Thinking,
-		Name:       m.Name,
-		ToolCalls:  m.ToolCalls,
-		ToolCallID: m.ToolCallID,
+	flush()
+	return views
+}
+
+// MessageViews projects every message in transcript order.
+func MessageViews(messages []*Message) []MessageView {
+	views := make([]MessageView, 0, len(messages))
+	for _, message := range messages {
+		views = append(views, message.Views()...)
 	}
+	return views
+}
+
+func partViews(parts []llm.Part) []PartView {
+	views := make([]PartView, 0, len(parts))
+	for _, part := range parts {
+		switch p := part.(type) {
+		case *llm.TextPart:
+			views = append(views, PartView{Type: llm.PartTypeText, Text: p.Text})
+		case *llm.RefusalPart:
+			views = append(views, PartView{Type: llm.PartTypeRefusal, Text: p.Text})
+		case *llm.FilePart:
+			views = append(views, PartView{
+				Type:     llm.PartTypeFile,
+				MIMEType: p.MIMEType,
+				Data:     p.Data,
+				URL:      p.URL,
+			})
+		}
+	}
+	return views
+}
+
+func displayable(part llm.Part) bool {
+	switch part.(type) {
+	case *llm.TextPart, *llm.RefusalPart, *llm.FilePart:
+		return true
+	default:
+		return false
+	}
+}
+
+func toolCallViews(parts []llm.Part) []ToolCallView {
+	var views []ToolCallView
+	for _, part := range parts {
+		call, ok := part.(*llm.ToolCallPart)
+		if !ok || call.EffectiveKind() == llm.ToolKindServer {
+			continue
+		}
+		arguments := string(call.Input)
+		if arguments == "" {
+			arguments = "{}"
+		}
+		views = append(views, ToolCallView{
+			ID:        call.CallID,
+			Name:      call.Name,
+			Arguments: arguments,
+		})
+	}
+	return views
+}
+
+func reasoningText(parts []llm.Part) string {
+	var segments []string
+	for _, part := range parts {
+		reasoning, ok := part.(*llm.ReasoningPart)
+		if !ok {
+			continue
+		}
+		if reasoning.Text != "" {
+			segments = append(segments, reasoning.Text)
+		}
+		for _, summary := range reasoning.Summary {
+			if summary != "" {
+				segments = append(segments, summary)
+			}
+		}
+	}
+	return strings.Join(segments, "\n")
 }
 
 // CreateThreadInput is the request body for creating a thread.
@@ -120,27 +349,31 @@ type ThreadDetail struct {
 	ActiveRun *RunInfo   `json:"active_run,omitempty"`
 }
 
+// MarshalJSON serves the stable frontend contract: canonical messages are
+// projected into display views with derived thinking and tool calls.
+func (d ThreadDetail) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Thread    *Thread       `json:"thread"`
+		Messages  []MessageView `json:"messages"`
+		ActiveRun *RunInfo      `json:"active_run,omitempty"`
+	}{
+		Thread:    d.Thread,
+		Messages:  MessageViews(d.Messages),
+		ActiveRun: d.ActiveRun,
+	})
+}
+
 func messageFromLLM(threadID string, m *llm.Message, now time.Time) *Message {
-	content := make([]llm.Part, 0, len(m.Content))
-	for _, part := range m.Content {
-		if part.Type == llm.PartTypeText && part.Text == "" {
-			continue
-		}
-		content = append(content, part)
-	}
-	if m.Role == llm.RoleAssistant && len(content) == 0 && len(m.ToolCalls) == 0 && strings.TrimSpace(m.Thinking) == "" {
+	payload := m.Clone()
+	payload.Content = llm.NonEmptyParts(payload.Content)
+	if len(payload.Content) == 0 {
 		return nil
 	}
 	return &Message{
-		ID:         newID("msg"),
-		ThreadID:   threadID,
-		Role:       m.Role,
-		Content:    content,
-		Thinking:   m.Thinking,
-		Name:       m.Name,
-		ToolCalls:  m.ToolCalls,
-		ToolCallID: m.ToolCallID,
-		CreatedAt:  now,
+		ID:        newID("msg"),
+		ThreadID:  threadID,
+		Payload:   payload,
+		CreatedAt: now,
 	}
 }
 
@@ -148,8 +381,7 @@ func userMessage(threadID, content string, now time.Time) *Message {
 	return &Message{
 		ID:        newID("msg"),
 		ThreadID:  threadID,
-		Role:      llm.RoleUser,
-		Content:   []llm.Part{llm.TextPart(content)},
+		Payload:   llm.UserMessage(content),
 		CreatedAt: now,
 	}
 }

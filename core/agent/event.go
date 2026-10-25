@@ -32,18 +32,22 @@ type MessageStart struct {
 	Step int
 }
 
-// TextDelta is emitted for each text fragment.
+// TextDelta is emitted for each text fragment. Replace means Text is a full
+// snapshot of the part, not an increment.
 type TextDelta struct {
-	Step  int
-	Index int
-	Text  string
+	Step    int
+	Index   int
+	Text    string
+	Replace bool
 }
 
-// ThinkingDelta is emitted for each reasoning fragment.
+// ThinkingDelta is emitted for each reasoning fragment. Replace means Text is a
+// full snapshot of the part, not an increment.
 type ThinkingDelta struct {
-	Step  int
-	Index int
-	Text  string
+	Step    int
+	Index   int
+	Text    string
+	Replace bool
 }
 
 // ToolCallDelta is emitted for each tool-call fragment.

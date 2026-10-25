@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -92,9 +93,9 @@ func TestFullAccessRunPersistsTranscript(t *testing.T) {
 		scriptedStep{
 			text: "Running the command.",
 			toolCalls: []llm.ToolCall{{
-				ID:        "call_1",
-				Name:      "execute_command",
-				Arguments: `{"command":"printf codjent-ok"}`,
+				CallID: "call_1",
+				Name:   "execute_command",
+				Input:  json.RawMessage(`{"command":"printf codjent-ok"}`),
 			}},
 		},
 		scriptedStep{text: "Finished."},
@@ -144,14 +145,15 @@ func TestFullAccessRunPersistsTranscript(t *testing.T) {
 	if len(detail.Messages) != 4 {
 		t.Fatalf("message count = %d: %+v", len(detail.Messages), detail.Messages)
 	}
-	wantRoles := []llm.Role{llm.RoleUser, llm.RoleAssistant, llm.RoleTool, llm.RoleAssistant}
+	wantRoles := []llm.Role{llm.RoleUser, llm.RoleAssistant, llm.RoleUser, llm.RoleAssistant}
 	for i, role := range wantRoles {
-		if detail.Messages[i].Role != role {
-			t.Fatalf("message %d role = %q, want %q", i, detail.Messages[i].Role, role)
+		if got := detail.Messages[i].Role(); got != role {
+			t.Fatalf("message %d role = %q, want %q", i, got, role)
 		}
 	}
-	if !strings.Contains(detail.Messages[2].Text(), "codjent-ok") {
-		t.Fatalf("persisted tool output = %q", detail.Messages[2].Text())
+	results := detail.Messages[2].ToolResults()
+	if len(results) != 1 || !strings.Contains(results[0].Text(), "codjent-ok") {
+		t.Fatalf("persisted tool output = %+v", results)
 	}
 
 	secondRun, err := svc.StartMessage(context.Background(), thread.ID, "again")
@@ -176,7 +178,7 @@ func TestFullAccessRunPersistsTranscript(t *testing.T) {
 	}
 	var sawTool bool
 	for _, message := range last.Messages {
-		if message.Role == llm.RoleTool {
+		if len(message.ToolResults()) > 0 {
 			sawTool = true
 		}
 	}
@@ -194,9 +196,9 @@ func TestApprovalAllow(t *testing.T) {
 	svc, _, _, workspace := newTestService(t, AccessAsk,
 		scriptedStep{
 			toolCalls: []llm.ToolCall{{
-				ID:        "call_1",
-				Name:      "execute_command",
-				Arguments: `{"command":"touch approved-marker"}`,
+				CallID: "call_1",
+				Name:   "execute_command",
+				Input:  json.RawMessage(`{"command":"touch approved-marker"}`),
 			}},
 		},
 		scriptedStep{text: "Command finished."},
@@ -263,9 +265,9 @@ func TestApprovalDeny(t *testing.T) {
 	svc, _, _, workspace := newTestService(t, AccessAsk,
 		scriptedStep{
 			toolCalls: []llm.ToolCall{{
-				ID:        "call_1",
-				Name:      "execute_command",
-				Arguments: `{"command":"touch denied-marker"}`,
+				CallID: "call_1",
+				Name:   "execute_command",
+				Input:  json.RawMessage(`{"command":"touch denied-marker"}`),
 			}},
 		},
 		scriptedStep{text: "The command was denied."},
@@ -307,9 +309,9 @@ func TestCancelRun(t *testing.T) {
 	svc, _, _, _ := newTestService(t, AccessAsk,
 		scriptedStep{
 			toolCalls: []llm.ToolCall{{
-				ID:        "call_1",
-				Name:      "execute_command",
-				Arguments: `{"command":"printf never"}`,
+				CallID: "call_1",
+				Name:   "execute_command",
+				Input:  json.RawMessage(`{"command":"printf never"}`),
 			}},
 		},
 		scriptedStep{text: "unreachable"},
@@ -390,7 +392,7 @@ func TestRunFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetThread: %v", err)
 	}
-	if len(detail.Messages) != 1 || detail.Messages[0].Role != llm.RoleUser {
+	if len(detail.Messages) != 1 || detail.Messages[0].Role() != llm.RoleUser {
 		t.Fatalf("messages after failure = %+v", detail.Messages)
 	}
 }
@@ -435,6 +437,78 @@ func TestEventsReplay(t *testing.T) {
 	}
 }
 
+func TestRunStreamsIndexedDeltas(t *testing.T) {
+	svc, _, _, _ := newTestService(t, AccessFull, scriptedStep{events: []llm.StreamEvent{
+		llm.PartStart{Index: 0, Part: llm.NewTextPart("")},
+		llm.PartDelta{Index: 0, Kind: llm.PartTypeText, Text: "Hel", Replace: true},
+		llm.PartDelta{Index: 0, Kind: llm.PartTypeText, Text: "Hello", Replace: true},
+		llm.PartDelta{Index: 0, Kind: llm.PartTypeText, Text: "Hello world", Replace: true},
+		llm.PartStart{Index: 1, Part: llm.NewReasoningPart("")},
+		llm.PartDelta{Index: 1, Kind: llm.PartTypeReasoning, Text: "think", Replace: true},
+		llm.PartDelta{Index: 1, Kind: llm.PartTypeReasoning, Text: "thinking", Replace: true},
+		llm.MessageEnd{FinishReason: llm.FinishReasonStop},
+	}})
+
+	thread, err := svc.CreateThread(context.Background(), CreateThreadInput{})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	run, err := svc.StartMessage(context.Background(), thread.ID, "stream")
+	if err != nil {
+		t.Fatalf("StartMessage: %v", err)
+	}
+
+	reader := subscribe(t, svc, run.ID)
+	events := reader.drain(t)
+	reader.cancel()
+
+	if len(events) == 0 || events[0].Type != EventRunStarted {
+		t.Fatalf("first event = %+v", events)
+	}
+	if last := events[len(events)-1]; last.Type != EventRunCompleted {
+		t.Fatalf("last event = %+v", last)
+	}
+
+	var text, thinking strings.Builder
+	textIndex, thinkingIndex := -1, -1
+	for i, event := range events {
+		if i > 0 && event.ID <= events[i-1].ID {
+			t.Fatalf("event IDs are not increasing: %+v", events)
+		}
+		switch event.Type {
+		case EventTextDelta:
+			data := event.Data.(TextDeltaEvent)
+			textIndex = data.Index
+			text.WriteString(data.Text)
+		case EventThinkingDelta:
+			data := event.Data.(ThinkingDeltaEvent)
+			thinkingIndex = data.Index
+			thinking.WriteString(data.Text)
+		}
+	}
+	if got := text.String(); got != "Hello world" {
+		t.Fatalf("text deltas = %q, want %q", got, "Hello world")
+	}
+	if got := thinking.String(); got != "thinking" {
+		t.Fatalf("thinking deltas = %q, want %q", got, "thinking")
+	}
+	if textIndex != 0 || thinkingIndex != 1 {
+		t.Fatalf("part indices = %d, %d, want 0, 1", textIndex, thinkingIndex)
+	}
+
+	detail, err := svc.GetThread(context.Background(), thread.ID)
+	if err != nil {
+		t.Fatalf("GetThread: %v", err)
+	}
+	assistant := detail.Messages[1]
+	if got := assistant.Text(); got != "Hello world" {
+		t.Fatalf("persisted text = %q", got)
+	}
+	if got := assistant.Thinking(); got != "thinking" {
+		t.Fatalf("persisted thinking = %q", got)
+	}
+}
+
 func TestCloseCancelsAndRejectsWork(t *testing.T) {
 	svc, _, _, _ := newTestService(t, AccessAsk, scriptedStep{text: "hello"})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -454,6 +528,7 @@ type scriptedStep struct {
 	text      string
 	thinking  string
 	toolCalls []llm.ToolCall
+	events    []llm.StreamEvent
 	err       error
 }
 
@@ -483,35 +558,59 @@ func (m *scriptedModel) Stream(ctx context.Context, req *llm.Request) (llm.Strea
 	if step.err != nil {
 		return nil, step.err
 	}
+	if step.events != nil {
+		return llm.NewSliceStream(ctx, step.events), nil
+	}
 
-	var chunks []*llm.StreamChunk
+	events := make([]llm.StreamEvent, 0, 4+len(step.toolCalls))
+	partIndex := 0
 	if step.thinking != "" {
-		chunks = append(chunks, &llm.StreamChunk{ThinkingDelta: step.thinking})
+		events = append(events, llm.PartStart{
+			Index: partIndex,
+			Part:  llm.NewReasoningPart(step.thinking),
+		})
+		partIndex++
 	}
 	if step.text != "" {
-		half := len(step.text) / 2
-		if half == 0 {
-			half = len(step.text)
-		}
-		chunks = append(chunks,
-			&llm.StreamChunk{Delta: step.text[:half]},
-			&llm.StreamChunk{Delta: step.text[half:]},
-		)
+		events = append(events, llm.PartStart{
+			Index: partIndex,
+			Part:  llm.NewTextPart(step.text),
+		})
+		partIndex++
+	}
+	for _, call := range step.toolCalls {
+		events = append(events, llm.PartStart{
+			Index: partIndex,
+			Part:  llm.NewToolCallPart(call),
+		})
+		partIndex++
 	}
 	finish := llm.FinishReasonStop
 	if len(step.toolCalls) > 0 {
 		finish = llm.FinishReasonTool
-		chunks = append(chunks, &llm.StreamChunk{ToolCalls: step.toolCalls})
 	}
-	chunks = append(chunks, &llm.StreamChunk{
+	events = append(events, llm.MessageEnd{
 		FinishReason: finish,
-		Usage:        &llm.Usage{PromptTokens: 1, CompletionTokens: 1, TotalTokens: 2},
+		Usage:        llm.Usage{PromptTokens: 1, CompletionTokens: 1, TotalTokens: 2},
 	})
-	return llm.NewSliceStream(ctx, chunks), nil
+	return llm.NewSliceStream(ctx, events), nil
 }
 
 func (m *scriptedModel) ModelID() string {
 	return "test-model"
+}
+
+func (m *scriptedModel) Info() llm.Info {
+	return llm.Info{
+		Provider: "test",
+		Model:    "test-model",
+		Features: llm.Features{
+			Streaming:         true,
+			Tools:             true,
+			ParallelToolCalls: true,
+			Reasoning:         true,
+		},
+	}
 }
 
 func (m *scriptedModel) snapshotRequests() []*llm.Request {
@@ -657,8 +756,7 @@ func cloneThread(thread *Thread) *Thread {
 
 func cloneMessage(message *Message) *Message {
 	clone := *message
-	clone.Content = slices.Clone(message.Content)
-	clone.ToolCalls = slices.Clone(message.ToolCalls)
+	clone.Payload = message.Payload.Clone()
 	return &clone
 }
 

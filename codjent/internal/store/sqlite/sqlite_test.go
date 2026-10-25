@@ -1,7 +1,9 @@
 package sqlite
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -115,30 +117,32 @@ func TestMessageLifecycle(t *testing.T) {
 	user := &app.Message{
 		ID:        "msg_user",
 		ThreadID:  thread.ID,
-		Role:      llm.RoleUser,
-		Content:   []llm.Part{llm.TextPart("run the tests")},
+		Payload:   llm.UserMessage("run the tests"),
 		CreatedAt: now,
 	}
 	assistant := &app.Message{
 		ID:       "msg_assistant",
 		ThreadID: thread.ID,
-		Role:     llm.RoleAssistant,
-		Content:  []llm.Part{llm.TextPart("I will run them.")},
-		ToolCalls: []llm.ToolCall{{
-			ID:        "call_1",
-			Name:      "execute_command",
-			Arguments: `{"command":"go test ./..."}`,
-		}},
+		Payload: llm.AssistantMessageWithParts(
+			llm.NewTextPart("I will run them."),
+			llm.NewToolCallPart(llm.ToolCall{
+				CallID: "call_1",
+				Name:   "execute_command",
+				Input:  json.RawMessage(`{"command":"go test ./..."}`),
+			}),
+		),
 		CreatedAt: now.Add(time.Millisecond),
 	}
 	tool := &app.Message{
-		ID:         "msg_tool",
-		ThreadID:   thread.ID,
-		Role:       llm.RoleTool,
-		Name:       "execute_command",
-		ToolCallID: "call_1",
-		Content:    []llm.Part{llm.TextPart("ok")},
-		CreatedAt:  now.Add(2 * time.Millisecond),
+		ID:       "msg_tool",
+		ThreadID: thread.ID,
+		Payload: llm.ToolResultsMessage(llm.ToolResult{
+			CallID:  "call_1",
+			Name:    "execute_command",
+			Status:  llm.ToolStatusCompleted,
+			Content: []llm.Part{llm.NewTextPart("ok")},
+		}),
+		CreatedAt: now.Add(2 * time.Millisecond),
 	}
 	if err := store.AppendMessages(ctx, user, assistant, tool); err != nil {
 		t.Fatalf("AppendMessages: %v", err)
@@ -157,11 +161,13 @@ func TestMessageLifecycle(t *testing.T) {
 	if got := messages[1].Text(); got != "I will run them." {
 		t.Fatalf("assistant text = %q", got)
 	}
-	if len(messages[1].ToolCalls) != 1 || messages[1].ToolCalls[0].Name != "execute_command" {
-		t.Fatalf("tool calls = %+v", messages[1].ToolCalls)
+	calls := messages[1].ToolCalls()
+	if len(calls) != 1 || calls[0].Name != "execute_command" || calls[0].CallID != "call_1" {
+		t.Fatalf("tool calls = %+v", calls)
 	}
-	if messages[2].ToolCallID != "call_1" || messages[2].Name != "execute_command" {
-		t.Fatalf("tool message = %+v", messages[2])
+	results := messages[2].ToolResults()
+	if len(results) != 1 || results[0].CallID != "call_1" || results[0].Name != "execute_command" {
+		t.Fatalf("tool results = %+v", results)
 	}
 
 	if err := store.DeleteThread(ctx, thread.ID); err != nil {
@@ -173,6 +179,161 @@ func TestMessageLifecycle(t *testing.T) {
 	}
 	if len(messages) != 0 {
 		t.Fatalf("messages after cascade delete = %+v", messages)
+	}
+}
+
+func TestMessageReplayStateRoundTrip(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	thread := testThread()
+	if err := store.CreateThread(ctx, thread); err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+
+	reasoning := llm.NewReasoningPart("considering")
+	reasoning.Summary = []string{"first", "second"}
+	if err := reasoning.Set("google", map[string]string{"thought_signature": "c2lnbmF0dXJl"}); err != nil {
+		t.Fatalf("reasoning.Set: %v", err)
+	}
+	call := llm.NewToolCallPart(llm.ToolCall{
+		ItemID: "item_1",
+		CallID: "call_1",
+		Name:   "lookup",
+		Kind:   llm.ToolKindFunction,
+		Input:  json.RawMessage(`{"query":"go"}`),
+		Status: llm.ToolStatusCompleted,
+	})
+	if err := call.Set("openai", map[string]string{"item_id": "item_1"}); err != nil {
+		t.Fatalf("call.Set: %v", err)
+	}
+	file := llm.FileFromBytes([]byte("image-bytes"), "image/png")
+	file.Filename = "diagram.png"
+
+	assistant := &app.Message{
+		ID:       "msg_assistant",
+		ThreadID: thread.ID,
+		Payload: llm.Message{
+			Role:    llm.RoleAssistant,
+			Content: []llm.Part{reasoning, llm.NewTextPart("calling the tool"), call, file},
+			Status:  llm.MessageStatusCompleted,
+			Phase:   "final_answer",
+		},
+		CreatedAt: time.Now().UTC(),
+	}
+
+	success := llm.NewToolResultPart(llm.ToolResult{
+		CallID:     "call_1",
+		Name:       "lookup",
+		Kind:       llm.ToolKindFunction,
+		Status:     llm.ToolStatusCompleted,
+		Content:    []llm.Part{llm.NewTextPart("found"), llm.FileFromURL("https://example.test/out.png", "image/png")},
+		Structured: json.RawMessage(`{"count":1}`),
+	})
+	if err := success.Set("google", map[string]string{"function_response_id": "resp_1"}); err != nil {
+		t.Fatalf("success.Set: %v", err)
+	}
+	missing := llm.NewToolResultPart(llm.ToolResult{
+		CallID:        "call_2",
+		Name:          "ask",
+		Status:        llm.ToolStatusInputRequired,
+		InputRequests: json.RawMessage(`{"prompt":"name"}`),
+	})
+	results := &app.Message{
+		ID:        "msg_results",
+		ThreadID:  thread.ID,
+		Payload:   llm.Message{Role: llm.RoleUser, Content: []llm.Part{success, missing}},
+		CreatedAt: time.Now().UTC(),
+	}
+
+	if err := store.AppendMessages(ctx, assistant, results); err != nil {
+		t.Fatalf("AppendMessages: %v", err)
+	}
+	messages, err := store.ListMessages(ctx, thread.ID)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("messages = %+v", messages)
+	}
+	assertSamePayload(t, assistant, messages[0])
+	assertSamePayload(t, results, messages[1])
+
+	gotResults := messages[1].ToolResults()
+	if len(gotResults) != 2 {
+		t.Fatalf("tool results = %+v", gotResults)
+	}
+	if gotResults[0].Status != llm.ToolStatusCompleted ||
+		string(gotResults[0].Structured) != `{"count":1}` {
+		t.Fatalf("structured result = %+v", gotResults[0])
+	}
+	if gotResults[1].Status != llm.ToolStatusInputRequired ||
+		string(gotResults[1].InputRequests) != `{"prompt":"name"}` {
+		t.Fatalf("input-required result = %+v", gotResults[1])
+	}
+	var signature map[string]string
+	if err := messages[0].Payload.Content[0].Meta().Get("google", &signature); err != nil {
+		t.Fatalf("read reasoning metadata: %v", err)
+	}
+	if signature["thought_signature"] != "c2lnbmF0dXJl" {
+		t.Fatalf("reasoning metadata = %+v", signature)
+	}
+}
+
+func TestListMessagesRejectsUnknownFormatVersion(t *testing.T) {
+	current, err := llm.MarshalMessage(llm.UserMessage("current"))
+	if err != nil {
+		t.Fatalf("MarshalMessage: %v", err)
+	}
+	legacy, err := json.Marshal(llm.UserMessage("legacy"))
+	if err != nil {
+		t.Fatalf("marshal legacy message: %v", err)
+	}
+
+	cases := []struct {
+		name          string
+		columnVersion int
+		payload       string
+	}{
+		{name: "column", columnVersion: llm.FormatVersion + 1, payload: string(current)},
+		{name: "payload", columnVersion: llm.FormatVersion, payload: string(legacy)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _ := newTestStore(t)
+			ctx := context.Background()
+			thread := testThread()
+			if err := store.CreateThread(ctx, thread); err != nil {
+				t.Fatalf("CreateThread: %v", err)
+			}
+			if _, err := store.db.ExecContext(ctx, `
+				INSERT INTO messages (id, thread_id, format_version, message, created_at)
+				VALUES (?, ?, ?, ?, ?)`,
+				"msg_old", thread.ID, tc.columnVersion, tc.payload,
+				formatTime(time.Now().UTC()),
+			); err != nil {
+				t.Fatalf("insert legacy message: %v", err)
+			}
+
+			_, err := store.ListMessages(ctx, thread.ID)
+			if !errors.Is(err, llm.ErrUnsupportedFormatVersion) {
+				t.Fatalf("ListMessages error = %v, want %v", err, llm.ErrUnsupportedFormatVersion)
+			}
+		})
+	}
+}
+
+func assertSamePayload(t *testing.T, want, got *app.Message) {
+	t.Helper()
+	wantJSON, err := llm.MarshalMessage(want.Payload)
+	if err != nil {
+		t.Fatalf("marshal want payload: %v", err)
+	}
+	gotJSON, err := llm.MarshalMessage(got.Payload)
+	if err != nil {
+		t.Fatalf("marshal got payload: %v", err)
+	}
+	if !bytes.Equal(wantJSON, gotJSON) {
+		t.Fatalf("payload mismatch:\nwant %s\n got %s", wantJSON, gotJSON)
 	}
 }
 
@@ -193,8 +354,7 @@ func TestNotFound(t *testing.T) {
 	err := store.AppendMessages(ctx, &app.Message{
 		ID:       "msg_missing",
 		ThreadID: "missing",
-		Role:     llm.RoleUser,
-		Content:  []llm.Part{llm.TextPart("hello")},
+		Payload:  llm.UserMessage("hello"),
 	})
 	if !errors.Is(err, app.ErrThreadNotFound) {
 		t.Fatalf("AppendMessages error = %v", err)
@@ -219,8 +379,7 @@ func TestPersistenceAcrossReopen(t *testing.T) {
 	if err := store.AppendMessages(ctx, &app.Message{
 		ID:        "msg_1",
 		ThreadID:  thread.ID,
-		Role:      llm.RoleUser,
-		Content:   []llm.Part{llm.TextPart("persist me")},
+		Payload:   llm.UserMessage("persist me"),
 		CreatedAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("AppendMessages: %v", err)

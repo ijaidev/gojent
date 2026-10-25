@@ -4,7 +4,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -21,7 +20,10 @@ import (
 
 const timeLayout = "2006-01-02T15:04:05.000000000Z"
 
-const schema = `
+// schema stores the canonical llm.Message JSON with its format version. The
+// SDK is unreleased, so there is no migration from the v1 layout: drop old
+// development databases and let New recreate them.
+var schema = fmt.Sprintf(`
 CREATE TABLE IF NOT EXISTS threads (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -36,18 +38,14 @@ CREATE TABLE IF NOT EXISTS messages (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
     thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
-    role TEXT NOT NULL,
-    content TEXT NOT NULL DEFAULT '[]',
-    thinking TEXT NOT NULL DEFAULT '',
-    name TEXT NOT NULL DEFAULT '',
-    tool_calls TEXT NOT NULL DEFAULT '',
-    tool_call_id TEXT NOT NULL DEFAULT '',
+    format_version INTEGER NOT NULL DEFAULT %d,
+    message TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_threads_updated_at ON threads(updated_at);
 CREATE INDEX IF NOT EXISTS idx_messages_thread_seq ON messages(thread_id, seq);
-`
+`, llm.FormatVersion)
 
 // Store is a SQLite-backed app.Store.
 type Store struct {
@@ -249,24 +247,22 @@ func (s *Store) AppendMessages(ctx context.Context, messages ...*app.Message) er
 		if message.ThreadID != threadID {
 			return fmt.Errorf("%w: messages span multiple threads", app.ErrInvalidInput)
 		}
-
-		content, err := json.Marshal(message.Content)
-		if err != nil {
-			return fmt.Errorf("sqlite: encode message content: %w", err)
+		if err := message.Payload.Validate(); err != nil {
+			return fmt.Errorf("%w: message %q: %w", app.ErrInvalidInput, message.ID, err)
 		}
-		toolCalls, err := json.Marshal(message.ToolCalls)
+
+		payload, err := llm.MarshalMessage(message.Payload)
 		if err != nil {
-			return fmt.Errorf("sqlite: encode tool calls: %w", err)
+			return fmt.Errorf("sqlite: encode message %q: %w", message.ID, err)
 		}
 		createdAt := message.CreatedAt
 		if createdAt.IsZero() {
 			createdAt = time.Now().UTC()
 		}
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO messages (id, thread_id, role, content, thinking, name, tool_calls, tool_call_id, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			message.ID, message.ThreadID, string(message.Role), string(content),
-			message.Thinking, message.Name, string(toolCalls), message.ToolCallID,
+			INSERT INTO messages (id, thread_id, format_version, message, created_at)
+			VALUES (?, ?, ?, ?, ?)`,
+			message.ID, message.ThreadID, llm.FormatVersion, string(payload),
 			formatTime(createdAt),
 		); err != nil {
 			return fmt.Errorf("sqlite: append message: %w", err)
@@ -294,7 +290,7 @@ func (s *Store) AppendMessages(ctx context.Context, messages ...*app.Message) er
 // ListMessages implements app.Store.
 func (s *Store) ListMessages(ctx context.Context, threadID string) ([]*app.Message, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, thread_id, role, content, thinking, name, tool_calls, tool_call_id, created_at
+		SELECT id, thread_id, format_version, message, created_at
 		FROM messages WHERE thread_id = ? ORDER BY seq ASC`, threadID)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list messages: %w", err)
@@ -346,29 +342,25 @@ func scanThread(row scanner) (*app.Thread, error) {
 
 func scanMessage(row scanner) (*app.Message, error) {
 	var (
-		message   app.Message
-		role      string
-		content   string
-		toolCalls string
-		createdAt string
+		message       app.Message
+		formatVersion int
+		payload       string
+		createdAt     string
 	)
 	if err := row.Scan(
-		&message.ID, &message.ThreadID, &role, &content, &message.Thinking,
-		&message.Name, &toolCalls, &message.ToolCallID, &createdAt,
+		&message.ID, &message.ThreadID, &formatVersion, &payload, &createdAt,
 	); err != nil {
 		return nil, err
 	}
-	message.Role = llm.Role(role)
-	if content != "" {
-		if err := json.Unmarshal([]byte(content), &message.Content); err != nil {
-			return nil, fmt.Errorf("decode content: %w", err)
-		}
+	if formatVersion != llm.FormatVersion {
+		return nil, fmt.Errorf("%w: got %d, want %d",
+			llm.ErrUnsupportedFormatVersion, formatVersion, llm.FormatVersion)
 	}
-	if toolCalls != "" {
-		if err := json.Unmarshal([]byte(toolCalls), &message.ToolCalls); err != nil {
-			return nil, fmt.Errorf("decode tool calls: %w", err)
-		}
+	decoded, err := llm.UnmarshalMessage([]byte(payload))
+	if err != nil {
+		return nil, fmt.Errorf("decode message: %w", err)
 	}
+	message.Payload = decoded
 	message.CreatedAt = parseTime(createdAt)
 	return &message, nil
 }

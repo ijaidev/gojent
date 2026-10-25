@@ -190,11 +190,11 @@ func emitStreamEvent(sink Sink, step int, event llm.StreamEvent) {
 		switch e.Kind {
 		case llm.PartTypeText:
 			if e.Text != "" {
-				safeEmit(sink, TextDelta{Step: step, Index: e.Index, Text: e.Text})
+				safeEmit(sink, TextDelta{Step: step, Index: e.Index, Text: e.Text, Replace: e.Replace})
 			}
 		case llm.PartTypeReasoning:
 			if e.Text != "" {
-				safeEmit(sink, ThinkingDelta{Step: step, Index: e.Index, Text: e.Text})
+				safeEmit(sink, ThinkingDelta{Step: step, Index: e.Index, Text: e.Text, Replace: e.Replace})
 			}
 		case llm.PartTypeToolCall:
 			if e.Call != nil {

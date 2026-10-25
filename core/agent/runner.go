@@ -137,7 +137,7 @@ func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response,
 			return r.response(conversation, finish), nil
 		}
 
-		results, budgetExceeded, toolsErr := r.runTools(budgetCtx, assistant.ToolCalls(), step)
+		results, budgetExceeded, toolsErr := r.runTools(budgetCtx, assistant, step)
 		if toolsErr != nil {
 			emit(StepEnd{Step: step, Usage: response.Usage, Err: toolsErr})
 			return nil, toolsErr

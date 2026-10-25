@@ -33,6 +33,7 @@ func (fakeModel) Stream(context.Context, *llm.Request) (llm.Stream, error) {
 	return nil, nil
 }
 func (fakeModel) ModelID() string { return "fake" }
+func (fakeModel) Info() llm.Info  { return llm.Info{Provider: "fake", Model: "fake"} }
 
 func TestRegistry(t *testing.T) {
 	first := &fakeProvider{info: Info{

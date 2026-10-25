@@ -54,7 +54,9 @@ type Call struct {
 	// ID is the unique call identifier. The runner guarantees it is non-empty
 	// and unique within a run.
 	ID string
-	// Index is the call position within the assistant message.
+	// Index is the canonical part index within the assistant message. Tool
+	// call parts may follow text and reasoning parts, so it is not necessarily
+	// the call's position among the calls.
 	Index int
 	// Name is the requested tool name.
 	Name string

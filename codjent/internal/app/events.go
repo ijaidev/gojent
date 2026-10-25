@@ -37,25 +37,33 @@ type RunStartedEvent struct {
 	AccessMode AccessMode `json:"access_mode"`
 }
 
-// TextDeltaEvent is a chunk of assistant text.
+// TextDeltaEvent is a chunk of assistant text. Index is the canonical part
+// index.
 type TextDeltaEvent struct {
-	Text string `json:"text"`
+	Index int    `json:"index"`
+	Text  string `json:"text"`
 }
 
-// ThinkingDeltaEvent is a chunk of model reasoning.
+// ThinkingDeltaEvent is a chunk of model reasoning. Index is the canonical part
+// index.
 type ThinkingDeltaEvent struct {
-	Text string `json:"text"`
+	Index int    `json:"index"`
+	Text  string `json:"text"`
 }
 
-// ToolCallEvent announces a complete tool call before execution.
+// ToolCallEvent announces a complete tool call before execution. Index is the
+// canonical part index within the assistant message.
 type ToolCallEvent struct {
+	Index     int    `json:"index"`
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
 }
 
-// ToolResultEvent reports a completed or skipped tool invocation.
+// ToolResultEvent reports a completed or skipped tool invocation. Index is the
+// canonical part index within the assistant message.
 type ToolResultEvent struct {
+	Index   int    `json:"index"`
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Output  string `json:"output,omitempty"`

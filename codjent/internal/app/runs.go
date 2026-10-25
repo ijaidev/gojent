@@ -307,6 +307,39 @@ func (s *Service) StartMessage(ctx context.Context, threadID, content string) (*
 	return r.info(), nil
 }
 
+// streamedText reduces replace snapshots and incremental fragments to the text
+// the frontend has not seen yet. Indices restart at zero for each step.
+type streamedText struct {
+	parts map[streamKey]string
+}
+
+type streamKey struct {
+	step  int
+	index int
+}
+
+func (s *streamedText) delta(step, index int, text string, replace bool) string {
+	if s.parts == nil {
+		s.parts = make(map[streamKey]string)
+	}
+	key := streamKey{step: step, index: index}
+	previous := s.parts[key]
+	if text == previous {
+		return ""
+	}
+	if replace {
+		s.parts[key] = text
+		if strings.HasPrefix(text, previous) {
+			return text[len(previous):]
+		}
+		// A shorter, unrelated snapshot cannot be expressed as an append. Send
+		// it whole; providers only replace with longer cumulative snapshots.
+		return text
+	}
+	s.parts[key] = previous + text
+	return text
+}
+
 func (s *Service) execute(r *run) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -363,15 +396,16 @@ func (s *Service) execute(r *run) {
 	defer func() { _ = execution.Close() }()
 
 	var final agent.RunEnd
+	var text, thinking streamedText
 	for event := range execution.Events() {
 		switch typed := event.(type) {
 		case agent.TextDelta:
-			if typed.Text != "" {
-				r.emit(EventTextDelta, TextDeltaEvent{Text: typed.Text})
+			if delta := text.delta(typed.Step, typed.Index, typed.Text, typed.Replace); delta != "" {
+				r.emit(EventTextDelta, TextDeltaEvent{Index: typed.Index, Text: delta})
 			}
 		case agent.ThinkingDelta:
-			if typed.Text != "" {
-				r.emit(EventThinkingDelta, ThinkingDeltaEvent{Text: typed.Text})
+			if delta := thinking.delta(typed.Step, typed.Index, typed.Text, typed.Replace); delta != "" {
+				r.emit(EventThinkingDelta, ThinkingDeltaEvent{Index: typed.Index, Text: delta})
 			}
 		case agent.ToolEnd:
 			// Denials are reported by beforeTool before the runner records
@@ -407,6 +441,7 @@ func (s *Service) beforeTool(r *run, ctx context.Context, req *agent.ToolRequest
 		arguments = "{}"
 	}
 	r.emit(EventToolCall, ToolCallEvent{
+		Index:     call.Index,
 		ID:        call.ID,
 		Name:      call.Name,
 		Arguments: arguments,
@@ -432,6 +467,7 @@ func (s *Service) beforeTool(r *run, ctx context.Context, req *agent.ToolRequest
 			message += ": " + decision.Note
 		}
 		r.emit(EventToolResult, ToolResultEvent{
+			Index:   call.Index,
 			ID:      call.ID,
 			Name:    call.Name,
 			Error:   message,
@@ -444,8 +480,9 @@ func (s *Service) beforeTool(r *run, ctx context.Context, req *agent.ToolRequest
 
 func emitToolResult(r *run, event agent.ToolEnd) {
 	data := ToolResultEvent{
-		ID:   event.Call.ID,
-		Name: event.Call.Name,
+		Index: event.Call.Index,
+		ID:    event.Call.ID,
+		Name:  event.Call.Name,
 	}
 	if event.Result != nil {
 		data.Output = event.Result.Text()
@@ -454,7 +491,9 @@ func emitToolResult(r *run, event agent.ToolEnd) {
 		data.Error = event.Err.Error()
 	}
 	if data.Output == "" && data.Error == "" && event.Message != nil {
-		data.Output = event.Message.Text()
+		if results := event.Message.ToolResults(); len(results) > 0 {
+			data.Output = results[0].Text()
+		}
 	}
 	r.emit(EventToolResult, data)
 }

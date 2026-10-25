@@ -70,7 +70,7 @@ func TestThreadAndRunFlow(t *testing.T) {
 		t.Fatalf("run info = %+v (status %d)", info, resp.StatusCode)
 	}
 
-	var detail app.ThreadDetail
+	var detail threadDetail
 	resp = doJSON(t, client, http.MethodGet, server.URL+"/api/threads/"+thread.ID, nil, &detail)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("get thread status = %d", resp.StatusCode)
@@ -78,11 +78,11 @@ func TestThreadAndRunFlow(t *testing.T) {
 	if len(detail.Messages) != 2 {
 		t.Fatalf("messages = %+v", detail.Messages)
 	}
-	if detail.Messages[0].Role != llm.RoleUser || detail.Messages[1].Role != llm.RoleAssistant {
+	if detail.Messages[0].Role != string(llm.RoleUser) || detail.Messages[1].Role != string(llm.RoleAssistant) {
 		t.Fatalf("roles = %q, %q", detail.Messages[0].Role, detail.Messages[1].Role)
 	}
-	if !strings.Contains(detail.Messages[1].Text(), "Hello from the test provider.") {
-		t.Fatalf("assistant text = %q", detail.Messages[1].Text())
+	if text := viewText(detail.Messages[1]); !strings.Contains(text, "Hello from the test provider.") {
+		t.Fatalf("assistant text = %q", text)
 	}
 
 	var updated app.Thread
@@ -131,11 +131,30 @@ func TestApprovalOverHTTP(t *testing.T) {
 	}
 	events := streamEvents(sseResp.Body)
 
-	approvalEvent := waitEvent(t, events, app.EventApprovalRequired)
 	var approvalData app.ApprovalRequiredEvent
-	remarshal(t, approvalEvent.Data, &approvalData)
+	var toolCallData app.ToolCallEvent
+	timeout := time.After(10 * time.Second)
+	for approvalData.Approval.ID == "" {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				t.Fatal("event stream closed before approval")
+			}
+			switch event.Type {
+			case app.EventToolCall:
+				remarshal(t, event.Data, &toolCallData)
+			case app.EventApprovalRequired:
+				remarshal(t, event.Data, &approvalData)
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for approval")
+		}
+	}
 	if approvalData.Approval.ID == "" || approvalData.Approval.ToolName != "execute_command" {
 		t.Fatalf("approval = %+v", approvalData.Approval)
+	}
+	if toolCallData.ID != "call_1" || toolCallData.Index != 1 {
+		t.Fatalf("tool call event = %+v", toolCallData)
 	}
 
 	resp = doJSON(t, client, http.MethodPost,
@@ -145,7 +164,61 @@ func TestApprovalOverHTTP(t *testing.T) {
 		t.Fatalf("approval status = %d", resp.StatusCode)
 	}
 
-	waitEvent(t, events, app.EventRunCompleted)
+	sawResult := false
+	timeout = time.After(10 * time.Second)
+wait:
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				t.Fatal("event stream closed before completion")
+			}
+			switch event.Type {
+			case app.EventToolResult:
+				var result app.ToolResultEvent
+				remarshal(t, event.Data, &result)
+				if result.ID != "call_1" || result.Index != 1 {
+					t.Fatalf("tool result event = %+v", result)
+				}
+				sawResult = true
+			case app.EventRunCompleted:
+				break wait
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for completion")
+		}
+	}
+	if !sawResult {
+		t.Fatal("missing tool result event")
+	}
+
+	var detail threadDetail
+	resp = doJSON(t, client, http.MethodGet, server.URL+"/api/threads/"+thread.ID, nil, &detail)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get thread status = %d", resp.StatusCode)
+	}
+	if len(detail.Messages) != 4 {
+		t.Fatalf("messages = %+v", detail.Messages)
+	}
+	if got := detail.Messages[1]; got.Role != string(llm.RoleAssistant) ||
+		len(got.ToolCalls) != 1 ||
+		got.ToolCalls[0].ID != "call_1" ||
+		got.ToolCalls[0].Name != "execute_command" ||
+		got.ToolCalls[0].Arguments != `{"command":"printf http-ok"}` {
+		t.Fatalf("assistant view = %+v", got)
+	}
+	resultView := detail.Messages[2]
+	if resultView.Role != "tool" || resultView.ToolCallID != "call_1" ||
+		resultView.Name != "execute_command" {
+		t.Fatalf("tool view = %+v", resultView)
+	}
+	if text := viewText(resultView); !strings.Contains(text, "http-ok") {
+		t.Fatalf("tool output = %q", text)
+	}
+	if got := detail.Messages[3]; got.Role != string(llm.RoleAssistant) ||
+		!strings.Contains(viewText(got), "Done.") {
+		t.Fatalf("final assistant view = %+v", got)
+	}
 }
 
 func TestCORSAndErrors(t *testing.T) {
@@ -208,6 +281,24 @@ func TestCORSAndErrors(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("bad access mode status = %d", resp.StatusCode)
 	}
+}
+
+// threadDetail is the GET /api/threads/{id} response. The server projects
+// canonical messages into the stable frontend views.
+type threadDetail struct {
+	Thread    *app.Thread       `json:"thread"`
+	Messages  []app.MessageView `json:"messages"`
+	ActiveRun *app.RunInfo      `json:"active_run,omitempty"`
+}
+
+func viewText(view app.MessageView) string {
+	var builder strings.Builder
+	for _, part := range view.Content {
+		if part.Type == llm.PartTypeText || part.Type == llm.PartTypeRefusal {
+			builder.WriteString(part.Text)
+		}
+	}
+	return builder.String()
 }
 
 type staticModelSource struct {
@@ -340,24 +431,6 @@ func streamEvents(body io.Reader) <-chan app.Event {
 	return events
 }
 
-func waitEvent(t *testing.T, events <-chan app.Event, eventType string) app.Event {
-	t.Helper()
-	timeout := time.After(10 * time.Second)
-	for {
-		select {
-		case event, ok := <-events:
-			if !ok {
-				t.Fatalf("event stream closed before %q", eventType)
-			}
-			if event.Type == eventType {
-				return event
-			}
-		case <-timeout:
-			t.Fatalf("timed out waiting for %q", eventType)
-		}
-	}
-}
-
 func assertEventType(t *testing.T, events []app.Event, eventType string) {
 	t.Helper()
 	for _, event := range events {
@@ -394,26 +467,34 @@ func (m *toolModel) Stream(ctx context.Context, _ *llm.Request) (llm.Stream, err
 	m.calls++
 	m.mu.Unlock()
 
-	usage := &llm.Usage{PromptTokens: 1, CompletionTokens: 1, TotalTokens: 2}
+	usage := llm.Usage{PromptTokens: 1, CompletionTokens: 1, TotalTokens: 2}
 	if call == 0 {
-		return llm.NewSliceStream(ctx, []*llm.StreamChunk{
-			{Delta: "Running."},
-			{
-				ToolCalls: []llm.ToolCall{{
-					ID:        "call_1",
-					Name:      "execute_command",
-					Arguments: `{"command":"printf http-ok"}`,
-				}},
-				FinishReason: llm.FinishReasonTool,
-			},
-			{Usage: usage},
+		return llm.NewSliceStream(ctx, []llm.StreamEvent{
+			llm.PartStart{Index: 0, Part: llm.NewTextPart("Running.")},
+			llm.PartStart{Index: 1, Part: llm.NewToolCallPart(llm.ToolCall{
+				CallID: "call_1",
+				Name:   "execute_command",
+				Input:  json.RawMessage(`{"command":"printf http-ok"}`),
+			})},
+			llm.MessageEnd{FinishReason: llm.FinishReasonTool, Usage: usage},
 		}), nil
 	}
-	return llm.NewSliceStream(ctx, []*llm.StreamChunk{
-		{Delta: "Done."},
-		{FinishReason: llm.FinishReasonStop},
-		{Usage: usage},
+	return llm.NewSliceStream(ctx, []llm.StreamEvent{
+		llm.PartStart{Index: 0, Part: llm.NewTextPart("Done.")},
+		llm.MessageEnd{FinishReason: llm.FinishReasonStop, Usage: usage},
 	}), nil
 }
 
 func (m *toolModel) ModelID() string { return "tool-model" }
+
+func (m *toolModel) Info() llm.Info {
+	return llm.Info{
+		Provider: "test",
+		Model:    "tool-model",
+		Features: llm.Features{
+			Streaming:         true,
+			Tools:             true,
+			ParallelToolCalls: true,
+		},
+	}
+}
