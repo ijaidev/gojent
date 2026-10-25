@@ -11,6 +11,49 @@ import (
 	"github.com/ijaidev/gojent/core/llm"
 )
 
+// modelStep runs one policy-wrapped model call. The caller owns StepStart and
+// StepEnd because a successful step continues into tool execution and
+// transcript persistence.
+func (r *runner) modelStep(ctx context.Context, request *llm.Request, step int) (*llm.Response, error) {
+	if r.opts.Policy != nil {
+		modelRequest := &ModelRequest{Step: step, Request: request}
+		if err := callPolicy(func() error {
+			return r.opts.Policy.BeforeModel(ctx, modelRequest)
+		}); err != nil {
+			return nil, err
+		}
+		if modelRequest.Request != nil {
+			request = modelRequest.Request
+		}
+	}
+
+	response, callErr := r.callModel(ctx, request, step)
+	if r.opts.Policy != nil {
+		modelResult := &ModelResult{
+			Step:     step,
+			Request:  request,
+			Response: response,
+			Err:      callErr,
+		}
+		if err := callPolicy(func() error {
+			return r.opts.Policy.AfterModel(ctx, modelResult)
+		}); err != nil {
+			return nil, err
+		}
+		response, callErr = modelResult.Response, modelResult.Err
+	}
+	if callErr == nil && response == nil {
+		callErr = ErrResponseRequired
+	}
+	if callErr != nil {
+		if ctx.Err() != nil {
+			return nil, r.contextError(ctx)
+		}
+		return nil, callErr
+	}
+	return response, nil
+}
+
 func (r *runner) callModel(ctx context.Context, request *llm.Request, step int) (*llm.Response, error) {
 	attempts := r.opts.Retry.MaxAttempts
 	if attempts <= 0 {

@@ -110,44 +110,10 @@ func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response,
 
 		emit(StepStart{Step: step})
 		request := r.request(conversation)
-		if r.opts.Policy != nil {
-			modelRequest := &ModelRequest{Step: step, Request: request}
-			if policyErr := callPolicy(func() error {
-				return r.opts.Policy.BeforeModel(budgetCtx, modelRequest)
-			}); policyErr != nil {
-				emit(StepEnd{Step: step, Err: policyErr})
-				return nil, policyErr
-			}
-			if modelRequest.Request != nil {
-				request = modelRequest.Request
-			}
-		}
-
-		response, callErr := r.callModel(budgetCtx, request, step)
-		if r.opts.Policy != nil {
-			modelResult := &ModelResult{
-				Step:     step,
-				Request:  request,
-				Response: response,
-				Err:      callErr,
-			}
-			if policyErr := callPolicy(func() error {
-				return r.opts.Policy.AfterModel(budgetCtx, modelResult)
-			}); policyErr != nil {
-				emit(StepEnd{Step: step, Err: policyErr})
-				return nil, policyErr
-			}
-			response, callErr = modelResult.Response, modelResult.Err
-		}
-		if callErr == nil && response == nil {
-			callErr = ErrResponseRequired
-		}
-		if callErr != nil {
-			if budgetCtx.Err() != nil {
-				callErr = r.contextError(budgetCtx)
-			}
-			emit(StepEnd{Step: step, Err: callErr})
-			return nil, callErr
+		response, modelErr := r.modelStep(budgetCtx, request, step)
+		if modelErr != nil {
+			emit(StepEnd{Step: step, Err: modelErr})
+			return nil, modelErr
 		}
 
 		assistant := response.Message
