@@ -34,60 +34,83 @@ func (r *runner) runTools(ctx context.Context, calls []llm.ToolCall, step int) (
 		}
 		safeEmit(r.opts.Sink, ToolStart{Step: step, Call: call, Spec: spec})
 
-		if r.opts.Budget.MaxToolCalls > 0 && r.toolCalls >= r.opts.Budget.MaxToolCalls {
-			budgetExceeded = true
-			message := toolErrorMessage(call, fmt.Errorf("%w: tool call budget exceeded", ErrBudgetExceeded))
-			safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Message: &message, Err: ErrBudgetExceeded})
-			results = append(results, message)
-			continue
+		outcome := r.runToolCall(ctx, impl, found, call, spec, step)
+		safeEmit(r.opts.Sink, ToolEnd{
+			Step:    step,
+			Call:    call,
+			Result:  outcome.result,
+			Message: outcome.message,
+			Err:     outcome.err,
+		})
+		if outcome.fatal != nil {
+			return nil, false, outcome.fatal
 		}
-
-		decision, policyErr := r.beforeTool(ctx, step, call, spec)
-		if policyErr != nil {
-			return nil, false, policyErr
-		}
-		if decision == Terminate {
-			return nil, false, ErrTerminated
-		}
-		if decision != Allow {
-			// Deny, an unresolved Ask, and unknown decisions all fail closed.
-			message := toolErrorMessage(call, ErrToolDenied)
-			safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Message: &message, Err: ErrToolDenied})
-			results = append(results, message)
-			continue
-		}
-
-		if !found {
-			err := fmt.Errorf("agent: tool %q not found", call.Name)
-			message := toolErrorMessage(call, err)
-			if afterErr := r.afterTool(ctx, step, call, nil, err); afterErr != nil {
-				return nil, false, afterErr
-			}
-			safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Message: &message, Err: err})
-			results = append(results, message)
-			continue
-		}
-
-		r.toolCalls++
-		result, execErr := r.executeTool(ctx, impl, call)
-		if afterErr := r.afterTool(ctx, step, call, &result, execErr); afterErr != nil {
-			return nil, false, afterErr
-		}
-		if execErr != nil {
-			message := toolErrorMessage(call, execErr)
-			safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Result: &result, Message: &message, Err: execErr})
-			results = append(results, message)
-			continue
-		}
-
-		message, encodeErr := resultMessage(call, result)
-		if encodeErr != nil {
-			message = toolErrorMessage(call, encodeErr)
-		}
-		safeEmit(r.opts.Sink, ToolEnd{Step: step, Call: call, Result: &result, Message: &message, Err: encodeErr})
-		results = append(results, message)
+		results = append(results, *outcome.message)
+		budgetExceeded = budgetExceeded || outcome.budgetExceeded
 	}
 	return results, budgetExceeded, nil
+}
+
+// toolCallOutcome is the result of one tool call. message is always set unless
+// fatal aborts the run before a tool message can be recorded.
+type toolCallOutcome struct {
+	message        *llm.Message
+	result         *tool.Result
+	err            error
+	fatal          error
+	budgetExceeded bool
+}
+
+// runToolCall applies the tool budget and policy, executes the tool, and
+// encodes its result. Fatal policy failures still return an outcome so the
+// caller can close the ToolStart/ToolEnd pair.
+func (r *runner) runToolCall(ctx context.Context, impl tool.Tool, found bool, call tool.Call, spec tool.Spec, step int) toolCallOutcome {
+	if r.opts.Budget.MaxToolCalls > 0 && r.toolCalls >= r.opts.Budget.MaxToolCalls {
+		message := toolErrorMessage(call, fmt.Errorf("%w: tool call budget exceeded", ErrBudgetExceeded))
+		return toolCallOutcome{
+			message:        &message,
+			err:            ErrBudgetExceeded,
+			budgetExceeded: true,
+		}
+	}
+
+	decision, policyErr := r.beforeTool(ctx, step, call, spec)
+	if policyErr != nil {
+		return toolCallOutcome{err: policyErr, fatal: policyErr}
+	}
+	if decision == Terminate {
+		return toolCallOutcome{err: ErrTerminated, fatal: ErrTerminated}
+	}
+	if decision != Allow {
+		// Deny, an unresolved Ask, and unknown decisions all fail closed.
+		message := toolErrorMessage(call, ErrToolDenied)
+		return toolCallOutcome{message: &message, err: ErrToolDenied}
+	}
+
+	if !found {
+		err := fmt.Errorf("agent: tool %q not found", call.Name)
+		if afterErr := r.afterTool(ctx, step, call, nil, err); afterErr != nil {
+			return toolCallOutcome{err: afterErr, fatal: afterErr}
+		}
+		message := toolErrorMessage(call, err)
+		return toolCallOutcome{message: &message, err: err}
+	}
+
+	r.toolCalls++
+	result, execErr := r.executeTool(ctx, impl, call)
+	if afterErr := r.afterTool(ctx, step, call, &result, execErr); afterErr != nil {
+		return toolCallOutcome{result: &result, err: afterErr, fatal: afterErr}
+	}
+	if execErr != nil {
+		message := toolErrorMessage(call, execErr)
+		return toolCallOutcome{result: &result, message: &message, err: execErr}
+	}
+
+	message, encodeErr := resultMessage(call, result)
+	if encodeErr != nil {
+		message = toolErrorMessage(call, encodeErr)
+	}
+	return toolCallOutcome{result: &result, message: &message, err: encodeErr}
 }
 
 func (r *runner) beforeTool(ctx context.Context, step int, call tool.Call, spec tool.Spec) (Decision, error) {

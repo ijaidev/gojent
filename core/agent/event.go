@@ -59,7 +59,7 @@ type MessageEnd struct {
 	Message *llm.Message
 }
 
-// ToolStart is emitted before a tool executes.
+// ToolStart is emitted before a tool call is evaluated.
 type ToolStart struct {
 	Step int
 	Call tool.Call
@@ -73,7 +73,8 @@ type ToolUpdate struct {
 	Progress string
 }
 
-// ToolEnd is emitted after a tool finishes, including denied or failed calls.
+// ToolEnd is emitted exactly once for every ToolStart, including denied,
+// failed, or policy-aborted calls.
 type ToolEnd struct {
 	Step    int
 	Call    tool.Call
