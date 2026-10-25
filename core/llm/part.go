@@ -2,77 +2,228 @@ package llm
 
 import "fmt"
 
-// PartType defines the category of content within a message part.
+// PartType identifies a concrete content part.
 type PartType string
 
 const (
-	// PartTypeText represents plain text content.
+	// PartTypeText is plain text.
 	PartTypeText PartType = "text"
-	// PartTypeImage represents image data (PNG, JPEG, WEBP, GIF, etc.).
-	PartTypeImage PartType = "image"
-	// PartTypeAudio represents audio recordings (WAV, MP3, etc.).
-	PartTypeAudio PartType = "audio"
-	// PartTypeVideo represents video recordings (MP4, WebM, etc.).
-	PartTypeVideo PartType = "video"
-	// PartTypeDocument represents document files (PDF, TXT, CSV, etc.).
-	PartTypeDocument PartType = "document"
+	// PartTypeReasoning is model reasoning or a reasoning summary.
+	PartTypeReasoning PartType = "reasoning"
+	// PartTypeFile is one media or document payload. MIMEType decides how
+	// providers encode it; there are no separate image/audio/video/document
+	// part types (D2, D3).
+	PartTypeFile PartType = "file"
+	// PartTypeToolCall is a model request to invoke a tool.
+	PartTypeToolCall PartType = "tool_call"
+	// PartTypeToolResult is the output of a tool invocation.
+	PartTypeToolResult PartType = "tool_result"
+	// PartTypeRefusal is a model refusal to answer.
+	PartTypeRefusal PartType = "refusal"
 )
 
-// Part represents an individual multimodal component of a message (text, image, audio, video, or document).
-type Part struct {
-	Type     PartType `json:"type"`
-	Text     string   `json:"text,omitempty"`
-	MIMEType string   `json:"mime_type,omitempty"`
-	Data     []byte   `json:"data,omitempty"`
-	URL      string   `json:"url,omitempty"`
+// Part is a closed sum type. The unexported method prevents implementations
+// outside this package. Unknown JSON part types fail closed (D1, D18).
+type Part interface {
+	PartType() PartType
+	Meta() *PartMeta
+	isPart()
 }
 
-// Validate checks that the part contains valid data for its declared type.
-func (p Part) Validate() error {
-	switch p.Type {
-	case PartTypeText:
-		if p.Text == "" {
-			return fmt.Errorf("%w: text part cannot be empty", ErrInvalidPart)
-		}
-		return nil
-	case PartTypeImage, PartTypeAudio, PartTypeVideo, PartTypeDocument:
-		if len(p.Data) == 0 && p.URL == "" {
-			return fmt.Errorf("%w: %s part must provide Data or URL", ErrInvalidPart, p.Type)
-		}
-		return nil
-	case "":
-		return fmt.Errorf("%w: part type cannot be empty", ErrInvalidPart)
+// PartMeta carries annotations shared by every part.
+type PartMeta struct {
+	// Provider holds per-part replay state keyed by provider. It annotates
+	// canonical content and never replaces it (D11).
+	Provider ProviderData `json:"provider,omitempty"`
+}
+
+// Set stores provider metadata, allocating the map when needed.
+func (m *PartMeta) Set(provider string, value any) error {
+	if m.Provider == nil {
+		m.Provider = make(ProviderData)
+	}
+	return m.Provider.Set(provider, value)
+}
+
+// Get decodes provider metadata into target.
+func (m *PartMeta) Get(provider string, target any) error {
+	return m.Provider.Get(provider, target)
+}
+
+// partBase supplies the JSON discriminator and shared metadata. It is
+// embedded by value so concrete parts can be marshaled directly.
+type partBase struct {
+	Type PartType `json:"type"`
+	PartMeta
+}
+
+// PartType returns the concrete part type.
+func (b partBase) PartType() PartType { return b.Type }
+
+// Meta returns the part's mutable metadata.
+func (b *partBase) Meta() *PartMeta { return &b.PartMeta }
+
+func (partBase) isPart() {}
+
+func (b partBase) validateType(want PartType) error {
+	if b.Type != want {
+		return fmt.Errorf("%w: type %q, want %q", ErrInvalidPart, b.Type, want)
+	}
+	return nil
+}
+
+// TextPart is canonical text.
+type TextPart struct {
+	partBase
+	Text string `json:"text"`
+}
+
+// NewTextPart creates a text part.
+func NewTextPart(text string) *TextPart {
+	return &TextPart{partBase: partBase{Type: PartTypeText}, Text: text}
+}
+
+func (p *TextPart) validate() error {
+	if err := p.partBase.validateType(PartTypeText); err != nil {
+		return err
+	}
+	if p.Text == "" {
+		return fmt.Errorf("%w: empty text", ErrInvalidPart)
+	}
+	return nil
+}
+
+// ReasoningPart is readable reasoning, a summary, or a redacted/encrypted
+// reasoning payload. Provider signatures, encrypted content, and item IDs live
+// in PartMeta.Provider under the provider key.
+type ReasoningPart struct {
+	partBase
+	Text     string   `json:"text,omitempty"`
+	Summary  []string `json:"summary,omitempty"`
+	Redacted bool     `json:"redacted,omitempty"`
+}
+
+// NewReasoningPart creates a reasoning part with readable text.
+func NewReasoningPart(text string) *ReasoningPart {
+	return &ReasoningPart{partBase: partBase{Type: PartTypeReasoning}, Text: text}
+}
+
+func (p *ReasoningPart) validate() error {
+	if err := p.partBase.validateType(PartTypeReasoning); err != nil {
+		return err
+	}
+	if p.Text == "" && !p.Redacted && len(p.Summary) == 0 && len(p.Provider) == 0 {
+		return fmt.Errorf("%w: empty reasoning", ErrInvalidPart)
+	}
+	return nil
+}
+
+// RefusalPart is an explicit model refusal.
+type RefusalPart struct {
+	partBase
+	Text string `json:"text"`
+}
+
+// NewRefusalPart creates a refusal part.
+func NewRefusalPart(text string) *RefusalPart {
+	return &RefusalPart{partBase: partBase{Type: PartTypeRefusal}, Text: text}
+}
+
+func (p *RefusalPart) validate() error {
+	if err := p.partBase.validateType(PartTypeRefusal); err != nil {
+		return err
+	}
+	if p.Text == "" {
+		return fmt.Errorf("%w: empty refusal", ErrInvalidPart)
+	}
+	return nil
+}
+
+// clonePart deep-copies one part. The type switch is exhaustive because Part
+// is sealed; an unknown implementation is a programming error.
+func clonePart(part Part) Part {
+	switch p := part.(type) {
+	case *TextPart:
+		clone := *p
+		clone.Provider = p.Provider.Clone()
+		return &clone
+	case *ReasoningPart:
+		clone := *p
+		clone.Summary = append([]string(nil), p.Summary...)
+		clone.Provider = p.Provider.Clone()
+		return &clone
+	case *FilePart:
+		clone := *p
+		clone.Data = append([]byte(nil), p.Data...)
+		clone.Provider = p.Provider.Clone()
+		return &clone
+	case *ToolCallPart:
+		clone := *p
+		clone.Input = append([]byte(nil), p.Input...)
+		clone.Provider = p.Provider.Clone()
+		return &clone
+	case *ToolResultPart:
+		clone := *p
+		clone.Content = cloneParts(p.Content)
+		clone.Structured = append([]byte(nil), p.Structured...)
+		clone.InputRequests = append([]byte(nil), p.InputRequests...)
+		clone.Provider = p.Provider.Clone()
+		return &clone
+	case *RefusalPart:
+		clone := *p
+		clone.Provider = p.Provider.Clone()
+		return &clone
 	default:
-		return fmt.Errorf("%w: %s", ErrUnsupportedPartType, p.Type)
+		panic(fmt.Sprintf("llm: unknown part implementation %T", part))
 	}
 }
 
-// TextPart creates a new text part.
-func TextPart(text string) Part {
-	return Part{Type: PartTypeText, Text: text}
+func cloneParts(parts []Part) []Part {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]Part, len(parts))
+	for i, part := range parts {
+		out[i] = clonePart(part)
+	}
+	return out
 }
 
-// ImageFromBytes creates an image part from raw bytes and an explicit MIME type.
-func ImageFromBytes(data []byte, mimeType string) Part {
-	return Part{Type: PartTypeImage, Data: data, MIMEType: mimeType}
+// validatePart runs type-specific validation.
+func validatePart(part Part) error {
+	switch p := part.(type) {
+	case *TextPart:
+		return p.validate()
+	case *ReasoningPart:
+		return p.validate()
+	case *FilePart:
+		return p.validate()
+	case *ToolCallPart:
+		return p.validate()
+	case *ToolResultPart:
+		return p.validate()
+	case *RefusalPart:
+		return p.validate()
+	default:
+		return fmt.Errorf("%w: %T", ErrInvalidPart, part)
+	}
 }
 
-// ImageFromURL creates an image part referencing a remote URL or data URI.
-func ImageFromURL(url string) Part {
-	return Part{Type: PartTypeImage, URL: url}
-}
-
-// AudioFromBytes creates an audio part from raw bytes and MIME type.
-func AudioFromBytes(data []byte, mimeType string) Part {
-	return Part{Type: PartTypeAudio, Data: data, MIMEType: mimeType}
-}
-
-// VideoFromBytes creates a video part from raw bytes and MIME type.
-func VideoFromBytes(data []byte, mimeType string) Part {
-	return Part{Type: PartTypeVideo, Data: data, MIMEType: mimeType}
-}
-
-// DocumentFromBytes creates a document part from raw bytes and MIME type.
-func DocumentFromBytes(data []byte, mimeType string) Part {
-	return Part{Type: PartTypeDocument, Data: data, MIMEType: mimeType}
+// validateToolResultContent restricts nested results to text and files.
+func validateToolResultContent(content []Part) error {
+	for i, part := range content {
+		switch p := part.(type) {
+		case *TextPart:
+			if err := p.validate(); err != nil {
+				return fmt.Errorf("content[%d]: %w", i, err)
+			}
+		case *FilePart:
+			if err := p.validate(); err != nil {
+				return fmt.Errorf("content[%d]: %w", i, err)
+			}
+		default:
+			return fmt.Errorf("%w: tool result content[%d] is %T, want text or file", ErrInvalidToolResult, i, part)
+		}
+	}
+	return nil
 }

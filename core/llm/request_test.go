@@ -2,54 +2,52 @@ package llm_test
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/ijaidev/gojent/core/llm"
 )
 
-func TestThinkingConfig_Clone(t *testing.T) {
+func TestReasoningConfig_Clone(t *testing.T) {
 	budget := 4096
-	includeThoughts := true
-	cfg := llm.ThinkingConfig{
-		Level:           llm.ThinkingLevelMedium,
+	include := true
+	config := llm.ReasoningConfig{
+		Level:           llm.ReasoningLevelMedium,
 		BudgetTokens:    &budget,
-		IncludeThoughts: &includeThoughts,
+		IncludeThoughts: &include,
 	}
-
-	cloned := cfg.Clone()
-	if cloned.Level != llm.ThinkingLevelMedium || *cloned.BudgetTokens != 4096 || *cloned.IncludeThoughts != true {
-		t.Fatalf("unexpected cloned config: %+v", cloned)
+	clone := config.Clone()
+	if clone.Level != llm.ReasoningLevelMedium || *clone.BudgetTokens != 4096 || !*clone.IncludeThoughts {
+		t.Fatalf("clone = %+v", clone)
 	}
-
-	// Mutating original should not affect clone
-	*cfg.BudgetTokens = 2048
-	if *cloned.BudgetTokens != 4096 {
-		t.Errorf("expected clone to be independent, got budget %d", *cloned.BudgetTokens)
+	*config.BudgetTokens = 2048
+	*config.IncludeThoughts = false
+	if *clone.BudgetTokens != 4096 || !*clone.IncludeThoughts {
+		t.Errorf("clone aliases original: %+v", clone)
 	}
 }
 
 func TestResponseFormat_Clone(t *testing.T) {
-	strict := true
-	rf := &llm.ResponseFormat{
+	format := &llm.ResponseFormat{
 		Type:   llm.ResponseFormatJSONSchema,
 		Name:   "TestSchema",
 		Schema: map[string]any{"type": "object"},
-		Strict: strict,
+		Strict: true,
 	}
-
-	cloned := rf.Clone()
-	if cloned.Type != llm.ResponseFormatJSONSchema || cloned.Name != "TestSchema" || !cloned.Strict {
-		t.Fatalf("unexpected cloned format: %+v", cloned)
+	clone := format.Clone()
+	if clone.Type != format.Type || clone.Name != format.Name || !clone.Strict {
+		t.Fatalf("clone = %+v", clone)
 	}
-
-	rf.Strict = false
-	if !cloned.Strict {
-		t.Errorf("expected clone strict to remain true, got %v", cloned.Strict)
+	format.Strict = false
+	format.Schema["type"] = "string"
+	if !clone.Strict || clone.Schema["type"] != "object" {
+		t.Errorf("clone aliases original: %+v", clone)
 	}
 }
 
 func TestRequest_CloneIsDeep(t *testing.T) {
 	budget := 1024
+	store := true
 	request := &llm.Request{
 		Messages: []llm.Message{llm.UserMessage("hello")},
 		Tools: []llm.ToolDefinition{{
@@ -58,19 +56,29 @@ func TestRequest_CloneIsDeep(t *testing.T) {
 				"type":       "object",
 				"properties": map[string]any{"value": map[string]any{"type": "string"}},
 			},
+			Provider: llm.ProviderData{"google": json.RawMessage(`{"mode":"a"}`)},
 		}},
-		Thinking:  &llm.ThinkingConfig{BudgetTokens: &budget},
-		StopWords: []string{"stop"},
-		Metadata:  map[string]string{"tenant": "a"},
+		State: llm.State{
+			Mode:       llm.StateModeServer,
+			PreviousID: "resp-1",
+			Store:      &store,
+			Provider:   llm.ProviderData{"openai": json.RawMessage(`{"x":1}`)},
+		},
+		Reasoning:       &llm.ReasoningConfig{BudgetTokens: &budget},
+		Stop:            []string{"stop"},
+		ProviderOptions: llm.ProviderData{"google": json.RawMessage(`{"y":2}`)},
 	}
 
 	clone := request.Clone()
-	clone.Messages[0].Content[0] = llm.TextPart("changed")
+	clone.Messages[0].Content[0].(*llm.TextPart).Text = "changed"
 	clone.Tools[0].Parameters["type"] = "string"
 	clone.Tools[0].Parameters["properties"].(map[string]any)["value"].(map[string]any)["type"] = "number"
-	*clone.Thinking.BudgetTokens = 2048
-	clone.StopWords[0] = "changed"
-	clone.Metadata["tenant"] = "b"
+	clone.Tools[0].Provider["google"] = json.RawMessage(`{"mode":"b"}`)
+	*clone.State.Store = false
+	clone.State.Provider["openai"] = json.RawMessage(`{"x":2}`)
+	*clone.Reasoning.BudgetTokens = 2048
+	clone.Stop[0] = "changed"
+	clone.ProviderOptions["google"] = json.RawMessage(`{"y":3}`)
 
 	if got := request.Messages[0].Text(); got != "hello" {
 		t.Errorf("message text = %q", got)
@@ -82,14 +90,48 @@ func TestRequest_CloneIsDeep(t *testing.T) {
 	if got := property["type"]; got != "string" {
 		t.Errorf("nested tool schema type = %v", got)
 	}
-	if *request.Thinking.BudgetTokens != 1024 {
-		t.Errorf("thinking budget = %d", *request.Thinking.BudgetTokens)
+	if string(request.Tools[0].Provider["google"]) != `{"mode":"a"}` {
+		t.Errorf("tool provider = %s", request.Tools[0].Provider["google"])
 	}
-	if request.StopWords[0] != "stop" {
-		t.Errorf("stop words = %v", request.StopWords)
+	if !*request.State.Store || string(request.State.Provider["openai"]) != `{"x":1}` {
+		t.Errorf("state = %+v", request.State)
 	}
-	if request.Metadata["tenant"] != "a" {
-		t.Errorf("metadata = %v", request.Metadata)
+	if *request.Reasoning.BudgetTokens != 1024 {
+		t.Errorf("budget = %d", *request.Reasoning.BudgetTokens)
+	}
+	if request.Stop[0] != "stop" {
+		t.Errorf("stop = %v", request.Stop)
+	}
+	if string(request.ProviderOptions["google"]) != `{"y":2}` {
+		t.Errorf("provider options = %s", request.ProviderOptions["google"])
+	}
+}
+
+func TestState_DefaultsToReplay(t *testing.T) {
+	var state llm.State
+	if state.EffectiveMode() != llm.StateModeReplay {
+		t.Errorf("mode = %q", state.EffectiveMode())
+	}
+	if err := state.Validate(); err != nil {
+		t.Errorf("Validate: %v", err)
+	}
+	invalid := llm.State{Mode: "cached"}
+	if err := invalid.Validate(); !errors.Is(err, llm.ErrUnsupported) {
+		t.Errorf("Validate = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestRequest_ValidateToolPairing(t *testing.T) {
+	request := &llm.Request{Messages: []llm.Message{
+		llm.UserMessage("hi"),
+		llm.AssistantMessageWithParts(llm.NewToolCallPart(llm.ToolCall{CallID: "a", Name: "x"})),
+	}}
+	if err := request.Validate(); err != nil {
+		t.Fatalf("trailing call should be valid: %v", err)
+	}
+	request.Messages = append(request.Messages, llm.UserMessage("no result"))
+	if err := request.Validate(); !errors.Is(err, llm.ErrInvalidMessage) {
+		t.Fatalf("Validate = %v, want ErrInvalidMessage", err)
 	}
 }
 
@@ -102,11 +144,11 @@ func TestRequest_ToolChoiceJSON(t *testing.T) {
 	}
 	var raw map[string]any
 	if err := json.Unmarshal(encoded, &raw); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
+		t.Fatal(err)
 	}
 	choice, ok := raw["tool_choice"].(map[string]any)
 	if !ok {
-		t.Fatalf("tool_choice = %v, want object", raw["tool_choice"])
+		t.Fatalf("tool_choice = %v", raw["tool_choice"])
 	}
 	if choice["mode"] != "required" || choice["name"] != "lookup" {
 		t.Errorf("tool_choice = %v", choice)
@@ -116,14 +158,14 @@ func TestRequest_ToolChoiceJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal empty: %v", err)
 	}
-	if len(empty) == 0 {
-		t.Fatal("empty request encoded as nothing")
-	}
 	var emptyRaw map[string]any
 	if err := json.Unmarshal(empty, &emptyRaw); err != nil {
-		t.Fatalf("Unmarshal empty: %v", err)
+		t.Fatal(err)
 	}
 	if _, present := emptyRaw["tool_choice"]; present {
 		t.Errorf("zero ToolChoice should be omitted, got %s", empty)
+	}
+	if _, present := emptyRaw["state"]; present {
+		t.Errorf("zero State should be omitted, got %s", empty)
 	}
 }

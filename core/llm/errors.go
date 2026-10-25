@@ -7,6 +7,24 @@ import (
 )
 
 var (
+	// ErrInvalidMessage is returned when a message has an invalid role, empty
+	// content, or content that is not allowed for its role.
+	ErrInvalidMessage = errors.New("llm: invalid message")
+	// ErrInvalidPart is returned when a part is missing required data or a
+	// part cannot be used in the current position.
+	ErrInvalidPart = errors.New("llm: invalid part")
+	// ErrUnknownPartType is returned when JSON contains a part type this
+	// version does not know. Decoding fails closed.
+	ErrUnknownPartType = errors.New("llm: unknown part type")
+	// ErrInvalidToolCall is returned when a tool call is missing its name,
+	// correlation ID, or valid JSON input.
+	ErrInvalidToolCall = errors.New("llm: invalid tool call")
+	// ErrInvalidToolResult is returned when a tool result is missing its call
+	// ID or contains content that is not allowed in a result.
+	ErrInvalidToolResult = errors.New("llm: invalid tool result")
+	// ErrUnsupported is returned when a provider cannot honor a request
+	// feature. Adapters must return it instead of silently degrading.
+	ErrUnsupported = errors.New("llm: unsupported feature")
 	// ErrUnsupportedPart is returned when a provider does not support a given
 	// message part.
 	ErrUnsupportedPart = errors.New("llm: unsupported part")
@@ -16,9 +34,15 @@ var (
 	// ErrUnsupportedMIMEType is returned when a provider does not support the
 	// MIME type of a part.
 	ErrUnsupportedMIMEType = errors.New("llm: unsupported mime type")
-	// ErrInvalidPart is returned when a part is missing required data, a URI,
-	// or text.
-	ErrInvalidPart = errors.New("llm: invalid part")
+	// ErrNoProviderData is returned when provider metadata is absent or the
+	// map was nil while writing.
+	ErrNoProviderData = errors.New("llm: no provider data")
+	// ErrUnsupportedFormatVersion is returned when persisted JSON was written
+	// by an incompatible message-model version.
+	ErrUnsupportedFormatVersion = errors.New("llm: unsupported format version")
+	// ErrStreamClosed is returned when an operation is attempted on an
+	// already closed stream.
+	ErrStreamClosed = errors.New("llm: stream is closed")
 )
 
 // Kind classifies a model failure. Callers should branch on Kind, never on

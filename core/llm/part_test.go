@@ -1,6 +1,7 @@
 package llm_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,49 +9,102 @@ import (
 	"github.com/ijaidev/gojent/core/llm"
 )
 
-func TestPart_FromFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	filePath := filepath.Join(tmpDir, "test.png")
-	data := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
-	if err := os.WriteFile(filePath, data, 0o600); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
+func TestFilePart_Constructors(t *testing.T) {
+	tests := []struct {
+		name string
+		part *llm.FilePart
+	}{
+		{"bytes", llm.FileFromBytes([]byte("data"), "image/png")},
+		{"url", llm.FileFromURL("https://example.com/a.png", "image/png")},
+		{"id", llm.FileFromID("file-1", "application/pdf")},
 	}
-
-	part, err := llm.ImageFromFile(filePath)
-	if err != nil {
-		t.Fatalf("ImageFromFile failed: %v", err)
-	}
-	if part.Type != llm.PartTypeImage || len(part.Data) != len(data) {
-		t.Errorf("unexpected part: %+v", part)
-	}
-	if part.MIMEType != "image/png" {
-		t.Errorf("expected mime image/png, got %s", part.MIMEType)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.part.PartType() != llm.PartTypeFile {
+				t.Errorf("type = %q", tt.part.PartType())
+			}
+			msg := llm.UserMessageWithParts(tt.part)
+			if err := msg.Validate(); err != nil {
+				t.Errorf("Validate: %v", err)
+			}
+		})
 	}
 }
 
-func TestPart_Validate(t *testing.T) {
-	// Valid text
-	if err := llm.TextPart("hello").Validate(); err != nil {
-		t.Errorf("unexpected error for valid text part: %v", err)
-	}
+func TestFilePart_Validate(t *testing.T) {
+	twoSources := llm.FileFromBytes([]byte("x"), "image/png")
+	twoSources.URL = "https://example.com/a.png"
 
-	// Empty text
-	if err := (llm.Part{Type: llm.PartTypeText}).Validate(); err == nil {
-		t.Error("expected error for empty text part")
+	tests := []struct {
+		name string
+		part *llm.FilePart
+	}{
+		{"missing mime", llm.FileFromBytes([]byte("x"), "")},
+		{"bad mime", llm.FileFromBytes([]byte("x"), "not a mime")},
+		{"no source", llm.FileFromBytes(nil, "image/png")},
+		{"two sources", twoSources},
 	}
-
-	// Valid image bytes
-	if err := llm.ImageFromBytes([]byte{1, 2, 3}, "image/png").Validate(); err != nil {
-		t.Errorf("unexpected error for valid image part: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := llm.UserMessageWithParts(tt.part).Validate()
+			if !errors.Is(err, llm.ErrInvalidPart) {
+				t.Fatalf("Validate = %v, want ErrInvalidPart", err)
+			}
+		})
 	}
+}
 
-	// Invalid empty media part
-	if err := (llm.Part{Type: llm.PartTypeImage}).Validate(); err == nil {
-		t.Error("expected error for empty image part")
+func TestFileFromFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sample.png")
+	// Minimal PNG header; MIME detection uses the extension first.
+	data := []byte("\x89PNG\r\n\x1a\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
 	}
+	part, err := llm.FileFromFile(path)
+	if err != nil {
+		t.Fatalf("FileFromFile: %v", err)
+	}
+	if part.MIMEType != "image/png" {
+		t.Errorf("MIME = %q", part.MIMEType)
+	}
+	if part.Filename != "sample.png" {
+		t.Errorf("filename = %q", part.Filename)
+	}
+	if string(part.Data) != string(data) {
+		t.Errorf("data = %q", part.Data)
+	}
+	if err := llm.UserMessageWithParts(part).Validate(); err != nil {
+		t.Errorf("Validate: %v", err)
+	}
+}
 
-	// Invalid part type
-	if err := (llm.Part{Type: "unknown"}).Validate(); err == nil {
-		t.Error("expected error for unknown part type")
+func TestReasoningPart_Validate(t *testing.T) {
+	summary := llm.NewReasoningPart("")
+	summary.Summary = []string{"step"}
+	redacted := llm.NewReasoningPart("")
+	redacted.Redacted = true
+	valid := []*llm.ReasoningPart{
+		llm.NewReasoningPart("thought"),
+		summary,
+		redacted,
+	}
+	for i, part := range valid {
+		if err := llm.AssistantMessageWithParts(part).Validate(); err != nil {
+			t.Errorf("valid[%d]: %v", i, err)
+		}
+	}
+	if err := llm.AssistantMessageWithParts(llm.NewReasoningPart("")).Validate(); !errors.Is(err, llm.ErrInvalidPart) {
+		t.Errorf("empty reasoning = %v, want ErrInvalidPart", err)
+	}
+}
+
+func TestRefusalPart_Validate(t *testing.T) {
+	if err := llm.AssistantMessageWithParts(llm.NewRefusalPart("no")).Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if err := llm.AssistantMessageWithParts(llm.NewRefusalPart("")).Validate(); !errors.Is(err, llm.ErrInvalidPart) {
+		t.Fatalf("empty refusal = %v, want ErrInvalidPart", err)
 	}
 }

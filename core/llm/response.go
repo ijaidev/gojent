@@ -14,7 +14,8 @@ const (
 	FinishReasonContentFilter FinishReason = "content_filter"
 )
 
-// Usage contains token consumption statistics.
+// Usage contains token consumption statistics. Usage is the terminal snapshot
+// a provider reports; it is never summed across streaming chunks.
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
@@ -23,24 +24,22 @@ type Usage struct {
 	CachedTokens     int `json:"cached_tokens,omitempty"`
 }
 
-// Add returns the sum of two usages.
-func (u Usage) Add(other Usage) Usage {
-	return Usage{
-		PromptTokens:     u.PromptTokens + other.PromptTokens,
-		CompletionTokens: u.CompletionTokens + other.CompletionTokens,
-		TotalTokens:      u.TotalTokens + other.TotalTokens,
-		ReasoningTokens:  u.ReasoningTokens + other.ReasoningTokens,
-		CachedTokens:     u.CachedTokens + other.CachedTokens,
-	}
-}
-
 // Response is one complete model response.
 type Response struct {
-	// Message is the canonical assistant message. Its Content, ToolCalls, and
-	// ProviderData are authoritative.
+	// ID is the provider response identifier.
+	ID string `json:"id,omitempty"`
+	// Model is the provider model identifier.
+	Model string `json:"model,omitempty"`
+	// Message is the canonical assistant message.
 	Message Message `json:"message"`
-	// FinishReason explains why generation ended.
+	// Status reports provider message status.
+	Status MessageStatus `json:"status,omitempty"`
+	// FinishReason is the normalized terminal reason.
 	FinishReason FinishReason `json:"finish_reason"`
-	// Usage reports token consumption for this call.
+	// RawFinishReason is the provider's original reason string.
+	RawFinishReason string `json:"raw_finish_reason,omitempty"`
+	// Usage is the terminal token snapshot.
 	Usage Usage `json:"usage"`
+	// Provider carries message-level provider metadata.
+	Provider ProviderData `json:"provider,omitempty"`
 }

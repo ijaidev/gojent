@@ -1,19 +1,72 @@
 package llm
 
+import "fmt"
+
+// StateMode selects how a request references prior model state.
+type StateMode string
+
+const (
+	// StateModeReplay sends the full canonical transcript on every call.
+	StateModeReplay StateMode = "replay"
+	// StateModeServer lets the provider keep state and sends only new input.
+	StateModeServer StateMode = "server"
+)
+
+// State describes conversation state handling. The zero value is replay mode;
+// server state is always explicit, never inferred from PreviousID (D13).
+type State struct {
+	// Mode is replay (default) or server.
+	Mode StateMode `json:"mode,omitempty"`
+	// PreviousID is the provider response or interaction ID to continue from.
+	PreviousID string `json:"previous_id,omitempty"`
+	// Store asks the provider to retain this response when supported.
+	Store *bool `json:"store,omitempty"`
+	// Provider carries adapter-specific state options.
+	Provider ProviderData `json:"provider,omitempty"`
+}
+
+// EffectiveMode returns Mode, defaulting to replay.
+func (s State) EffectiveMode() StateMode {
+	if s.Mode == "" {
+		return StateModeReplay
+	}
+	return s.Mode
+}
+
+// Validate checks the mode.
+func (s State) Validate() error {
+	switch s.EffectiveMode() {
+	case StateModeReplay, StateModeServer:
+		return nil
+	default:
+		return fmt.Errorf("%w: state mode %q", ErrUnsupported, s.Mode)
+	}
+}
+
 // Request contains the provider-neutral input for one model call.
 type Request struct {
-	Messages       []Message        `json:"messages"`
-	Tools          []ToolDefinition `json:"tools,omitempty"`
-	ToolChoice     ToolChoice       `json:"tool_choice,omitzero"`
-	Thinking       *ThinkingConfig  `json:"thinking,omitempty"`
-	ResponseFormat *ResponseFormat  `json:"response_format,omitempty"`
-	Temperature    *float64         `json:"temperature,omitempty"`
-	MaxTokens      *int             `json:"max_tokens,omitempty"`
-	TopP           *float64         `json:"top_p,omitempty"`
-	StopWords      []string         `json:"stop_words,omitempty"`
-	// Metadata is passed to the provider when supported (for example OpenAI's
-	// user field). It is never sent to the model as content.
-	Metadata map[string]string `json:"metadata,omitempty"`
+	Messages        []Message        `json:"messages,omitempty"`
+	Tools           []ToolDefinition `json:"tools,omitempty"`
+	ToolChoice      ToolChoice       `json:"tool_choice,omitzero"`
+	State           State            `json:"state,omitzero"`
+	Reasoning       *ReasoningConfig `json:"reasoning,omitempty"`
+	ResponseFormat  *ResponseFormat  `json:"response_format,omitempty"`
+	Temperature     *float64         `json:"temperature,omitempty"`
+	MaxTokens       *int             `json:"max_tokens,omitempty"`
+	TopP            *float64         `json:"top_p,omitempty"`
+	Stop            []string         `json:"stop,omitempty"`
+	ProviderOptions ProviderData     `json:"provider_options,omitempty"`
+}
+
+// Validate checks state and cross-message tool pairing.
+func (r *Request) Validate() error {
+	if r == nil {
+		return fmt.Errorf("%w: nil request", ErrInvalidMessage)
+	}
+	if err := r.State.Validate(); err != nil {
+		return err
+	}
+	return ValidateTranscript(r.Messages)
 }
 
 // Clone returns a deep copy of the request.
@@ -23,31 +76,42 @@ func (r *Request) Clone() *Request {
 	}
 	clone := *r
 	clone.Messages = CloneMessages(r.Messages)
-	clone.Tools = make([]ToolDefinition, len(r.Tools))
-	for i, definition := range r.Tools {
-		clone.Tools[i] = definition
-		clone.Tools[i].Parameters = cloneSchema(definition.Parameters)
-	}
-	clone.Thinking = r.Thinking.Clone()
+	clone.Tools = cloneToolDefinitions(r.Tools)
+	clone.State = r.State.clone()
+	clone.Reasoning = r.Reasoning.Clone()
 	clone.ResponseFormat = r.ResponseFormat.Clone()
-	if r.MaxTokens != nil {
-		v := *r.MaxTokens
-		clone.MaxTokens = &v
+	clone.Temperature = clonePtr(r.Temperature)
+	clone.MaxTokens = clonePtr(r.MaxTokens)
+	clone.TopP = clonePtr(r.TopP)
+	clone.Stop = append([]string(nil), r.Stop...)
+	clone.ProviderOptions = r.ProviderOptions.Clone()
+	return &clone
+}
+
+func (s State) clone() State {
+	clone := s
+	clone.Store = clonePtr(s.Store)
+	clone.Provider = s.Provider.Clone()
+	return clone
+}
+
+func cloneToolDefinitions(definitions []ToolDefinition) []ToolDefinition {
+	if len(definitions) == 0 {
+		return nil
 	}
-	if r.Temperature != nil {
-		v := *r.Temperature
-		clone.Temperature = &v
+	out := make([]ToolDefinition, len(definitions))
+	for i, definition := range definitions {
+		out[i] = definition
+		out[i].Parameters = cloneSchema(definition.Parameters)
+		out[i].Provider = definition.Provider.Clone()
 	}
-	if r.TopP != nil {
-		v := *r.TopP
-		clone.TopP = &v
+	return out
+}
+
+func clonePtr[T any](value *T) *T {
+	if value == nil {
+		return nil
 	}
-	clone.StopWords = append([]string(nil), r.StopWords...)
-	if r.Metadata != nil {
-		clone.Metadata = make(map[string]string, len(r.Metadata))
-		for k, v := range r.Metadata {
-			clone.Metadata[k] = v
-		}
-	}
+	clone := *value
 	return &clone
 }

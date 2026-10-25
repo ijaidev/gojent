@@ -38,6 +38,8 @@ type testStreamer struct{}
 
 func (testStreamer) ModelID() string { return "test" }
 
+func (testStreamer) Info() llm.Info { return llm.Info{Provider: "test", Model: "test"} }
+
 func (testStreamer) Generate(context.Context, *llm.Request) (*llm.Response, error) {
 	return nil, nil
 }
