@@ -126,6 +126,49 @@ func TestMessage_JSONRoundTripReplayState(t *testing.T) {
 	}
 }
 
+func TestMessage_JSONWireShape(t *testing.T) {
+	message := llm.Message{
+		Role:       llm.RoleTool,
+		Content:    []llm.Part{llm.TextPart("hello"), llm.TextPart("")},
+		Thinking:   "reasoning",
+		Name:       "lookup",
+		ToolCalls:  []llm.ToolCall{{ID: "call-1", Name: "lookup", Arguments: `{"q":"go"}`}},
+		ToolCallID: "call-1",
+		IsError:    true,
+		Data:       json.RawMessage(`{"ok":true}`),
+		ProviderData: &llm.ProviderData{
+			Provider: "test",
+			Version:  2,
+			Data:     json.RawMessage(`{"signature":"xyz"}`),
+		},
+	}
+
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	want := `{"role":"tool","content":[{"type":"text","text":"hello"}],"thinking":"reasoning","name":"lookup","tool_calls":[{"id":"call-1","name":"lookup","arguments":"{\"q\":\"go\"}"}],"tool_call_id":"call-1","is_error":true,"data":{"ok":true},"provider_data":{"provider":"test","version":2,"data":{"signature":"xyz"}}}`
+	if got := string(encoded); got != want {
+		t.Errorf("wire JSON = %s\nwant       %s", got, want)
+	}
+
+	var decoded llm.Message
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if decoded.Role != message.Role ||
+		decoded.Text() != "hello" ||
+		decoded.Thinking != message.Thinking ||
+		decoded.Name != message.Name ||
+		len(decoded.ToolCalls) != 1 || decoded.ToolCalls[0].ID != "call-1" ||
+		decoded.ToolCallID != message.ToolCallID ||
+		!decoded.IsError ||
+		string(decoded.Data) != `{"ok":true}` ||
+		decoded.ProviderData == nil || decoded.ProviderData.Provider != "test" {
+		t.Errorf("round trip = %+v", decoded)
+	}
+}
+
 func TestProviderData_CloneIsIndependent(t *testing.T) {
 	original := &llm.ProviderData{Provider: "test", Data: []byte(`{"a":1}`)}
 	clone := original.Clone()

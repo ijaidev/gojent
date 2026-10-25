@@ -113,22 +113,35 @@ func CloneMessages(messages []Message) []Message {
 	return out
 }
 
+// wireMessage is the persisted JSON shape of Message. Content stays raw while
+// decoding so older string content remains readable; MarshalJSON pre-encodes
+// the canonical parts into the same field.
+type wireMessage struct {
+	Role         Role            `json:"role"`
+	Content      json.RawMessage `json:"content,omitempty"`
+	Thinking     string          `json:"thinking,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	ToolCalls    []ToolCall      `json:"tool_calls,omitempty"`
+	ToolCallID   string          `json:"tool_call_id,omitempty"`
+	IsError      bool            `json:"is_error,omitempty"`
+	Data         json.RawMessage `json:"data,omitempty"`
+	ProviderData *ProviderData   `json:"provider_data,omitempty"`
+}
+
 // MarshalJSON omits empty text parts so persisted transcripts always replay.
 func (m Message) MarshalJSON() ([]byte, error) {
-	type wireMessage struct {
-		Role         Role            `json:"role"`
-		Content      []Part          `json:"content,omitempty"`
-		Thinking     string          `json:"thinking,omitempty"`
-		Name         string          `json:"name,omitempty"`
-		ToolCalls    []ToolCall      `json:"tool_calls,omitempty"`
-		ToolCallID   string          `json:"tool_call_id,omitempty"`
-		IsError      bool            `json:"is_error,omitempty"`
-		Data         json.RawMessage `json:"data,omitempty"`
-		ProviderData *ProviderData   `json:"provider_data,omitempty"`
+	parts := NonEmptyParts(m.Content)
+	var content json.RawMessage
+	if len(parts) > 0 {
+		encoded, err := json.Marshal(parts)
+		if err != nil {
+			return nil, err
+		}
+		content = encoded
 	}
 	return json.Marshal(wireMessage{
 		Role:         m.Role,
-		Content:      NonEmptyParts(m.Content),
+		Content:      content,
 		Thinking:     m.Thinking,
 		Name:         m.Name,
 		ToolCalls:    m.ToolCalls,
@@ -141,17 +154,6 @@ func (m Message) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON accepts either string content or an array of parts.
 func (m *Message) UnmarshalJSON(data []byte) error {
-	type wireMessage struct {
-		Role         Role            `json:"role"`
-		Content      json.RawMessage `json:"content"`
-		Thinking     string          `json:"thinking,omitempty"`
-		Name         string          `json:"name,omitempty"`
-		ToolCalls    []ToolCall      `json:"tool_calls,omitempty"`
-		ToolCallID   string          `json:"tool_call_id,omitempty"`
-		IsError      bool            `json:"is_error,omitempty"`
-		Data         json.RawMessage `json:"data,omitempty"`
-		ProviderData *ProviderData   `json:"provider_data,omitempty"`
-	}
 	var raw wireMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
