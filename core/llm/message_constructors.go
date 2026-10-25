@@ -53,8 +53,8 @@ func ToolErrorMessage(callID, content string) Message {
 // message, in the given order (D5, D17).
 func ToolResultsMessage(results ...ToolResult) Message {
 	parts := make([]Part, 0, len(results))
-	for _, result := range results {
-		parts = append(parts, NewToolResultPart(result))
+	for index := range results {
+		parts = append(parts, NewToolResultPart(results[index]))
 	}
 	return Message{Role: RoleUser, Content: NonEmptyParts(parts)}
 }

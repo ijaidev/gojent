@@ -75,14 +75,14 @@ func detectMIMEType(path string, data []byte) string {
 }
 
 func (p *FilePart) validate() error {
-	if err := p.partBase.validateType(PartTypeFile); err != nil {
+	if err := p.validateType(PartTypeFile); err != nil {
 		return err
 	}
 	if p.MIMEType == "" {
 		return fmt.Errorf("%w: file is missing a MIME type", ErrInvalidPart)
 	}
 	if _, _, err := mime.ParseMediaType(p.MIMEType); err != nil {
-		return fmt.Errorf("%w: invalid MIME type %q: %v", ErrInvalidPart, p.MIMEType, err)
+		return fmt.Errorf("%w: invalid MIME type %q: %w", ErrInvalidPart, p.MIMEType, err)
 	}
 	sources := 0
 	if len(p.Data) > 0 {

@@ -169,7 +169,8 @@ func ValidateTranscript(messages []Message) error {
 			if message.Role != RoleUser {
 				return fmt.Errorf("message %d: %w: unresolved tool calls before %s message", i, ErrInvalidMessage, message.Role)
 			}
-			for _, result := range results {
+			for resultIndex := range results {
+				result := &results[resultIndex]
 				call, ok := pending[result.CallID]
 				if !ok {
 					return fmt.Errorf("message %d: %w: tool result for unknown call %q", i, ErrInvalidMessage, result.CallID)

@@ -202,7 +202,7 @@ func NewToolCallPart(call ToolCall) *ToolCallPart {
 }
 
 func (p *ToolCallPart) validate() error {
-	if err := p.partBase.validateType(PartTypeToolCall); err != nil {
+	if err := p.validateType(PartTypeToolCall); err != nil {
 		return err
 	}
 	return p.ToolCall.validate()
@@ -260,7 +260,7 @@ func (p *ToolResultPart) UnmarshalJSON(data []byte) error {
 }
 
 func (p *ToolResultPart) validate() error {
-	if err := p.partBase.validateType(PartTypeToolResult); err != nil {
+	if err := p.validateType(PartTypeToolResult); err != nil {
 		return err
 	}
 	return p.ToolResult.validate()

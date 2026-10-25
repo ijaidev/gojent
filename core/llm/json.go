@@ -33,7 +33,7 @@ func decodePart(raw json.RawMessage) (Part, error) {
 		Type PartType `json:"type"`
 	}
 	if err := json.Unmarshal(raw, &header); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidPart, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidPart, err)
 	}
 
 	var part Part

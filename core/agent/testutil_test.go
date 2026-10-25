@@ -235,7 +235,9 @@ func assertNoDanglingToolCalls(t *testing.T, messages []llm.Message) {
 				pending[call.CallID] = true
 			}
 		}
-		for _, result := range msg.ToolResults() {
+		results := msg.ToolResults()
+		for resultIndex := range results {
+			result := &results[resultIndex]
 			if !pending[result.CallID] {
 				t.Fatalf("message %d has a result for unknown call ID %q", index, result.CallID)
 			}

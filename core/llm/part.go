@@ -84,7 +84,7 @@ func NewTextPart(text string) *TextPart {
 }
 
 func (p *TextPart) validate() error {
-	if err := p.partBase.validateType(PartTypeText); err != nil {
+	if err := p.validateType(PartTypeText); err != nil {
 		return err
 	}
 	if p.Text == "" {
@@ -109,7 +109,7 @@ func NewReasoningPart(text string) *ReasoningPart {
 }
 
 func (p *ReasoningPart) validate() error {
-	if err := p.partBase.validateType(PartTypeReasoning); err != nil {
+	if err := p.validateType(PartTypeReasoning); err != nil {
 		return err
 	}
 	if p.Text == "" && !p.Redacted && len(p.Summary) == 0 && len(p.Provider) == 0 {
@@ -130,7 +130,7 @@ func NewRefusalPart(text string) *RefusalPart {
 }
 
 func (p *RefusalPart) validate() error {
-	if err := p.partBase.validateType(PartTypeRefusal); err != nil {
+	if err := p.validateType(PartTypeRefusal); err != nil {
 		return err
 	}
 	if p.Text == "" {

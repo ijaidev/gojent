@@ -1,6 +1,7 @@
 package llm_test
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -72,7 +73,7 @@ func TestFileFromFile(t *testing.T) {
 	if part.Filename != "sample.png" {
 		t.Errorf("filename = %q", part.Filename)
 	}
-	if string(part.Data) != string(data) {
+	if !bytes.Equal(part.Data, data) {
 		t.Errorf("data = %q", part.Data)
 	}
 	if err := llm.UserMessageWithParts(part).Validate(); err != nil {

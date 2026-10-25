@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -98,23 +99,32 @@ func runNonStreaming(ctx context.Context) error {
 			turn++
 			if turn == 1 {
 				usage := llm.Usage{PromptTokens: 25, CompletionTokens: 15, TotalTokens: 40}
-				return llm.NewSliceStream(ctx, []*llm.StreamChunk{
-					{
-						ToolCalls: []llm.ToolCall{{
-							Index:     0,
-							ID:        "call_calc",
-							Name:      "calculator",
-							Arguments: `{"operation":"multiply","a":42,"b":7}`,
-						}},
+				return llm.NewSliceStream(ctx, []llm.StreamEvent{
+					llm.MessageStart{Model: "mock-llm"},
+					llm.PartStart{Index: 0, Part: llm.NewToolCallPart(llm.ToolCall{
+						CallID: "call_calc",
+						Name:   "calculator",
+						Input:  json.RawMessage(`{"operation":"multiply","a":42,"b":7}`),
+					})},
+					llm.PartEnd{Index: 0},
+					llm.MessageEnd{
+						Status:       llm.MessageStatusCompleted,
 						FinishReason: llm.FinishReasonTool,
-						Usage:        &usage,
+						Usage:        usage,
 					},
 				}), nil
 			}
 			usage := llm.Usage{PromptTokens: 45, CompletionTokens: 10, TotalTokens: 55}
-			return llm.NewSliceStream(ctx, []*llm.StreamChunk{
-				{Delta: "42 multiplied by 7 is 294."},
-				{FinishReason: llm.FinishReasonStop, Usage: &usage},
+			return llm.NewSliceStream(ctx, []llm.StreamEvent{
+				llm.MessageStart{Model: "mock-llm"},
+				llm.PartStart{Index: 0, Part: llm.NewTextPart("")},
+				llm.PartDelta{Index: 0, Kind: llm.PartTypeText, Text: "42 multiplied by 7 is 294."},
+				llm.PartEnd{Index: 0},
+				llm.MessageEnd{
+					Status:       llm.MessageStatusCompleted,
+					FinishReason: llm.FinishReasonStop,
+					Usage:        usage,
+				},
 			}), nil
 		}),
 	)
@@ -142,14 +152,21 @@ func runNonStreaming(ctx context.Context) error {
 		message := &response.Messages[i]
 		switch message.Role {
 		case llm.RoleAssistant:
-			if len(message.ToolCalls) > 0 {
-				call := message.ToolCalls[0]
-				fmt.Printf("  %d assistant -> %s(%s)\n", i+1, call.Name, call.Arguments)
+			if calls := message.ToolCalls(); len(calls) > 0 {
+				call := calls[0]
+				fmt.Printf("  %d assistant -> %s(%s)\n", i+1, call.Name, call.Input)
 			} else {
 				fmt.Printf("  %d assistant -> %s\n", i+1, message.Text())
 			}
-		case llm.RoleTool:
-			fmt.Printf("  %d tool %s -> %s\n", i+1, message.Name, message.Text())
+		case llm.RoleUser:
+			if results := message.ToolResults(); len(results) > 0 {
+				for resultIndex := range results {
+					result := &results[resultIndex]
+					fmt.Printf("  %d tool %s -> %s\n", i+1, result.Name, result.Text())
+				}
+				continue
+			}
+			fmt.Printf("  %d %s -> %s\n", i+1, message.Role, message.Text())
 		default:
 			fmt.Printf("  %d %s -> %s\n", i+1, message.Role, message.Text())
 		}
@@ -167,17 +184,43 @@ func runStreaming(ctx context.Context) error {
 			turn++
 			usage := llm.Usage{PromptTokens: 45, CompletionTokens: 10, TotalTokens: 55}
 			if turn == 1 {
-				return llm.NewSliceStream(ctx, []*llm.StreamChunk{
-					{ToolCalls: []llm.ToolCall{{Index: 0, ID: "call_weather", Name: "get_weather", Arguments: `{"city":"`}}},
-					{ToolCalls: []llm.ToolCall{{Index: 0, Arguments: `Tokyo",`}}},
-					{ToolCalls: []llm.ToolCall{{Index: 0, Arguments: `"units":"celsius"}`}}, FinishReason: llm.FinishReasonTool, Usage: &usage},
+				return llm.NewSliceStream(ctx, []llm.StreamEvent{
+					llm.MessageStart{Model: "mock-llm"},
+					llm.PartStart{Index: 0, Part: llm.NewToolCallPart(llm.ToolCall{
+						CallID: "call_weather",
+						Name:   "get_weather",
+					})},
+					llm.PartDelta{Index: 0, Kind: llm.PartTypeToolCall, Call: &llm.ToolCallDelta{
+						CallID:        "call_weather",
+						Name:          "get_weather",
+						InputFragment: `{"city":"`,
+					}},
+					llm.PartDelta{Index: 0, Kind: llm.PartTypeToolCall, Call: &llm.ToolCallDelta{
+						InputFragment: `Tokyo",`,
+					}},
+					llm.PartDelta{Index: 0, Kind: llm.PartTypeToolCall, Call: &llm.ToolCallDelta{
+						InputFragment: `"units":"celsius"}`,
+					}},
+					llm.PartEnd{Index: 0},
+					llm.MessageEnd{
+						Status:       llm.MessageStatusCompleted,
+						FinishReason: llm.FinishReasonTool,
+						Usage:        usage,
+					},
 				}), nil
 			}
-			return llm.NewSliceStream(ctx, []*llm.StreamChunk{
-				{Delta: "The current "},
-				{Delta: "weather in Tokyo is "},
-				{Delta: "21.5°C and sunny."},
-				{FinishReason: llm.FinishReasonStop, Usage: &usage},
+			return llm.NewSliceStream(ctx, []llm.StreamEvent{
+				llm.MessageStart{Model: "mock-llm"},
+				llm.PartStart{Index: 0, Part: llm.NewTextPart("")},
+				llm.PartDelta{Index: 0, Kind: llm.PartTypeText, Text: "The current "},
+				llm.PartDelta{Index: 0, Kind: llm.PartTypeText, Text: "weather in Tokyo is "},
+				llm.PartDelta{Index: 0, Kind: llm.PartTypeText, Text: "21.5°C and sunny."},
+				llm.PartEnd{Index: 0},
+				llm.MessageEnd{
+					Status:       llm.MessageStatusCompleted,
+					FinishReason: llm.FinishReasonStop,
+					Usage:        usage,
+				},
 			}), nil
 		}),
 	)
@@ -223,7 +266,7 @@ func runStreaming(ctx context.Context) error {
 	}
 	fmt.Printf("\n[finish] %s | total tokens: %d\n", response.FinishReason, response.Usage.TotalTokens)
 	for _, call := range response.ToolCalls {
-		fmt.Printf("  invoked %s with %s\n", call.Name, call.Arguments)
+		fmt.Printf("  invoked %s with %s\n", call.Name, call.Input)
 	}
 	return nil
 }
