@@ -2,11 +2,26 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"runtime/debug"
 
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/tool"
 )
+
+// PanicError converts a recovered panic into an error.
+type PanicError struct {
+	Value any
+	Stack []byte
+}
+
+// Error implements the error interface.
+func (e *PanicError) Error() string {
+	if e == nil {
+		return "agent: panic: <nil>"
+	}
+	return fmt.Sprintf("agent: panic: %v", e.Value)
+}
 
 // safeEmit protects the run from a sink that panics.
 func safeEmit(sink Sink, event Event) {

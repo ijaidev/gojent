@@ -12,14 +12,16 @@ import (
 	"github.com/ijaidev/gojent/core/llm"
 )
 
-// runner is one agent execution. opts is the normalized run configuration and
-// tools is the merged agent and per-run tool set; everything else is mutable
-// state for this run. It stays private so Agent remains the public execution
-// surface.
+// runner is one agent execution. name and instructions are snapshotted from the
+// agent so the loop does not depend on Agent; opts is the normalized run
+// configuration and tools is the merged agent and per-run tool set. Everything
+// else is mutable state for this run. It stays private so Agent remains the
+// public execution surface.
 type runner struct {
-	agent *Agent
-	opts  RunOptions
-	tools *toolRegistry
+	name         string
+	instructions string
+	opts         RunOptions
+	tools        *toolRegistry
 
 	usage      llm.Usage
 	calls      []llm.ToolCall
@@ -52,10 +54,11 @@ func newRunner(a *Agent, opts RunOptions) (*runner, error) {
 		}
 	}
 	return &runner{
-		agent:      a,
-		opts:       opts,
-		tools:      newToolRegistry(a.Tools(), opts.Tools),
-		usedCallID: make(map[string]bool),
+		name:         a.Name(),
+		instructions: a.Instructions(),
+		opts:         opts,
+		tools:        newToolRegistry(a.Tools(), opts.Tools),
+		usedCallID:   make(map[string]bool),
 	}, nil
 }
 
@@ -64,7 +67,7 @@ func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response,
 	started := time.Now()
 	runID := newRunID()
 	emit := func(event Event) { safeEmit(r.opts.Sink, event) }
-	emit(RunStart{RunID: runID, Agent: r.agent.Name(), Session: cloneSession(r.opts.Session), At: started})
+	emit(RunStart{RunID: runID, Agent: r.name, Session: cloneSession(r.opts.Session), At: started})
 	defer func() {
 		emit(RunEnd{Response: resp, Err: err})
 	}()
@@ -184,8 +187,8 @@ func (r *runner) append(ctx context.Context, messages ...llm.Message) error {
 
 func (r *runner) request(conversation []llm.Message) *llm.Request {
 	messages := make([]llm.Message, 0, len(conversation)+1)
-	if instructions := r.agent.Instructions(); instructions != "" {
-		messages = append(messages, llm.SystemMessage(instructions))
+	if r.instructions != "" {
+		messages = append(messages, llm.SystemMessage(r.instructions))
 	}
 	for i := range conversation {
 		message := conversation[i].Clone()
@@ -233,8 +236,8 @@ func (r *runner) response(conversation []llm.Message, finish llm.FinishReason) *
 		break
 	}
 	display := make([]llm.Message, 0, len(conversation)+1)
-	if instructions := r.agent.Instructions(); instructions != "" {
-		display = append(display, llm.SystemMessage(instructions))
+	if r.instructions != "" {
+		display = append(display, llm.SystemMessage(r.instructions))
 	}
 	display = append(display, llm.CloneMessages(conversation)...)
 	return &Response{

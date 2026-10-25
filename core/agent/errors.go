@@ -1,9 +1,6 @@
 package agent
 
-import (
-	"errors"
-	"fmt"
-)
+import "errors"
 
 var (
 	// ErrAgentRequired is returned when a nil agent is run.
@@ -45,17 +42,3 @@ var (
 	// specific cause.
 	ErrRunCanceled = errors.New("agent: run canceled")
 )
-
-// PanicError converts a recovered panic into an error.
-type PanicError struct {
-	Value any
-	Stack []byte
-}
-
-// Error implements the error interface.
-func (e *PanicError) Error() string {
-	if e == nil {
-		return "agent: panic: <nil>"
-	}
-	return fmt.Sprintf("agent: panic: %v", e.Value)
-}

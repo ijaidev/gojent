@@ -5,6 +5,7 @@ import (
 	"runtime/debug"
 	"sync"
 
+	"github.com/ijaidev/gojent/core/agent/internal/eventstream"
 	"github.com/ijaidev/gojent/core/llm"
 )
 
@@ -93,11 +94,11 @@ func (r *Run) Close() error {
 func (r *runner) start(ctx context.Context, input ...llm.Message) (*Run, error) {
 	input = llm.CloneMessages(input)
 	runCtx, cancel := context.WithCancelCause(ctx)
-	queue := newEventQueue(runCtx)
+	queue := eventstream.New[Event](runCtx)
 	r.opts.Sink = multiSink{r.opts.Sink, queue}
 
 	run := &Run{
-		events: queue.out,
+		events: queue.Events(),
 		cancel: cancel,
 		done:   make(chan struct{}),
 	}
