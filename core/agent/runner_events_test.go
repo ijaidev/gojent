@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -13,14 +14,14 @@ import (
 
 func TestAgent_ToolEncodeFailureEmitsOneToolEnd(t *testing.T) {
 	model := &scriptModel{steps: []step{
-		toolCallStep(llm.ToolCall{ID: "call-1", Name: "bad", Arguments: `{"value":"x"}`}),
+		toolCallStep(llm.ToolCall{CallID: "call-1", Name: "bad", Input: json.RawMessage(`{"value":"x"}`)}),
 		finalText("done"),
 	}}
 	bad := tool.MustNew(tool.Config[echoInput, tool.Result]{
 		ID: "bad",
 		Execute: func(context.Context, echoInput) (tool.Result, error) {
 			return tool.Result{
-				Content: []llm.Part{llm.TextPart("ok")},
+				Content: []llm.Part{llm.NewTextPart("ok")},
 				Data:    make(chan int),
 			}, nil
 		},
@@ -85,7 +86,7 @@ func TestAgent_ToolEventsArePaired(t *testing.T) {
 		{
 			name:       "allow",
 			tools:      []tool.Tool{echo},
-			call:       llm.ToolCall{ID: "c1", Name: "echo", Arguments: `{"value":"x"}`},
+			call:       llm.ToolCall{CallID: "c1", Name: "echo", Input: json.RawMessage(`{"value":"x"}`)},
 			wantResult: true,
 		},
 		{
@@ -96,12 +97,12 @@ func TestAgent_ToolEventsArePaired(t *testing.T) {
 				},
 			},
 			tools:      []tool.Tool{echo},
-			call:       llm.ToolCall{ID: "c1", Name: "echo", Arguments: `{"value":"x"}`},
+			call:       llm.ToolCall{CallID: "c1", Name: "echo", Input: json.RawMessage(`{"value":"x"}`)},
 			wantEndErr: agent.ErrToolDenied,
 		},
 		{
 			name:          "tool not found",
-			call:          llm.ToolCall{ID: "c1", Name: "echo", Arguments: `{"value":"x"}`},
+			call:          llm.ToolCall{CallID: "c1", Name: "echo", Input: json.RawMessage(`{"value":"x"}`)},
 			wantEndErrSub: "not found",
 		},
 		{
@@ -112,7 +113,7 @@ func TestAgent_ToolEventsArePaired(t *testing.T) {
 				},
 			},
 			tools:      []tool.Tool{echo},
-			call:       llm.ToolCall{ID: "c1", Name: "echo", Arguments: `{"value":"x"}`},
+			call:       llm.ToolCall{CallID: "c1", Name: "echo", Input: json.RawMessage(`{"value":"x"}`)},
 			wantRunErr: agent.ErrTerminated,
 			wantEndErr: agent.ErrTerminated,
 		},
@@ -124,7 +125,7 @@ func TestAgent_ToolEventsArePaired(t *testing.T) {
 				},
 			},
 			tools:      []tool.Tool{echo},
-			call:       llm.ToolCall{ID: "c1", Name: "echo", Arguments: `{"value":"x"}`},
+			call:       llm.ToolCall{CallID: "c1", Name: "echo", Input: json.RawMessage(`{"value":"x"}`)},
 			wantRunErr: policyErr,
 			wantEndErr: policyErr,
 		},
@@ -132,7 +133,7 @@ func TestAgent_ToolEventsArePaired(t *testing.T) {
 			name:       "after tool error",
 			policy:     afterToolErrorPolicy{err: afterErr},
 			tools:      []tool.Tool{echo},
-			call:       llm.ToolCall{ID: "c1", Name: "echo", Arguments: `{"value":"x"}`},
+			call:       llm.ToolCall{CallID: "c1", Name: "echo", Input: json.RawMessage(`{"value":"x"}`)},
 			wantRunErr: afterErr,
 			wantEndErr: afterErr,
 			wantResult: true,
@@ -140,7 +141,7 @@ func TestAgent_ToolEventsArePaired(t *testing.T) {
 		{
 			name:       "execute error",
 			tools:      []tool.Tool{failing},
-			call:       llm.ToolCall{ID: "c1", Name: "failing", Arguments: `{}`},
+			call:       llm.ToolCall{CallID: "c1", Name: "failing", Input: json.RawMessage(`{}`)},
 			wantEndErr: execErr,
 			wantResult: true,
 		},

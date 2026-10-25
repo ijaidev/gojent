@@ -33,6 +33,23 @@ var _ llm.Model = (*scriptModel)(nil)
 
 func (m *scriptModel) ModelID() string { return "scripted" }
 
+func (m *scriptModel) Info() llm.Info {
+	return llm.Info{
+		Provider: "test",
+		Model:    "scripted",
+		Features: llm.Features{
+			Streaming:        true,
+			Tools:            true,
+			StrictJSONSchema: true,
+			Vision:           true,
+			AudioIn:          true,
+			Video:            true,
+			Documents:        true,
+			Reasoning:        true,
+		},
+	}
+}
+
 func (m *scriptModel) Generate(ctx context.Context, req *llm.Request) (*llm.Response, error) {
 	m.mu.Lock()
 	m.calls = append(m.calls, *req.Clone())
@@ -82,8 +99,12 @@ func finalText(text string) step {
 }
 
 func toolCallStep(calls ...llm.ToolCall) step {
+	parts := make([]llm.Part, 0, len(calls))
+	for _, call := range calls {
+		parts = append(parts, llm.NewToolCallPart(call))
+	}
 	return step{response: &llm.Response{
-		Message:      llm.Message{Role: llm.RoleAssistant, ToolCalls: calls},
+		Message:      llm.AssistantMessageWithParts(parts...),
 		FinishReason: llm.FinishReasonTool,
 	}}
 }
@@ -200,28 +221,46 @@ func assertNoDanglingToolCalls(t *testing.T, messages []llm.Message) {
 	pending := make(map[string]bool)
 	for index := range messages {
 		msg := &messages[index]
-		switch msg.Role {
-		case llm.RoleAssistant:
+		if msg.Role == llm.RoleAssistant {
 			if len(pending) > 0 {
 				t.Fatalf("message %d starts a new assistant turn with unanswered tool calls: %v", index, pending)
 			}
-			for _, call := range msg.ToolCalls {
-				if call.ID == "" {
+			for _, call := range msg.ToolCalls() {
+				if call.CallID == "" {
 					t.Fatalf("message %d has a tool call without an ID", index)
 				}
-				if pending[call.ID] {
-					t.Fatalf("message %d repeats pending tool call ID %q", index, call.ID)
+				if pending[call.CallID] {
+					t.Fatalf("message %d repeats pending tool call ID %q", index, call.CallID)
 				}
-				pending[call.ID] = true
+				pending[call.CallID] = true
 			}
-		case llm.RoleTool:
-			if !pending[msg.ToolCallID] {
-				t.Fatalf("message %d has a result for unknown call ID %q", index, msg.ToolCallID)
+		}
+		for _, result := range msg.ToolResults() {
+			if !pending[result.CallID] {
+				t.Fatalf("message %d has a result for unknown call ID %q", index, result.CallID)
 			}
-			delete(pending, msg.ToolCallID)
+			delete(pending, result.CallID)
 		}
 	}
 	if len(pending) > 0 {
 		t.Fatalf("transcript ends with unanswered tool calls: %v", pending)
 	}
+}
+
+// toolResultStatus returns the status of the first tool result in a message.
+func toolResultStatus(message llm.Message) llm.ToolStatus {
+	results := message.ToolResults()
+	if len(results) == 0 {
+		return ""
+	}
+	return results[0].Status
+}
+
+// toolResultText returns the text of the first tool result in a message.
+func toolResultText(message llm.Message) string {
+	results := message.ToolResults()
+	if len(results) == 0 {
+		return ""
+	}
+	return results[0].Text()
 }

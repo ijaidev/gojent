@@ -24,10 +24,10 @@ func WithTools(tools ...tool.Tool) Option {
 	}
 }
 
-// WithThinking overrides reasoning configuration for one run.
-func WithThinking(thinking llm.ThinkingConfig) Option {
+// WithReasoning overrides reasoning configuration for one run.
+func WithReasoning(reasoning llm.ReasoningConfig) Option {
 	return func(cfg *RunOptions) {
-		cfg.Thinking = thinking.Clone()
+		cfg.Reasoning = reasoning.Clone()
 	}
 }
 

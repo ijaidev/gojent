@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -21,15 +22,15 @@ func TestAgent_UniqueToolCallIDs(t *testing.T) {
 		{
 			name: "empty ids",
 			calls: []llm.ToolCall{
-				{Name: "echo", Arguments: `{"value":"one"}`},
-				{Name: "echo", Arguments: `{"value":"two"}`},
+				{Name: "echo", Input: json.RawMessage(`{"value":"one"}`)},
+				{Name: "echo", Input: json.RawMessage(`{"value":"two"}`)},
 			},
 		},
 		{
 			name: "duplicate ids",
 			calls: []llm.ToolCall{
-				{ID: "same", Name: "echo", Arguments: `{"value":"one"}`},
-				{ID: "same", Name: "echo", Arguments: `{"value":"two"}`},
+				{CallID: "same", Name: "echo", Input: json.RawMessage(`{"value":"one"}`)},
+				{CallID: "same", Name: "echo", Input: json.RawMessage(`{"value":"two"}`)},
 			},
 		},
 	}
@@ -61,16 +62,11 @@ func TestAgent_UniqueToolCallIDs(t *testing.T) {
 			if len(resp.ToolCalls) != 2 {
 				t.Fatalf("response tool calls = %d, want 2", len(resp.ToolCalls))
 			}
-			if resp.ToolCalls[0].ID == resp.ToolCalls[1].ID {
-				t.Fatalf("tool call IDs are not unique: %q", resp.ToolCalls[0].ID)
+			if resp.ToolCalls[0].CallID == resp.ToolCalls[1].CallID {
+				t.Fatalf("tool call IDs are not unique: %q", resp.ToolCalls[0].CallID)
 			}
-			if resp.ToolCalls[0].ID == "" || resp.ToolCalls[1].ID == "" {
+			if resp.ToolCalls[0].CallID == "" || resp.ToolCalls[1].CallID == "" {
 				t.Fatalf("tool call ID is empty: %+v", resp.ToolCalls)
-			}
-			for i, call := range resp.ToolCalls {
-				if call.Index != i {
-					t.Errorf("call %d index = %d, want %d", i, call.Index, i)
-				}
 			}
 			assertNoDanglingToolCalls(t, store.Messages())
 		})
@@ -79,7 +75,7 @@ func TestAgent_UniqueToolCallIDs(t *testing.T) {
 
 func TestAgent_ToolPanicIsContained(t *testing.T) {
 	model := &scriptModel{steps: []step{
-		toolCallStep(llm.ToolCall{ID: "boom", Name: "boom", Arguments: `{}`}),
+		toolCallStep(llm.ToolCall{CallID: "boom", Name: "boom", Input: json.RawMessage(`{}`)}),
 		finalText("recovered"),
 	}}
 	boom := tool.MustNew(tool.Config[struct{}, string]{
@@ -102,7 +98,7 @@ func TestAgent_ToolPanicIsContained(t *testing.T) {
 	if len(messages) != 4 {
 		t.Fatalf("stored messages = %d", len(messages))
 	}
-	if !messages[2].IsError || !strings.Contains(messages[2].Text(), "panic: tool exploded") {
+	if toolResultStatus(messages[2]) != llm.ToolStatusError || !strings.Contains(toolResultText(messages[2]), "panic: tool exploded") {
 		t.Errorf("panic was not reported as an error result: %+v", messages[2])
 	}
 	assertNoDanglingToolCalls(t, messages)
@@ -110,7 +106,7 @@ func TestAgent_ToolPanicIsContained(t *testing.T) {
 	// The next model request must include the error result, not a crash.
 	calls := model.Calls()
 	result := calls[1].Messages[2]
-	if !result.IsError {
+	if toolResultStatus(result) != llm.ToolStatusError {
 		t.Errorf("replayed tool result is not marked as an error: %+v", result)
 	}
 }
@@ -120,7 +116,7 @@ func TestAgent_ToolTimeoutIsContained(t *testing.T) {
 	defer close(release)
 
 	model := &scriptModel{steps: []step{
-		toolCallStep(llm.ToolCall{ID: "slow", Name: "slow", Arguments: `{}`}),
+		toolCallStep(llm.ToolCall{CallID: "slow", Name: "slow", Input: json.RawMessage(`{}`)}),
 		finalText("gave up"),
 	}}
 	slow := tool.MustNew(tool.Config[struct{}, string]{
@@ -153,7 +149,7 @@ func TestAgent_ToolTimeoutIsContained(t *testing.T) {
 	if len(messages) != 4 {
 		t.Fatalf("stored messages = %d", len(messages))
 	}
-	if !messages[2].IsError || !strings.Contains(messages[2].Text(), "deadline exceeded") {
+	if toolResultStatus(messages[2]) != llm.ToolStatusError || !strings.Contains(toolResultText(messages[2]), "deadline exceeded") {
 		t.Errorf("timeout was not reported as an error result: %+v", messages[2])
 	}
 	assertNoDanglingToolCalls(t, messages)
@@ -163,11 +159,11 @@ func TestAgent_ToolResultDropsEmptyTextParts(t *testing.T) {
 	empty := tool.MustNew(tool.Config[struct{}, tool.Result]{
 		ID: "empty",
 		Execute: func(_ context.Context, _ struct{}) (tool.Result, error) {
-			return tool.Result{Content: []llm.Part{llm.TextPart("")}}, nil
+			return tool.Result{Content: []llm.Part{llm.NewTextPart("")}}, nil
 		},
 	})
 	model := &scriptModel{steps: []step{
-		toolCallStep(llm.ToolCall{ID: "c1", Name: "empty", Arguments: `{}`}),
+		toolCallStep(llm.ToolCall{CallID: "c1", Name: "empty", Input: json.RawMessage(`{}`)}),
 		finalText("done"),
 	}}
 	a := mustAgent(t, agent.Config{Name: "empty-parts", Model: model, Tools: []tool.Tool{empty}})
@@ -182,21 +178,22 @@ func TestAgent_ToolResultDropsEmptyTextParts(t *testing.T) {
 	}
 	for _, message := range calls[1].Messages {
 		for _, part := range message.Content {
-			if part.Type == llm.PartTypeText && part.Text == "" {
+			if text, ok := part.(*llm.TextPart); ok && text.Text == "" {
 				t.Fatalf("empty text part reached the provider: %+v", calls[1].Messages)
 			}
 		}
 	}
 	last := calls[1].Messages[len(calls[1].Messages)-1]
-	if last.Role != llm.RoleTool || last.Text() != "{}" {
-		t.Errorf("tool message = %+v, want a single {} text part", last)
+	res := last.ToolResults()
+	if last.Role != llm.RoleUser || len(res) != 1 || res[0].Text() != "{}" {
+		t.Errorf("tool message = %+v, want a single {} result", last)
 	}
 }
 
 func TestAgent_ToolCallIDCollisionWithGeneratedID(t *testing.T) {
 	model := &scriptModel{steps: []step{
-		toolCallStep(llm.ToolCall{ID: "call_1_0", Name: "echo", Arguments: `{"value":"one"}`}),
-		toolCallStep(llm.ToolCall{ID: "call_1_0", Name: "echo", Arguments: `{"value":"two"}`}),
+		toolCallStep(llm.ToolCall{CallID: "call_1_0", Name: "echo", Input: json.RawMessage(`{"value":"one"}`)}),
+		toolCallStep(llm.ToolCall{CallID: "call_1_0", Name: "echo", Input: json.RawMessage(`{"value":"two"}`)}),
 		finalText("done"),
 	}}
 	echo := tool.MustNew(tool.Config[echoInput, string]{
@@ -213,10 +210,10 @@ func TestAgent_ToolCallIDCollisionWithGeneratedID(t *testing.T) {
 	}
 	seen := make(map[string]bool, len(resp.ToolCalls))
 	for _, call := range resp.ToolCalls {
-		if seen[call.ID] {
-			t.Fatalf("duplicate tool call ID %q in %+v", call.ID, resp.ToolCalls)
+		if seen[call.CallID] {
+			t.Fatalf("duplicate tool call ID %q in %+v", call.CallID, resp.ToolCalls)
 		}
-		seen[call.ID] = true
+		seen[call.CallID] = true
 	}
 }
 
@@ -231,8 +228,8 @@ func TestAgent_ToolBudgetPersistsAllResults(t *testing.T) {
 	})
 	model := &scriptModel{steps: []step{
 		toolCallStep(
-			llm.ToolCall{ID: "a", Name: "echo", Arguments: `{"value":"a"}`},
-			llm.ToolCall{ID: "b", Name: "echo", Arguments: `{"value":"b"}`},
+			llm.ToolCall{CallID: "a", Name: "echo", Input: json.RawMessage(`{"value":"a"}`)},
+			llm.ToolCall{CallID: "b", Name: "echo", Input: json.RawMessage(`{"value":"b"}`)},
 		),
 		finalText("never reached"),
 	}}
@@ -257,15 +254,19 @@ func TestAgent_ToolBudgetPersistsAllResults(t *testing.T) {
 		t.Errorf("model calls = %d, want 1", model.CallCount())
 	}
 	messages := store.Messages()
-	if len(messages) != 4 {
-		t.Fatalf("stored messages = %d, want user, assistant, and two results", len(messages))
+	if len(messages) != 3 {
+		t.Fatalf("stored messages = %d, want user, assistant, and one grouped result message", len(messages))
 	}
 	assertNoDanglingToolCalls(t, messages)
-	if messages[2].IsError {
-		t.Errorf("first result should have executed: %+v", messages[2])
+	results := messages[2].ToolResults()
+	if len(results) != 2 {
+		t.Fatalf("grouped results = %d, want 2", len(results))
 	}
-	if !messages[3].IsError {
-		t.Errorf("over-budget result is not marked as an error: %+v", messages[3])
+	if results[0].Status != llm.ToolStatusCompleted {
+		t.Errorf("first result should have executed: %+v", results[0])
+	}
+	if results[1].Status != llm.ToolStatusError {
+		t.Errorf("over-budget result is not marked as an error: %+v", results[1])
 	}
 }
 
@@ -279,7 +280,7 @@ func TestAgent_ValidatesToolArguments(t *testing.T) {
 		},
 	})
 	model := &scriptModel{steps: []step{
-		toolCallStep(llm.ToolCall{ID: "c1", Name: "echo", Arguments: `{}`}),
+		toolCallStep(llm.ToolCall{CallID: "c1", Name: "echo", Input: json.RawMessage(`{}`)}),
 		finalText("done"),
 	}}
 	a := mustAgent(t, agent.Config{Name: "validation", Model: model, Tools: []tool.Tool{strict}})
@@ -295,7 +296,7 @@ func TestAgent_ValidatesToolArguments(t *testing.T) {
 	if len(messages) != 4 {
 		t.Fatalf("stored messages = %d", len(messages))
 	}
-	if !messages[2].IsError || !strings.Contains(messages[2].Text(), "missing required property") {
+	if toolResultStatus(messages[2]) != llm.ToolStatusError || !strings.Contains(toolResultText(messages[2]), "missing required property") {
 		t.Errorf("validation failure was not reported to the model: %+v", messages[2])
 	}
 	assertNoDanglingToolCalls(t, messages)

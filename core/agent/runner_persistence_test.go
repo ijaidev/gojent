@@ -13,7 +13,7 @@ import (
 
 func TestAgent_ToolLoopPersistsAtomicBatches(t *testing.T) {
 	model := &scriptModel{steps: []step{
-		toolCallStep(llm.ToolCall{ID: "c1", Name: "echo", Arguments: `{"value":"sunny"}`}),
+		toolCallStep(llm.ToolCall{CallID: "c1", Name: "echo", Input: json.RawMessage(`{"value":"sunny"}`)}),
 		finalText("It is sunny"),
 	}}
 	recorder := &echoRecorder{}
@@ -29,7 +29,7 @@ func TestAgent_ToolLoopPersistsAtomicBatches(t *testing.T) {
 	if resp.Text != "It is sunny" {
 		t.Errorf("Text = %q", resp.Text)
 	}
-	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].ID != "c1" {
+	if len(resp.ToolCalls) != 1 || resp.ToolCalls[0].CallID != "c1" {
 		t.Fatalf("unexpected response tool calls: %+v", resp.ToolCalls)
 	}
 	if got := recorder.Calls(); len(got) != 1 {
@@ -40,11 +40,12 @@ func TestAgent_ToolLoopPersistsAtomicBatches(t *testing.T) {
 	if len(messages) != 4 {
 		t.Fatalf("stored messages = %d, want user, assistant, tool, assistant", len(messages))
 	}
-	if messages[0].Role != llm.RoleUser || messages[1].Role != llm.RoleAssistant || messages[2].Role != llm.RoleTool || messages[3].Role != llm.RoleAssistant {
+	if messages[0].Role != llm.RoleUser || messages[1].Role != llm.RoleAssistant || messages[2].Role != llm.RoleUser || messages[3].Role != llm.RoleAssistant {
 		t.Fatalf("unexpected roles: %+v", messages)
 	}
-	if messages[1].ToolCalls[0].ID != messages[2].ToolCallID {
-		t.Errorf("tool call ID %q does not match result ID %q", messages[1].ToolCalls[0].ID, messages[2].ToolCallID)
+	results := messages[2].ToolResults()
+	if len(results) != 1 || messages[1].ToolCalls()[0].CallID != results[0].CallID {
+		t.Errorf("tool call ID %q does not match result ID %+v", messages[1].ToolCalls()[0].CallID, results)
 	}
 	assertNoDanglingToolCalls(t, messages)
 
@@ -64,23 +65,22 @@ func TestAgent_ToolLoopPersistsAtomicBatches(t *testing.T) {
 	if len(second) != 3 {
 		t.Fatalf("second request messages = %d, want user, assistant, tool", len(second))
 	}
-	if second[1].Role != llm.RoleAssistant || second[1].ToolCalls[0].ID != "c1" {
+	if second[1].Role != llm.RoleAssistant || second[1].ToolCalls()[0].CallID != "c1" {
 		t.Errorf("assistant replay missing tool call: %+v", second[1])
 	}
-	if second[2].Role != llm.RoleTool || second[2].ToolCallID != "c1" || second[2].Text() != "sunny" {
+	secondResults := second[2].ToolResults()
+	if second[2].Role != llm.RoleUser || len(secondResults) != 1 || secondResults[0].CallID != "c1" || secondResults[0].Text() != "sunny" {
 		t.Errorf("unexpected tool result replay: %+v", second[2])
 	}
 }
 
 func TestAgent_ReplayAfterJSONPersistence(t *testing.T) {
-	providerData := &llm.ProviderData{Provider: "test", Version: 1, Data: []byte(`{"signature":"abc"}`)}
+	call := llm.NewToolCallPart(llm.ToolCall{CallID: "c1", Name: "echo", Input: json.RawMessage(`{"value":"persisted"}`)})
+	if err := call.Set("test", map[string]string{"signature": "abc"}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
 	firstResponse := &llm.Response{
-		Message: llm.Message{
-			Role:         llm.RoleAssistant,
-			Content:      []llm.Part{llm.TextPart("")},
-			ToolCalls:    []llm.ToolCall{{ID: "c1", Name: "echo", Arguments: `{"value":"persisted"}`}},
-			ProviderData: providerData,
-		},
+		Message:      llm.AssistantMessageWithParts(call),
 		FinishReason: llm.FinishReasonTool,
 	}
 	firstModel := &scriptModel{steps: []step{
@@ -105,11 +105,19 @@ func TestAgent_ReplayAfterJSONPersistence(t *testing.T) {
 	if err := json.Unmarshal(encoded, &reloaded); err != nil {
 		t.Fatalf("unmarshal stored messages: %v", err)
 	}
-	if len(reloaded[1].Content) != 0 {
-		t.Errorf("empty text part survived JSON persistence: %+v", reloaded[1].Content)
+	if len(reloaded[1].Content) != 1 {
+		t.Fatalf("persisted assistant content = %+v, want one tool call", reloaded[1].Content)
 	}
-	if reloaded[1].ProviderData == nil || string(reloaded[1].ProviderData.Data) != `{"signature":"abc"}` {
-		t.Fatalf("provider data did not survive JSON persistence: %+v", reloaded[1].ProviderData)
+	persistedCall, ok := reloaded[1].Content[0].(*llm.ToolCallPart)
+	if !ok {
+		t.Fatalf("persisted content[0] = %T, want tool call", reloaded[1].Content[0])
+	}
+	var signature map[string]string
+	if err := persistedCall.Get("test", &signature); err != nil {
+		t.Fatalf("provider data did not survive JSON persistence: %v", err)
+	}
+	if signature["signature"] != "abc" {
+		t.Fatalf("provider data = %v, want signature abc", signature)
 	}
 
 	replayStore := &recordingStore{}
@@ -131,24 +139,31 @@ func TestAgent_ReplayAfterJSONPersistence(t *testing.T) {
 	for i := range request.Messages {
 		msg := &request.Messages[i]
 		switch {
-		case msg.Role == llm.RoleAssistant && len(msg.ToolCalls) > 0:
+		case msg.Role == llm.RoleAssistant && len(msg.ToolCalls()) > 0:
 			assistant = msg
-		case msg.Role == llm.RoleTool && msg.ToolCallID == "c1":
+		case len(msg.ToolResults()) > 0 && msg.ToolResults()[0].CallID == "c1":
 			result = msg
 		}
 	}
 	if assistant == nil || result == nil {
 		t.Fatalf("replayed request lost assistant/tool pair: %+v", request.Messages)
 	}
-	if assistant.ProviderData == nil || assistant.ProviderData.Provider != "test" {
-		t.Errorf("replayed assistant lost provider data: %+v", assistant.ProviderData)
+	replayedCall, ok := assistant.Content[0].(*llm.ToolCallPart)
+	if !ok {
+		t.Fatalf("replayed assistant content[0] = %T, want tool call", assistant.Content[0])
 	}
-	if result.Text() != "persisted" {
-		t.Errorf("replayed tool result = %q", result.Text())
+	var replayedSignature map[string]string
+	if err := replayedCall.Get("test", &replayedSignature); err != nil {
+		t.Errorf("replayed assistant lost provider data: %v", err)
+	} else if replayedSignature["signature"] != "abc" {
+		t.Errorf("replayed provider data = %v", replayedSignature)
+	}
+	if got := result.ToolResults()[0].Text(); got != "persisted" {
+		t.Errorf("replayed tool result = %q", got)
 	}
 	assertNoDanglingToolCalls(t, append(reloaded, finalAssistant("second done")))
 }
 
 func finalAssistant(text string) llm.Message {
-	return llm.Message{Role: llm.RoleAssistant, Content: []llm.Part{llm.TextPart(text)}}
+	return llm.Message{Role: llm.RoleAssistant, Content: []llm.Part{llm.NewTextPart(text)}}
 }

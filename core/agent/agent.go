@@ -31,7 +31,7 @@ type Agent struct {
 	budget         Budget
 	retry          RetryPolicy
 	toolTimeout    time.Duration
-	thinking       *llm.ThinkingConfig
+	reasoning      *llm.ReasoningConfig
 	responseFormat *llm.ResponseFormat
 	temperature    *float64
 	maxTokens      *int
@@ -70,8 +70,8 @@ type Config struct {
 	// negative value disables the timeout.
 	ToolTimeout time.Duration
 
-	// Thinking configures reasoning.
-	Thinking *llm.ThinkingConfig
+	// Reasoning configures reasoning.
+	Reasoning *llm.ReasoningConfig
 	// ResponseFormat constrains structured output.
 	ResponseFormat *llm.ResponseFormat
 	// Temperature sets sampling temperature.
@@ -119,7 +119,7 @@ func New(cfg Config) (*Agent, error) {
 		budget:         cfg.Budget,
 		retry:          cfg.Retry,
 		toolTimeout:    cfg.ToolTimeout,
-		thinking:       cfg.Thinking.Clone(),
+		reasoning:      cfg.Reasoning.Clone(),
 		responseFormat: cfg.ResponseFormat.Clone(),
 		temperature:    cloneFloat(cfg.Temperature),
 		maxTokens:      cloneInt(cfg.MaxTokens),

@@ -58,7 +58,7 @@ func (a *Agent) AsToolWith(cfg AsToolConfig) tool.Tool {
 			}
 			result := tool.Result{Data: response}
 			if response.Text != "" {
-				result.Content = []llm.Part{llm.TextPart(response.Text)}
+				result.Content = []llm.Part{llm.NewTextPart(response.Text)}
 			}
 			return result, nil
 		},

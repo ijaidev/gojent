@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"runtime/debug"
 	"time"
@@ -15,17 +14,24 @@ import (
 // RunOptions.ToolTimeout is zero.
 const DefaultToolTimeout = 2 * time.Minute
 
-func (r *runner) runTools(ctx context.Context, calls []llm.ToolCall, step int) ([]llm.Message, bool, error) {
-	results := make([]llm.Message, 0, len(calls))
+// runTools executes locally-runnable calls and groups every result into one
+// user message, in call order (D17). Server calls are recorded in the
+// assistant message and never executed (D10, invariant 9).
+func (r *runner) runTools(ctx context.Context, calls []llm.ToolCall, step int) (llm.Message, bool, error) {
+	results := make([]llm.ToolResult, 0, len(calls))
 	budgetExceeded := false
 
 	for index, raw := range calls {
+		if raw.EffectiveKind() == llm.ToolKindServer {
+			continue
+		}
 		call := tool.Call{
-			ID:             raw.ID,
+			ID:             raw.CallID,
 			Index:          index,
 			Name:           raw.Name,
-			Arguments:      json.RawMessage(raw.Arguments),
-			IdempotencyKey: raw.ID,
+			Kind:           raw.EffectiveKind(),
+			Arguments:      append([]byte(nil), raw.Input...),
+			IdempotencyKey: raw.CallID,
 		}
 		spec := tool.Spec{}
 		impl, found := r.tools.byName[call.Name]
@@ -35,27 +41,37 @@ func (r *runner) runTools(ctx context.Context, calls []llm.ToolCall, step int) (
 		safeEmit(r.opts.Sink, ToolStart{Step: step, Call: call, Spec: spec})
 
 		outcome := r.runToolCall(ctx, impl, found, call, spec, step)
+		var message *llm.Message
+		if outcome.hasResult {
+			observed := resultMessage(outcome.result)
+			message = &observed
+			results = append(results, outcome.result)
+		}
 		safeEmit(r.opts.Sink, ToolEnd{
 			Step:    step,
 			Call:    call,
-			Result:  outcome.result,
-			Message: outcome.message,
+			Result:  outcome.raw,
+			Message: message,
 			Err:     outcome.err,
 		})
 		if outcome.fatal != nil {
-			return nil, false, outcome.fatal
+			return llm.Message{}, false, outcome.fatal
 		}
-		results = append(results, *outcome.message)
 		budgetExceeded = budgetExceeded || outcome.budgetExceeded
 	}
-	return results, budgetExceeded, nil
+
+	if len(results) == 0 {
+		return llm.Message{}, budgetExceeded, nil
+	}
+	return llm.ToolResultsMessage(results...), budgetExceeded, nil
 }
 
-// toolCallOutcome is the result of one tool call. message is always set unless
-// fatal aborts the run before a tool message can be recorded.
+// toolCallOutcome is the result of one tool call. fatal aborts the run before
+// a result can be recorded. raw is the tool package result for policy hooks.
 type toolCallOutcome struct {
-	message        *llm.Message
-	result         *tool.Result
+	result         llm.ToolResult
+	hasResult      bool
+	raw            *tool.Result
 	err            error
 	fatal          error
 	budgetExceeded bool
@@ -66,10 +82,11 @@ type toolCallOutcome struct {
 // caller can close the ToolStart/ToolEnd pair.
 func (r *runner) runToolCall(ctx context.Context, impl tool.Tool, found bool, call tool.Call, spec tool.Spec, step int) toolCallOutcome {
 	if r.opts.Budget.MaxToolCalls > 0 && r.toolCalls >= r.opts.Budget.MaxToolCalls {
-		message := toolErrorMessage(call, fmt.Errorf("%w: tool call budget exceeded", ErrBudgetExceeded))
+		err := fmt.Errorf("%w: tool call budget exceeded", ErrBudgetExceeded)
 		return toolCallOutcome{
-			message:        &message,
-			err:            ErrBudgetExceeded,
+			result:         toolErrorResult(call, llm.ToolStatusError, err),
+			hasResult:      true,
+			err:            err,
 			budgetExceeded: true,
 		}
 	}
@@ -83,8 +100,11 @@ func (r *runner) runToolCall(ctx context.Context, impl tool.Tool, found bool, ca
 	}
 	if decision != Allow {
 		// Deny, an unresolved Ask, and unknown decisions all fail closed.
-		message := toolErrorMessage(call, ErrToolDenied)
-		return toolCallOutcome{message: &message, err: ErrToolDenied}
+		return toolCallOutcome{
+			result:    toolErrorResult(call, llm.ToolStatusDenied, ErrToolDenied),
+			hasResult: true,
+			err:       ErrToolDenied,
+		}
 	}
 
 	if !found {
@@ -92,25 +112,37 @@ func (r *runner) runToolCall(ctx context.Context, impl tool.Tool, found bool, ca
 		if afterErr := r.afterTool(ctx, step, call, nil, err); afterErr != nil {
 			return toolCallOutcome{err: afterErr, fatal: afterErr}
 		}
-		message := toolErrorMessage(call, err)
-		return toolCallOutcome{message: &message, err: err}
+		return toolCallOutcome{
+			result:    toolErrorResult(call, llm.ToolStatusError, err),
+			hasResult: true,
+			err:       err,
+		}
 	}
 
 	r.toolCalls++
 	result, execErr := r.executeTool(ctx, impl, call)
 	if afterErr := r.afterTool(ctx, step, call, &result, execErr); afterErr != nil {
-		return toolCallOutcome{result: &result, err: afterErr, fatal: afterErr}
+		return toolCallOutcome{raw: &result, err: afterErr, fatal: afterErr}
 	}
 	if execErr != nil {
-		message := toolErrorMessage(call, execErr)
-		return toolCallOutcome{result: &result, message: &message, err: execErr}
+		return toolCallOutcome{
+			result:    toolErrorResult(call, llm.ToolStatusError, execErr),
+			hasResult: true,
+			raw:       &result,
+			err:       execErr,
+		}
 	}
 
-	message, encodeErr := resultMessage(call, result)
+	canonical, encodeErr := canonicalResult(call, result, llm.ToolStatusCompleted)
 	if encodeErr != nil {
-		message = toolErrorMessage(call, encodeErr)
+		return toolCallOutcome{
+			result:    toolErrorResult(call, llm.ToolStatusError, encodeErr),
+			hasResult: true,
+			raw:       &result,
+			err:       encodeErr,
+		}
 	}
-	return toolCallOutcome{result: &result, message: &message, err: encodeErr}
+	return toolCallOutcome{result: canonical, hasResult: true, raw: &result}
 }
 
 func (r *runner) beforeTool(ctx context.Context, step int, call tool.Call, spec tool.Spec) (Decision, error) {

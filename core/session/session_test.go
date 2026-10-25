@@ -45,13 +45,14 @@ func TestMemory_DeepCopiesMessages(t *testing.T) {
 	store := session.NewMemory()
 	sess := session.Session{ID: "thread"}
 
-	original := llm.UserMessage("hello")
-	original.Content[0].Data = []byte{1, 2, 3}
+	text := llm.NewTextPart("hello")
+	file := llm.FileFromBytes([]byte{1, 2, 3}, "application/octet-stream")
+	original := llm.UserMessageWithParts(text, file)
 	if err := store.Append(ctx, sess, original); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	original.Content[0].Text = "mutated"
-	original.Content[0].Data[0] = 9
+	text.Text = "mutated"
+	file.Data[0] = 9
 
 	loaded, err := store.Load(ctx, sess)
 	if err != nil {
@@ -60,11 +61,15 @@ func TestMemory_DeepCopiesMessages(t *testing.T) {
 	if loaded[0].Text() != "hello" {
 		t.Errorf("stored text was mutated: %q", loaded[0].Text())
 	}
-	if loaded[0].Content[0].Data[0] != 1 {
-		t.Errorf("stored data was mutated: %v", loaded[0].Content[0].Data)
+	loadedFile, ok := loaded[0].Content[1].(*llm.FilePart)
+	if !ok {
+		t.Fatalf("loaded content[1] = %T, want file", loaded[0].Content[1])
+	}
+	if loadedFile.Data[0] != 1 {
+		t.Errorf("stored data was mutated: %v", loadedFile.Data)
 	}
 
-	loaded[0].Content[0].Text = "changed by caller"
+	loaded[0].Content[0].(*llm.TextPart).Text = "changed by caller"
 	again, err := store.Load(ctx, sess)
 	if err != nil {
 		t.Fatalf("Load again: %v", err)

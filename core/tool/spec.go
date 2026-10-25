@@ -1,6 +1,10 @@
 package tool
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/ijaidev/gojent/core/llm"
+)
 
 // ExecutionMode is a tool's scheduling preference.
 //
@@ -54,6 +58,8 @@ type Call struct {
 	Index int
 	// Name is the requested tool name.
 	Name string
+	// Kind classifies the execution path. Empty means function.
+	Kind llm.ToolKind
 	// Arguments is the validated JSON input.
 	Arguments json.RawMessage
 	// IdempotencyKey is stable across retries of the same call when the runner

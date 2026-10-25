@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -48,8 +49,8 @@ func TestAgent_Generate(t *testing.T) {
 
 func TestAgent_MaxStepsKeepsTranscriptComplete(t *testing.T) {
 	model := &scriptModel{steps: []step{
-		toolCallStep(llm.ToolCall{Name: "echo", Arguments: `{"value":"one"}`}),
-		toolCallStep(llm.ToolCall{Name: "echo", Arguments: `{"value":"two"}`}),
+		toolCallStep(llm.ToolCall{Name: "echo", Input: json.RawMessage(`{"value":"one"}`)}),
+		toolCallStep(llm.ToolCall{Name: "echo", Input: json.RawMessage(`{"value":"two"}`)}),
 		finalText("never reached"),
 	}}
 	recorder := &echoRecorder{}
@@ -86,7 +87,7 @@ func TestAgent_MaxStepsKeepsTranscriptComplete(t *testing.T) {
 
 func TestAgent_WithMaxStepsOption(t *testing.T) {
 	model := &scriptModel{steps: []step{
-		toolCallStep(llm.ToolCall{ID: "one", Name: "echo", Arguments: `{"value":"one"}`}),
+		toolCallStep(llm.ToolCall{CallID: "one", Name: "echo", Input: json.RawMessage(`{"value":"one"}`)}),
 	}}
 	echo := newEchoTool(t, "echo", nil)
 	a := mustAgent(t, agent.Config{Name: "looper", Model: model, Tools: []tool.Tool{echo}})
@@ -141,12 +142,11 @@ func TestAgent_CancellationPreservesCause(t *testing.T) {
 func TestAgent_PartialResponseKeepsLastAssistantText(t *testing.T) {
 	model := &scriptModel{steps: []step{
 		{response: &llm.Response{
-			Message: llm.Message{
-				Role:      llm.RoleAssistant,
-				Content:   []llm.Part{llm.TextPart("checking")},
-				Thinking:  "need data",
-				ToolCalls: []llm.ToolCall{{ID: "c1", Name: "echo", Arguments: `{"value":"x"}`}},
-			},
+			Message: llm.AssistantMessageWithParts(
+				llm.NewReasoningPart("need data"),
+				llm.NewTextPart("checking"),
+				llm.NewToolCallPart(llm.ToolCall{CallID: "c1", Name: "echo", Input: json.RawMessage(`{"value":"x"}`)}),
+			),
 			FinishReason: llm.FinishReasonTool,
 		}},
 		finalText("never reached"),
@@ -193,7 +193,9 @@ func TestAgent_TokenBudget(t *testing.T) {
 
 	t.Run("tool step stops before next model call", func(t *testing.T) {
 		first := &llm.Response{
-			Message:      llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "echo", Arguments: `{"value":"x"}`}}},
+			Message: llm.AssistantMessageWithParts(
+				llm.NewToolCallPart(llm.ToolCall{CallID: "c1", Name: "echo", Input: json.RawMessage(`{"value":"x"}`)}),
+			),
 			FinishReason: llm.FinishReasonTool,
 			Usage:        llm.Usage{PromptTokens: 40, CompletionTokens: 60, TotalTokens: 100},
 		}

@@ -189,6 +189,16 @@ func cloneParts(parts []Part) []Part {
 	return out
 }
 
+// ClonePart returns a deep copy of a part.
+func ClonePart(part Part) Part {
+	return clonePart(part)
+}
+
+// CloneParts returns a deep copy of parts. Empty and nil slices return nil.
+func CloneParts(parts []Part) []Part {
+	return cloneParts(parts)
+}
+
 // validatePart runs type-specific validation.
 func validatePart(part Part) error {
 	switch p := part.(type) {

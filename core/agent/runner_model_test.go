@@ -41,7 +41,7 @@ func TestAgent_RequestDropsEmptyTextPartsFromInput(t *testing.T) {
 
 	input := llm.Message{
 		Role:    llm.RoleUser,
-		Content: []llm.Part{llm.TextPart(""), llm.TextPart("hi")},
+		Content: []llm.Part{llm.NewTextPart(""), llm.NewTextPart("hi")},
 	}
 	if _, err := a.GenerateMessages(context.Background(), []llm.Message{input}); err != nil {
 		t.Fatalf("GenerateMessages: %v", err)

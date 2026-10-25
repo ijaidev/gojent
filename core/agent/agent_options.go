@@ -33,8 +33,8 @@ func (a *Agent) ApplyAgentOptions(opts RunOptions) RunOptions {
 	if opts.ToolTimeout == 0 {
 		opts.ToolTimeout = a.toolTimeout
 	}
-	if opts.Thinking == nil {
-		opts.Thinking = a.thinking.Clone()
+	if opts.Reasoning == nil {
+		opts.Reasoning = a.reasoning.Clone()
 	}
 	if opts.ResponseFormat == nil {
 		opts.ResponseFormat = a.responseFormat.Clone()

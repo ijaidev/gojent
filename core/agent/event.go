@@ -34,14 +34,16 @@ type MessageStart struct {
 
 // TextDelta is emitted for each text fragment.
 type TextDelta struct {
-	Step int
-	Text string
+	Step  int
+	Index int
+	Text  string
 }
 
 // ThinkingDelta is emitted for each reasoning fragment.
 type ThinkingDelta struct {
-	Step int
-	Text string
+	Step  int
+	Index int
+	Text  string
 }
 
 // ToolCallDelta is emitted for each tool-call fragment.

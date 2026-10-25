@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/ijaidev/gojent/core/llm"
@@ -121,11 +122,11 @@ func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response,
 
 		assistant := response.Message
 		conversation = append(conversation, assistant)
-		r.usage = r.usage.Add(response.Usage)
-		r.calls = append(r.calls, assistant.ToolCalls...)
+		r.usage = addUsage(r.usage, response.Usage)
+		r.calls = append(r.calls, assistant.ToolCalls()...)
 		finish = response.FinishReason
 
-		if len(assistant.ToolCalls) == 0 {
+		if len(assistant.ToolCalls()) == 0 {
 			if err := r.append(budgetCtx, assistant); err != nil {
 				return nil, err
 			}
@@ -136,20 +137,27 @@ func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response,
 			return r.response(conversation, finish), nil
 		}
 
-		results, budgetExceeded, toolsErr := r.runTools(budgetCtx, assistant.ToolCalls, step)
+		results, budgetExceeded, toolsErr := r.runTools(budgetCtx, assistant.ToolCalls(), step)
 		if toolsErr != nil {
 			emit(StepEnd{Step: step, Usage: response.Usage, Err: toolsErr})
 			return nil, toolsErr
 		}
 
-		batch := make([]llm.Message, 0, len(results)+1)
+		batch := make([]llm.Message, 0, 2)
 		batch = append(batch, assistant)
-		batch = append(batch, results...)
+		if len(results.Content) > 0 {
+			batch = append(batch, results)
+			conversation = append(conversation, results)
+		}
 		if err := r.append(budgetCtx, batch...); err != nil {
 			return nil, err
 		}
-		conversation = append(conversation, results...)
 		emit(StepEnd{Step: step, Usage: response.Usage})
+		if len(results.Content) == 0 {
+			// Every call was provider-hosted; there is nothing local to
+			// execute or return to the model.
+			return r.response(conversation, finish), nil
+		}
 
 		if budgetExceeded {
 			return r.response(conversation, llm.FinishReasonLength), fmt.Errorf("%w: %d tool calls", ErrBudgetExceeded, r.toolCalls)
@@ -202,7 +210,7 @@ func (r *runner) request(conversation []llm.Message) *llm.Request {
 		Messages:       messages,
 		Tools:          r.tools.definitions(),
 		ToolChoice:     r.opts.ToolChoice,
-		Thinking:       r.opts.Thinking.Clone(),
+		Reasoning:      r.opts.Reasoning.Clone(),
 		ResponseFormat: r.opts.ResponseFormat.Clone(),
 		Temperature:    cloneFloat(r.opts.Temperature),
 		MaxTokens:      cloneInt(r.opts.MaxTokens),
@@ -216,9 +224,7 @@ func (r *runner) request(conversation []llm.Message) *llm.Request {
 func isEmptyAssistant(message llm.Message) bool {
 	return message.Role == llm.RoleAssistant &&
 		len(message.Content) == 0 &&
-		len(message.ToolCalls) == 0 &&
-		message.Thinking == "" &&
-		message.ProviderData == nil
+		len(message.Provider) == 0
 }
 
 func (r *runner) response(conversation []llm.Message, finish llm.FinishReason) *Response {
@@ -232,7 +238,7 @@ func (r *runner) response(conversation []llm.Message, finish llm.FinishReason) *
 			continue
 		}
 		text = message.Text()
-		thinking = message.Thinking
+		thinking = reasoningText(message)
 		break
 	}
 	display := make([]llm.Message, 0, len(conversation)+1)
@@ -248,6 +254,33 @@ func (r *runner) response(conversation []llm.Message, finish llm.FinishReason) *
 		FinishReason: finish,
 		Usage:        r.usage,
 	}
+}
+
+// addUsage accumulates terminal per-call snapshots into a run total.
+func addUsage(total, call llm.Usage) llm.Usage {
+	return llm.Usage{
+		PromptTokens:     total.PromptTokens + call.PromptTokens,
+		CompletionTokens: total.CompletionTokens + call.CompletionTokens,
+		TotalTokens:      total.TotalTokens + call.TotalTokens,
+		ReasoningTokens:  total.ReasoningTokens + call.ReasoningTokens,
+		CachedTokens:     total.CachedTokens + call.CachedTokens,
+	}
+}
+
+// reasoningText joins readable reasoning and summaries in part order.
+func reasoningText(message llm.Message) string {
+	var out strings.Builder
+	for _, part := range message.Content {
+		reasoning, ok := part.(*llm.ReasoningPart)
+		if !ok {
+			continue
+		}
+		out.WriteString(reasoning.Text)
+		for _, summary := range reasoning.Summary {
+			out.WriteString(summary)
+		}
+	}
+	return out.String()
 }
 
 func (r *runner) tokenBudgetExceeded() bool {

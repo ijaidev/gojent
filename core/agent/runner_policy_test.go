@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -49,7 +50,7 @@ func TestAgent_PolicyDeniesAndApproves(t *testing.T) {
 				},
 			})
 			model := &scriptModel{steps: []step{
-				toolCallStep(llm.ToolCall{ID: "r1", Name: "risky", Arguments: `{}`}),
+				toolCallStep(llm.ToolCall{CallID: "r1", Name: "risky", Input: json.RawMessage(`{}`)}),
 				finalText("done"),
 			}}
 			a := mustAgent(t, agent.Config{Name: "policy", Model: model, Tools: []tool.Tool{risky}})
@@ -79,7 +80,7 @@ func TestAgent_PolicyDeniesAndApproves(t *testing.T) {
 					t.Errorf("terminated run stored %d messages, want only the user input", len(store.Messages()))
 				}
 				for _, msg := range store.Messages() {
-					if msg.Role == llm.RoleAssistant && len(msg.ToolCalls) > 0 {
+					if msg.Role == llm.RoleAssistant && len(msg.ToolCalls()) > 0 {
 						t.Fatalf("terminated run persisted an unanswered tool call")
 					}
 				}
@@ -101,8 +102,8 @@ func TestAgent_PolicyDeniesAndApproves(t *testing.T) {
 				if len(messages) != 4 {
 					t.Fatalf("stored messages = %d", len(messages))
 				}
-				if !messages[2].IsError {
-					t.Errorf("denied call was not reported as an error: %+v", messages[2])
+				if toolResultStatus(messages[2]) != llm.ToolStatusDenied {
+					t.Errorf("denied call was not reported as denied: %+v", messages[2])
 				}
 				assertNoDanglingToolCalls(t, messages)
 			}
@@ -160,7 +161,7 @@ func TestAgent_PolicyMutationDoesNotAlterTranscript(t *testing.T) {
 				if req.Request.Messages[i].Role != llm.RoleUser {
 					continue
 				}
-				req.Request.Messages[i].Content[0].Text = "redacted"
+				req.Request.Messages[i].Content[0].(*llm.TextPart).Text = "redacted"
 			}
 			return nil
 		},

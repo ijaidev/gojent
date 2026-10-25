@@ -2,10 +2,10 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/ijaidev/gojent/core/llm"
@@ -85,6 +85,10 @@ func (r *runner) callModel(ctx context.Context, request *llm.Request, step int) 
 }
 
 func (r *runner) callModelOnce(ctx context.Context, request *llm.Request, step int) (*llm.Response, error) {
+	if err := checkRequestFeatures(r.opts.Model.ModelID(), r.opts.Model.Info().Features, request); err != nil {
+		return nil, err
+	}
+
 	streamer, ok := r.opts.Model.(llm.Streamer)
 	if !ok {
 		response, err := callGenerate(ctx, r.opts.Model, request)
@@ -94,10 +98,14 @@ func (r *runner) callModelOnce(ctx context.Context, request *llm.Request, step i
 		if response == nil {
 			return nil, ErrResponseRequired
 		}
-		message := r.finalizeAssistant(response.Message, step)
+		message, err := r.finalizeAssistant(response.Message, step)
+		if err != nil {
+			return nil, err
+		}
+		response.Message = message
 		emitMessageDeltasFromMessage(r.opts.Sink, step, message)
 		safeEmit(r.opts.Sink, MessageEnd{Step: step, Message: &message})
-		return &llm.Response{Message: message, FinishReason: response.FinishReason, Usage: response.Usage}, nil
+		return response, nil
 	}
 
 	stream, err := callStream(ctx, streamer, request)
@@ -109,158 +117,129 @@ func (r *runner) callModelOnce(ctx context.Context, request *llm.Request, step i
 	}()
 
 	safeEmit(r.opts.Sink, MessageStart{Step: step})
-	var text, thinking strings.Builder
-	var calls []llm.ToolCall
-	var usage llm.Usage
-	var finish llm.FinishReason
-	var providerData *llm.ProviderData
-
+	assembler := llm.NewAssembler(llm.RoleAssistant)
 	for {
-		chunk, recvErr := recvStream(stream)
+		event, recvErr := recvStream(stream)
 		if errors.Is(recvErr, io.EOF) {
 			break
 		}
 		if recvErr != nil {
 			return nil, recvErr
 		}
-		if chunk.Delta != "" {
-			text.WriteString(chunk.Delta)
-			safeEmit(r.opts.Sink, TextDelta{Step: step, Text: chunk.Delta})
+		if event == nil {
+			continue
 		}
-		if chunk.ThinkingDelta != "" {
-			thinking.WriteString(chunk.ThinkingDelta)
-			safeEmit(r.opts.Sink, ThinkingDelta{Step: step, Text: chunk.ThinkingDelta})
+		if err := assembler.Apply(event); err != nil {
+			return nil, err
 		}
-		if len(chunk.ToolCalls) > 0 {
-			calls = accumulateToolCalls(calls, chunk.ToolCalls)
-			for _, call := range chunk.ToolCalls {
-				safeEmit(r.opts.Sink, ToolCallDelta{
-					Step:      step,
-					Index:     call.Index,
-					ID:        call.ID,
-					Name:      call.Name,
-					Arguments: call.Arguments,
-				})
-			}
-		}
-		if chunk.FinishReason != "" {
-			finish = chunk.FinishReason
-		}
-		if chunk.Usage != nil {
-			usage = usage.Add(*chunk.Usage)
-		}
-		if chunk.ProviderData != nil {
-			providerData = chunk.ProviderData.Clone()
-		}
+		emitStreamEvent(r.opts.Sink, step, event)
 	}
 
-	message := llm.Message{
-		Role:         llm.RoleAssistant,
-		Thinking:     thinking.String(),
-		ToolCalls:    calls,
-		ProviderData: providerData,
+	response, err := assembler.Finish()
+	if err != nil {
+		return nil, err
 	}
-	if text.Len() > 0 {
-		message.Content = []llm.Part{llm.TextPart(text.String())}
+	message, err := r.finalizeAssistant(response.Message, step)
+	if err != nil {
+		return nil, err
 	}
-	message = r.finalizeAssistant(message, step)
-	if finish == "" {
-		if len(message.ToolCalls) > 0 {
-			finish = llm.FinishReasonTool
+	response.Message = message
+	if response.FinishReason == "" {
+		if len(message.ToolCalls()) > 0 {
+			response.FinishReason = llm.FinishReasonTool
 		} else {
-			finish = llm.FinishReasonStop
+			response.FinishReason = llm.FinishReasonStop
 		}
 	}
 	safeEmit(r.opts.Sink, MessageEnd{Step: step, Message: &message})
-	return &llm.Response{Message: message, FinishReason: finish, Usage: usage}, nil
+	return response, nil
 }
 
-func (r *runner) finalizeAssistant(message llm.Message, step int) llm.Message {
+// finalizeAssistant assigns stable call IDs and canonical input defaults.
+func (r *runner) finalizeAssistant(message llm.Message, step int) (llm.Message, error) {
 	message.Role = llm.RoleAssistant
-	message.Content = llm.NonEmptyParts(message.Content)
-	for i := range message.ToolCalls {
-		call := &message.ToolCalls[i]
-		call.Index = i
-		if call.Arguments == "" {
-			call.Arguments = "{}"
+	for i, part := range message.Content {
+		call, ok := part.(*llm.ToolCallPart)
+		if !ok {
+			continue
 		}
-		if call.ID == "" || r.usedCallID[call.ID] {
-			// A generated ID must not collide with one the provider already
-			// used, including a provider ID that happens to look generated.
+		if len(call.Input) == 0 {
+			call.Input = json.RawMessage("{}")
+		}
+		if call.CallID == "" || r.usedCallID[call.CallID] {
 			base := fmt.Sprintf("call_%d_%d", step, i)
 			candidate := base
 			for suffix := 1; r.usedCallID[candidate]; suffix++ {
 				candidate = fmt.Sprintf("%s_%d", base, suffix)
 			}
-			call.ID = candidate
+			call.CallID = candidate
 		}
-		r.usedCallID[call.ID] = true
+		r.usedCallID[call.CallID] = true
 	}
-	return message
+	if err := message.Validate(); err != nil {
+		return llm.Message{}, fmt.Errorf("agent: invalid assistant message: %w", err)
+	}
+	return message, nil
 }
 
-// accumulateToolCalls merges streamed fragments by ID or index.
-func accumulateToolCalls(existing, incoming []llm.ToolCall) []llm.ToolCall {
-	for _, fragment := range incoming {
-		index := -1
-		if fragment.ID != "" {
-			for i := range existing {
-				if existing[i].ID == fragment.ID {
-					index = i
-					break
+func emitStreamEvent(sink Sink, step int, event llm.StreamEvent) {
+	switch e := event.(type) {
+	case llm.PartStart:
+		emitPartSnapshot(sink, step, e.Index, e.Part)
+	case llm.PartDelta:
+		switch e.Kind {
+		case llm.PartTypeText:
+			if e.Text != "" {
+				safeEmit(sink, TextDelta{Step: step, Index: e.Index, Text: e.Text})
+			}
+		case llm.PartTypeReasoning:
+			if e.Text != "" {
+				safeEmit(sink, ThinkingDelta{Step: step, Index: e.Index, Text: e.Text})
+			}
+		case llm.PartTypeToolCall:
+			if e.Call != nil {
+				arguments := e.Call.InputFragment
+				if e.Call.InputSnapshot != nil {
+					arguments = string(e.Call.InputSnapshot)
 				}
+				safeEmit(sink, ToolCallDelta{
+					Step:      step,
+					Index:     e.Index,
+					ID:        e.Call.CallID,
+					Name:      e.Call.Name,
+					Arguments: arguments,
+				})
 			}
 		}
-		if index < 0 && fragment.ID == "" {
-			for i := range existing {
-				if existing[i].Index == fragment.Index {
-					index = i
-					break
-				}
-			}
-		}
-		if index < 0 && fragment.ID != "" {
-			for i := range existing {
-				if existing[i].Index == fragment.Index && existing[i].ID == "" {
-					index = i
-					break
-				}
-			}
-		}
-		if index < 0 {
-			existing = append(existing, fragment)
-			continue
-		}
-		target := &existing[index]
-		if target.ID == "" {
-			target.ID = fragment.ID
-		}
-		if target.Name == "" {
-			target.Name = fragment.Name
-		}
-		if fragment.Index != 0 || target.Index == 0 {
-			target.Index = fragment.Index
-		}
-		target.Arguments += fragment.Arguments
+	case llm.PartEnd, llm.MessageEnd, llm.ProviderEvent:
+		// Terminal metadata is emitted from the assembled response.
 	}
-	return existing
+}
+
+func emitPartSnapshot(sink Sink, step, index int, part llm.Part) {
+	switch p := part.(type) {
+	case *llm.TextPart:
+		if p.Text != "" {
+			safeEmit(sink, TextDelta{Step: step, Index: index, Text: p.Text})
+		}
+	case *llm.ReasoningPart:
+		if p.Text != "" {
+			safeEmit(sink, ThinkingDelta{Step: step, Index: index, Text: p.Text})
+		}
+	case *llm.ToolCallPart:
+		safeEmit(sink, ToolCallDelta{
+			Step:      step,
+			Index:     index,
+			ID:        p.CallID,
+			Name:      p.Name,
+			Arguments: string(p.Input),
+		})
+	}
 }
 
 func emitMessageDeltasFromMessage(sink Sink, step int, message llm.Message) {
 	safeEmit(sink, MessageStart{Step: step})
-	if text := message.Text(); text != "" {
-		safeEmit(sink, TextDelta{Step: step, Text: text})
-	}
-	if message.Thinking != "" {
-		safeEmit(sink, ThinkingDelta{Step: step, Text: message.Thinking})
-	}
-	for _, call := range message.ToolCalls {
-		safeEmit(sink, ToolCallDelta{
-			Step:      step,
-			Index:     call.Index,
-			ID:        call.ID,
-			Name:      call.Name,
-			Arguments: call.Arguments,
-		})
+	for i, part := range message.Content {
+		emitPartSnapshot(sink, step, i, part)
 	}
 }

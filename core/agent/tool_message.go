@@ -8,38 +8,54 @@ import (
 	"github.com/ijaidev/gojent/core/tool"
 )
 
-func resultMessage(call tool.Call, result tool.Result) (llm.Message, error) {
+// canonicalResult converts a tool result into the provider-neutral result
+// contract. Tool output content is restricted to text and files.
+func canonicalResult(call tool.Call, result tool.Result, status llm.ToolStatus) (llm.ToolResult, error) {
 	parts, err := result.Parts()
 	if err != nil {
-		return llm.Message{}, err
+		return llm.ToolResult{}, err
 	}
 	parts = llm.NonEmptyParts(parts)
-	if len(parts) == 0 {
-		parts = []llm.Part{llm.TextPart("{}")}
+	for i, part := range parts {
+		switch part.(type) {
+		case *llm.TextPart, *llm.FilePart:
+		default:
+			return llm.ToolResult{}, fmt.Errorf("%w: output part %d is %T", tool.ErrOutputEncode, i, part)
+		}
 	}
-	var data json.RawMessage
+	if len(parts) == 0 {
+		parts = []llm.Part{llm.NewTextPart("{}")}
+	}
+	canonical := llm.ToolResult{
+		CallID:  call.ID,
+		Name:    call.Name,
+		Kind:    call.Kind,
+		Status:  status,
+		Content: parts,
+	}
 	if result.Data != nil {
 		encoded, encodeErr := json.Marshal(result.Data)
 		if encodeErr != nil {
-			return llm.Message{}, fmt.Errorf("%w: %w", tool.ErrOutputEncode, encodeErr)
+			return llm.ToolResult{}, fmt.Errorf("%w: %w", tool.ErrOutputEncode, encodeErr)
 		}
-		data = encoded
+		canonical.Structured = encoded
 	}
-	return llm.Message{
-		Role:       llm.RoleTool,
-		Name:       call.Name,
-		ToolCallID: call.ID,
-		Content:    parts,
-		Data:       data,
-	}, nil
+	return canonical, nil
 }
 
-func toolErrorMessage(call tool.Call, err error) llm.Message {
-	return llm.Message{
-		Role:       llm.RoleTool,
-		Name:       call.Name,
-		ToolCallID: call.ID,
-		Content:    []llm.Part{llm.TextPart(toolErrorPayload(err))},
-		IsError:    true,
+// toolErrorResult builds an error result with a provider-safe payload.
+func toolErrorResult(call tool.Call, status llm.ToolStatus, err error) llm.ToolResult {
+	return llm.ToolResult{
+		CallID:  call.ID,
+		Name:    call.Name,
+		Kind:    call.Kind,
+		Status:  status,
+		Content: []llm.Part{llm.NewTextPart(toolErrorPayload(err))},
 	}
+}
+
+// resultMessage wraps one result in a user message for event observation.
+// The runner groups all results for a step before persisting (D17).
+func resultMessage(result llm.ToolResult) llm.Message {
+	return llm.ToolResultsMessage(result)
 }

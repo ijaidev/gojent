@@ -60,7 +60,7 @@ func (t customTool) Spec() tool.Spec {
 }
 
 func (t customTool) Execute(_ context.Context, _ tool.Call) (tool.Result, error) {
-	return tool.Result{Content: []llm.Part{llm.TextPart("custom result")}}, nil
+	return tool.Result{Content: []llm.Part{llm.NewTextPart("custom result")}}, nil
 }
 
 func TestTool_Validation(t *testing.T) {
@@ -498,7 +498,7 @@ func TestTool_Execute_OutputNormalization(t *testing.T) {
 		resultTool := tool.MustNew(tool.Config[string, llm.Part]{
 			ID: "part_output",
 			Execute: func(_ context.Context, _ string) (llm.Part, error) {
-				return llm.TextPart("part text"), nil
+				return llm.NewTextPart("part text"), nil
 			},
 		})
 		result, err := resultTool.Execute(context.Background(), tool.Call{Arguments: []byte(`"x"`)})
@@ -514,7 +514,7 @@ func TestTool_Execute_OutputNormalization(t *testing.T) {
 		resultTool := tool.MustNew(tool.Config[string, []llm.Part]{
 			ID: "parts_output",
 			Execute: func(_ context.Context, _ string) ([]llm.Part, error) {
-				return []llm.Part{llm.TextPart("one"), llm.TextPart("two")}, nil
+				return []llm.Part{llm.NewTextPart("one"), llm.NewTextPart("two")}, nil
 			},
 		})
 		result, err := resultTool.Execute(context.Background(), tool.Call{Arguments: []byte(`"x"`)})
@@ -614,7 +614,7 @@ func TestTool_Execute_OutputNormalization(t *testing.T) {
 			ID: "mixed_result_output",
 			Execute: func(_ context.Context, _ string) (tool.Result, error) {
 				return tool.Result{
-					Content: []llm.Part{llm.TextPart("visible")},
+					Content: []llm.Part{llm.NewTextPart("visible")},
 					Data:    map[string]any{"internal": true},
 				}, nil
 			},
@@ -681,12 +681,12 @@ func TestTool_ToDefinition(t *testing.T) {
 }
 
 func TestTool_MultipartResult(t *testing.T) {
-	imgPart := llm.ImageFromBytes([]byte{1, 2, 3}, "image/png")
+	imgPart := llm.FileFromBytes([]byte{1, 2, 3}, "image/png")
 	screenshotTool := tool.MustNew(tool.Config[string, tool.Result]{
 		ID:          "screenshot",
 		Description: "Takes screenshot",
 		Execute: func(_ context.Context, _ string) (tool.Result, error) {
-			return tool.NewImageResult("screen captured", imgPart), nil
+			return tool.NewFileResult("screen captured", imgPart), nil
 		},
 	})
 
@@ -697,19 +697,23 @@ func TestTool_MultipartResult(t *testing.T) {
 	if result.Text() != "screen captured" {
 		t.Errorf("expected 'screen captured', got %q", result.Text())
 	}
-	if len(result.Content) != 2 || result.Content[1].Type != llm.PartTypeImage {
+	if len(result.Content) != 2 {
+		t.Fatalf("unexpected content parts: %+v", result.Content)
+	}
+	file, ok := result.Content[1].(*llm.FilePart)
+	if !ok || file.MIMEType != "image/png" {
 		t.Errorf("unexpected content parts: %+v", result.Content)
 	}
 }
 
 func TestTool_ResultConstructors(t *testing.T) {
-	textResult := tool.Result{Content: []llm.Part{llm.TextPart("hello")}}
+	textResult := tool.Result{Content: []llm.Part{llm.NewTextPart("hello")}}
 	if textResult.Text() != "hello" {
 		t.Errorf("unexpected text result: %+v", textResult)
 	}
 
-	imgPart := llm.ImageFromBytes([]byte{1, 2, 3}, "image/png")
-	imageResult := tool.NewImageResult("caption", imgPart)
+	imgPart := llm.FileFromBytes([]byte{1, 2, 3}, "image/png")
+	imageResult := tool.NewFileResult("caption", imgPart)
 	if len(imageResult.Content) != 2 || imageResult.Text() != "caption" {
 		t.Errorf("unexpected image result: %+v", imageResult)
 	}
@@ -719,7 +723,7 @@ func TestTool_ResultConstructors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parts failed: %v", err)
 	}
-	if len(resultParts) != 1 || resultParts[0].Text != `{"ok":true}` {
+	if len(resultParts) != 1 || resultParts[0].(*llm.TextPart).Text != `{"ok":true}` {
 		t.Errorf("unexpected data parts: %+v", resultParts)
 	}
 

@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
@@ -14,7 +15,7 @@ import (
 
 type streamModel struct {
 	mu    sync.Mutex
-	steps [][]*llm.StreamChunk
+	steps [][]llm.StreamEvent
 	calls []llm.Request
 	next  int
 }
@@ -25,6 +26,22 @@ var (
 )
 
 func (m *streamModel) ModelID() string { return "stream-scripted" }
+
+func (m *streamModel) Info() llm.Info {
+	return llm.Info{
+		Provider: "test",
+		Model:    "stream-scripted",
+		Features: llm.Features{
+			Streaming: true,
+			Tools:     true,
+			Reasoning: true,
+			Vision:    true,
+			AudioIn:   true,
+			Video:     true,
+			Documents: true,
+		},
+	}
+}
 
 func (m *streamModel) Generate(context.Context, *llm.Request) (*llm.Response, error) {
 	return nil, fmt.Errorf("Generate should not be called when Stream is available")
@@ -39,9 +56,9 @@ func (m *streamModel) Stream(ctx context.Context, req *llm.Request) (llm.Stream,
 		return nil, fmt.Errorf("unexpected stream call %d", index+1)
 	}
 	m.next++
-	chunks := m.steps[index]
+	events := m.steps[index]
 	m.mu.Unlock()
-	return llm.NewSliceStream(ctx, chunks), nil
+	return llm.NewSliceStream(ctx, events), nil
 }
 
 func (m *streamModel) Calls() []llm.Request {
@@ -74,22 +91,42 @@ func (r *eventRecorder) Events() []agent.Event {
 func TestAgent_StreamingMergesFragmentsAndEmitsEvents(t *testing.T) {
 	stepUsage := llm.Usage{PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15}
 	finalUsage := llm.Usage{PromptTokens: 3, CompletionTokens: 2, TotalTokens: 5}
-	providerData := &llm.ProviderData{Provider: "test", Version: 1, Data: []byte(`{"thought":"sig"}`)}
+	provider := llm.ProviderData{"test": json.RawMessage(`{"thought":"sig"}`)}
 
-	model := &streamModel{steps: [][]*llm.StreamChunk{
+	model := &streamModel{steps: [][]llm.StreamEvent{
 		{
-			{Delta: "Hel"},
-			{Delta: "lo ", ThinkingDelta: "think"},
-			{ToolCalls: []llm.ToolCall{{Index: 0, Name: "echo", Arguments: `{"value":`}}},
-			{
-				ToolCalls:    []llm.ToolCall{{Index: 0, ID: "c1", Arguments: `"stream"}`}},
+			llm.MessageStart{ID: "resp-1", Model: "stream-scripted"},
+			llm.PartStart{Index: 0, Part: llm.NewTextPart("")},
+			llm.PartDelta{Index: 0, Kind: llm.PartTypeText, Text: "Hel"},
+			llm.PartDelta{Index: 0, Kind: llm.PartTypeText, Text: "lo "},
+			llm.PartStart{Index: 1, Part: llm.NewReasoningPart("")},
+			llm.PartDelta{Index: 1, Kind: llm.PartTypeReasoning, Text: "think", Provider: provider},
+			llm.PartStart{Index: 2, Part: llm.NewToolCallPart(llm.ToolCall{})},
+			llm.PartDelta{Index: 2, Kind: llm.PartTypeToolCall, Call: &llm.ToolCallDelta{
+				Name: "echo", InputFragment: `{"value":`,
+			}},
+			llm.PartDelta{Index: 2, Kind: llm.PartTypeToolCall, Call: &llm.ToolCallDelta{
+				CallID: "c1", InputFragment: `"stream"}`,
+			}},
+			llm.PartEnd{Index: 0},
+			llm.PartEnd{Index: 1},
+			llm.PartEnd{Index: 2},
+			llm.MessageEnd{
+				Status:       llm.MessageStatusCompleted,
 				FinishReason: llm.FinishReasonTool,
-				Usage:        &stepUsage,
-				ProviderData: providerData,
+				Usage:        stepUsage,
 			},
 		},
 		{
-			{Delta: "done", FinishReason: llm.FinishReasonStop, Usage: &finalUsage},
+			llm.MessageStart{ID: "resp-2", Model: "stream-scripted"},
+			llm.PartStart{Index: 0, Part: llm.NewTextPart("")},
+			llm.PartDelta{Index: 0, Kind: llm.PartTypeText, Text: "done"},
+			llm.PartEnd{Index: 0},
+			llm.MessageEnd{
+				Status:       llm.MessageStatusCompleted,
+				FinishReason: llm.FinishReasonStop,
+				Usage:        finalUsage,
+			},
 		},
 	}}
 
@@ -111,7 +148,7 @@ func TestAgent_StreamingMergesFragmentsAndEmitsEvents(t *testing.T) {
 		t.Errorf("Text = %q, want done", resp.Text)
 	}
 	if resp.Usage != (llm.Usage{PromptTokens: 13, CompletionTokens: 7, TotalTokens: 20}) {
-		t.Errorf("Usage = %+v, want cumulative chunk usage", resp.Usage)
+		t.Errorf("Usage = %+v, want cumulative usage", resp.Usage)
 	}
 	if got := recorder.Calls(); len(got) != 1 {
 		t.Fatalf("executed tools = %d, want 1", len(got))
@@ -122,28 +159,37 @@ func TestAgent_StreamingMergesFragmentsAndEmitsEvents(t *testing.T) {
 		t.Fatalf("stored messages = %d, want user, assistant, tool, assistant", len(messages))
 	}
 	firstAssistant := messages[1]
-	if firstAssistant.Text() != "Hello " || firstAssistant.Thinking != "think" {
-		t.Errorf("streamed assistant content = %q / %q", firstAssistant.Text(), firstAssistant.Thinking)
+	if firstAssistant.Text() != "Hello " || reasoningTextOf(firstAssistant) != "think" {
+		t.Errorf("streamed assistant content = %q / %q", firstAssistant.Text(), reasoningTextOf(firstAssistant))
 	}
-	if len(firstAssistant.ToolCalls) != 1 {
-		t.Fatalf("tool calls = %d, want 1", len(firstAssistant.ToolCalls))
+	calls := firstAssistant.ToolCalls()
+	if len(calls) != 1 {
+		t.Fatalf("tool calls = %d, want 1", len(calls))
 	}
-	if firstAssistant.ToolCalls[0].ID != "c1" || firstAssistant.ToolCalls[0].Arguments != `{"value":"stream"}` {
-		t.Errorf("merged tool call = %+v", firstAssistant.ToolCalls[0])
+	if calls[0].CallID != "c1" || string(calls[0].Input) != `{"value":"stream"}` {
+		t.Errorf("merged tool call = %+v", calls[0])
 	}
-	if firstAssistant.ProviderData == nil || string(firstAssistant.ProviderData.Data) != `{"thought":"sig"}` {
-		t.Errorf("provider data not attached to streamed assistant: %+v", firstAssistant.ProviderData)
+	reasoning, ok := firstAssistant.Content[1].(*llm.ReasoningPart)
+	if !ok {
+		t.Fatalf("content[1] = %T, want reasoning", firstAssistant.Content[1])
+	}
+	if string(reasoning.Provider["test"]) != `{"thought":"sig"}` {
+		t.Errorf("provider data not attached to streamed reasoning part: %+v", reasoning.Provider)
 	}
 
 	replay := model.Calls()[1].Messages
 	var replayedAssistant *llm.Message
 	for i := range replay {
-		if replay[i].Role == llm.RoleAssistant && len(replay[i].ToolCalls) > 0 {
+		if replay[i].Role == llm.RoleAssistant && len(replay[i].ToolCalls()) > 0 {
 			replayedAssistant = &replay[i]
 		}
 	}
-	if replayedAssistant == nil || replayedAssistant.ProviderData == nil {
-		t.Fatalf("provider data was not replayed to the next model call: %+v", replay)
+	if replayedAssistant == nil {
+		t.Fatalf("streamed assistant was not replayed: %+v", replay)
+	}
+	replayedReasoning, ok := replayedAssistant.Content[1].(*llm.ReasoningPart)
+	if !ok || string(replayedReasoning.Provider["test"]) != `{"thought":"sig"}` {
+		t.Fatalf("provider data was not replayed to the next model call: %+v", replayedAssistant)
 	}
 	assertNoDanglingToolCalls(t, messages)
 
@@ -248,8 +294,9 @@ func TestAgent_PanickingSinkDoesNotStarveRunEvents(t *testing.T) {
 }
 
 func TestAgent_StreamDrainsEventsAndReturnsResponse(t *testing.T) {
-	model := &streamModel{steps: [][]*llm.StreamChunk{{
-		{Delta: "hi", FinishReason: llm.FinishReasonStop},
+	model := &streamModel{steps: [][]llm.StreamEvent{{
+		llm.PartDelta{Index: 0, Kind: llm.PartTypeText, Text: "hi"},
+		llm.MessageEnd{Status: llm.MessageStatusCompleted, FinishReason: llm.FinishReasonStop},
 	}}}
 	a := mustAgent(t, agent.Config{Name: "async", Model: model})
 
@@ -280,4 +327,20 @@ func TestAgent_StreamDrainsEventsAndReturnsResponse(t *testing.T) {
 	if resp.Text != "hi" {
 		t.Errorf("Text = %q", resp.Text)
 	}
+}
+
+// reasoningTextOf joins readable reasoning and summaries in part order.
+func reasoningTextOf(message llm.Message) string {
+	var out string
+	for _, part := range message.Content {
+		reasoning, ok := part.(*llm.ReasoningPart)
+		if !ok {
+			continue
+		}
+		out += reasoning.Text
+		for _, summary := range reasoning.Summary {
+			out += summary
+		}
+	}
+	return out
 }

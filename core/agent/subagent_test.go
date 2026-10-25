@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -29,7 +30,7 @@ func TestAgent_AsToolDelegatesToSubagent(t *testing.T) {
 	}
 
 	parentModel := &scriptModel{steps: []step{
-		toolCallStep(llm.ToolCall{ID: "sub1", Name: "math_helper", Arguments: `{"prompt":"what is 6*7?"}`}),
+		toolCallStep(llm.ToolCall{CallID: "sub1", Name: "math_helper", Input: json.RawMessage(`{"prompt":"what is 6*7?"}`)}),
 		finalText("The answer is 42"),
 	}}
 	parent := mustAgent(t, agent.Config{Name: "parent", Model: parentModel, Tools: []tool.Tool{subTool}})
@@ -58,14 +59,15 @@ func TestAgent_AsToolDelegatesToSubagent(t *testing.T) {
 	if len(messages) != 4 {
 		t.Fatalf("parent messages = %d, want user, assistant, tool, assistant", len(messages))
 	}
-	if messages[2].Role != llm.RoleTool || messages[2].ToolCallID != "sub1" {
+	results := messages[2].ToolResults()
+	if messages[2].Role != llm.RoleUser || len(results) != 1 || results[0].CallID != "sub1" {
 		t.Fatalf("unexpected subagent result: %+v", messages[2])
 	}
-	if messages[2].Text() != "42" {
-		t.Errorf("subagent result text = %q", messages[2].Text())
+	if results[0].Text() != "42" {
+		t.Errorf("subagent result text = %q", results[0].Text())
 	}
-	if messages[2].Data == nil || !strings.Contains(string(messages[2].Data), `"text":"42"`) {
-		t.Errorf("subagent response data missing: %s", messages[2].Data)
+	if len(results[0].Structured) == 0 || !strings.Contains(string(results[0].Structured), `"text":"42"`) {
+		t.Errorf("subagent response data missing: %s", results[0].Structured)
 	}
 	assertNoDanglingToolCalls(t, messages)
 

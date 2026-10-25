@@ -2,6 +2,7 @@ package agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ func TestAgent_OptionsGeneration(t *testing.T) {
 	a := mustAgent(t, agent.Config{
 		Name:           "assistant",
 		Model:          model,
-		Thinking:       &llm.ThinkingConfig{Level: llm.ThinkingLevelHigh},
+		Reasoning:      &llm.ReasoningConfig{Level: llm.ReasoningLevelHigh},
 		ResponseFormat: &llm.ResponseFormat{Type: llm.ResponseFormatJSON, Name: "out"},
 		Temperature:    &temperature,
 		MaxTokens:      &maxTokens,
@@ -41,8 +42,8 @@ func TestAgent_OptionsGeneration(t *testing.T) {
 	if request.TopP == nil || *request.TopP != topP {
 		t.Errorf("TopP = %v, want %v", request.TopP, topP)
 	}
-	if request.Thinking == nil || request.Thinking.Level != llm.ThinkingLevelHigh {
-		t.Errorf("Thinking = %+v, want high", request.Thinking)
+	if request.Reasoning == nil || request.Reasoning.Level != llm.ReasoningLevelHigh {
+		t.Errorf("Reasoning = %+v, want high", request.Reasoning)
 	}
 	if request.ResponseFormat == nil || request.ResponseFormat.Type != llm.ResponseFormatJSON {
 		t.Errorf("ResponseFormat = %+v, want JSON", request.ResponseFormat)
@@ -87,7 +88,7 @@ func TestAgent_OptionsBudgetMergesPerField(t *testing.T) {
 
 func TestAgent_OptionsBudgetKeepsStepsWhenRunOverridesAnotherField(t *testing.T) {
 	model := &scriptModel{steps: []step{
-		toolCallStep(llm.ToolCall{ID: "call-1", Name: "missing", Arguments: "{}"}),
+		toolCallStep(llm.ToolCall{CallID: "call-1", Name: "missing", Input: json.RawMessage("{}")}),
 	}}
 	a := mustAgent(t, agent.Config{
 		Name:   "assistant",
@@ -160,7 +161,7 @@ func newDeadlineProbe(t *testing.T, seen *bool) tool.Tool {
 
 func toolProbeModel() *scriptModel {
 	return &scriptModel{steps: []step{
-		toolCallStep(llm.ToolCall{ID: "call-1", Name: "probe", Arguments: "{}"}),
+		toolCallStep(llm.ToolCall{CallID: "call-1", Name: "probe", Input: json.RawMessage("{}")}),
 		finalText("done"),
 	}}
 }
@@ -203,7 +204,7 @@ func TestAgent_OptionsApprover(t *testing.T) {
 	recorder := &echoRecorder{}
 	approved := 0
 	model := &scriptModel{steps: []step{
-		toolCallStep(llm.ToolCall{ID: "call-1", Name: "echo", Arguments: `{"value":"hi"}`}),
+		toolCallStep(llm.ToolCall{CallID: "call-1", Name: "echo", Input: json.RawMessage(`{"value":"hi"}`)}),
 		finalText("done"),
 	}}
 	a := mustAgent(t, agent.Config{

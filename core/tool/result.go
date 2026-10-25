@@ -34,14 +34,14 @@ func (r Result) Parts() ([]llm.Part, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrOutputEncode, err)
 	}
-	return []llm.Part{llm.TextPart(string(encoded))}, nil
+	return []llm.Part{llm.NewTextPart(string(encoded))}, nil
 }
 
-// NewImageResult creates a tool result with optional text and a media part.
-func NewImageResult(text string, part llm.Part) Result {
+// NewFileResult creates a tool result with optional text and a file part.
+func NewFileResult(text string, part llm.Part) Result {
 	parts := make([]llm.Part, 0, 2)
 	if text != "" {
-		parts = append(parts, llm.TextPart(text))
+		parts = append(parts, llm.NewTextPart(text))
 	}
 	parts = append(parts, part)
 	return Result{Content: parts}
@@ -75,9 +75,9 @@ func resultFromOutput[Out any](out Out) (Result, error) {
 	case []llm.Part:
 		return Result{Content: append([]llm.Part(nil), value...)}, nil
 	case string:
-		return Result{Content: []llm.Part{llm.TextPart(value)}}, nil
+		return Result{Content: []llm.Part{llm.NewTextPart(value)}}, nil
 	case []byte:
-		return Result{Content: []llm.Part{llm.TextPart(string(value))}}, nil
+		return Result{Content: []llm.Part{llm.NewTextPart(string(value))}}, nil
 	case nil:
 		return Result{}, nil
 	}
@@ -86,10 +86,10 @@ func resultFromOutput[Out any](out Out) (Result, error) {
 	if typ != nil && !implementsJSONMarshaler(typ) {
 		switch typ.Kind() {
 		case reflect.String:
-			return Result{Content: []llm.Part{llm.TextPart(reflect.ValueOf(out).String())}}, nil
+			return Result{Content: []llm.Part{llm.NewTextPart(reflect.ValueOf(out).String())}}, nil
 		case reflect.Slice:
 			if typ.Elem().Kind() == reflect.Uint8 {
-				return Result{Content: []llm.Part{llm.TextPart(string(reflect.ValueOf(out).Bytes()))}}, nil
+				return Result{Content: []llm.Part{llm.NewTextPart(string(reflect.ValueOf(out).Bytes()))}}, nil
 			}
 		}
 	}
@@ -99,7 +99,7 @@ func resultFromOutput[Out any](out Out) (Result, error) {
 		return Result{}, fmt.Errorf("%w: %w", ErrOutputEncode, err)
 	}
 	return normalizeResult(Result{
-		Content: []llm.Part{llm.TextPart(string(encoded))},
+		Content: []llm.Part{llm.NewTextPart(string(encoded))},
 		Data:    out,
 	})
 }

@@ -38,9 +38,9 @@ type RunOptions struct {
 	Model llm.Model
 	// Tools adds or replaces agent tools by name.
 	Tools []tool.Tool
-	// Thinking overrides reasoning configuration. The agent default is used
+	// Reasoning overrides reasoning configuration. The agent default is used
 	// when nil.
-	Thinking *llm.ThinkingConfig
+	Reasoning *llm.ReasoningConfig
 	// ResponseFormat constrains structured output. The agent default is used
 	// when nil.
 	ResponseFormat *llm.ResponseFormat
@@ -80,11 +80,11 @@ func resolveOptions(opts []Option) RunOptions {
 func (o RunOptions) snapshot() RunOptions {
 	o.Session = cloneSession(o.Session)
 	o.Tools = slices.Clone(o.Tools)
-	o.Thinking = o.Thinking.Clone()
+	o.Reasoning = o.Reasoning.Clone()
 	o.ResponseFormat = o.ResponseFormat.Clone()
 	o.Temperature = cloneFloat(o.Temperature)
 	o.MaxTokens = cloneInt(o.MaxTokens)
 	o.TopP = cloneFloat(o.TopP)
-	o.Media = cloneParts(o.Media)
+	o.Media = llm.CloneParts(o.Media)
 	return o
 }

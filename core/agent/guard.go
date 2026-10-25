@@ -77,7 +77,7 @@ func callStream(ctx context.Context, streamer llm.Streamer, request *llm.Request
 	})
 }
 
-func recvStream(stream llm.Stream) (*llm.StreamChunk, error) {
+func recvStream(stream llm.Stream) (llm.StreamEvent, error) {
 	return guardValue(stream.Recv)
 }
 

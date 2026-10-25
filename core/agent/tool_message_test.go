@@ -34,26 +34,26 @@ func TestPanicError_NilReceiver(t *testing.T) {
 	}
 }
 
-func TestResultMessage_DropsEmptyTextParts(t *testing.T) {
-	message, err := resultMessage(tool.Call{ID: "c1", Name: "tool"}, tool.Result{
-		Content: []llm.Part{llm.TextPart(""), llm.TextPart("ok")},
-	})
+func TestCanonicalResult_DropsEmptyTextParts(t *testing.T) {
+	result, err := canonicalResult(tool.Call{ID: "c1", Name: "tool"}, tool.Result{
+		Content: []llm.Part{llm.NewTextPart(""), llm.NewTextPart("ok")},
+	}, llm.ToolStatusCompleted)
 	if err != nil {
-		t.Fatalf("resultMessage: %v", err)
+		t.Fatalf("canonicalResult: %v", err)
 	}
-	if len(message.Content) != 1 || message.Content[0].Text != "ok" {
-		t.Errorf("content = %+v, want a single %q part", message.Content, "ok")
+	if len(result.Content) != 1 || result.Content[0].(*llm.TextPart).Text != "ok" {
+		t.Errorf("content = %+v, want a single %q part", result.Content, "ok")
 	}
 }
 
-func TestResultMessage_AllEmptyPartsBecomeEmptyObject(t *testing.T) {
-	message, err := resultMessage(tool.Call{ID: "c1", Name: "tool"}, tool.Result{
-		Content: []llm.Part{llm.TextPart("")},
-	})
+func TestCanonicalResult_AllEmptyPartsBecomeEmptyObject(t *testing.T) {
+	result, err := canonicalResult(tool.Call{ID: "c1", Name: "tool"}, tool.Result{
+		Content: []llm.Part{llm.NewTextPart("")},
+	}, llm.ToolStatusCompleted)
 	if err != nil {
-		t.Fatalf("resultMessage: %v", err)
+		t.Fatalf("canonicalResult: %v", err)
 	}
-	if len(message.Content) != 1 || message.Content[0].Text != "{}" {
-		t.Errorf("content = %+v, want a single %q part", message.Content, "{}")
+	if len(result.Content) != 1 || result.Content[0].(*llm.TextPart).Text != "{}" {
+		t.Errorf("content = %+v, want a single %q part", result.Content, "{}")
 	}
 }

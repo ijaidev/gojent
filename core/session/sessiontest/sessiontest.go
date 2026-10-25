@@ -106,7 +106,7 @@ func testAtomicAppend(t *testing.T, store session.Store) {
 	valid := llm.UserMessage("valid")
 	// Invalid raw JSON cannot be encoded by a JSON-backed store. If a backend
 	// accepts it, the suite cannot exercise a mid-append failure.
-	invalid := llm.Message{Role: llm.RoleTool, Data: json.RawMessage(`{`)}
+	invalid := llm.ToolResultsMessage(llm.ToolResult{CallID: "call-1", Structured: json.RawMessage(`{`)})
 	if err := store.Append(ctx, sess, valid, invalid); err == nil {
 		t.Skip("store accepted unencodable message; no failure injection available")
 	}
@@ -123,15 +123,19 @@ func testAtomicAppend(t *testing.T, store session.Store) {
 func testReplayState(t *testing.T, store session.Store) {
 	ctx := context.Background()
 	sess := session.Session{ID: "replay", ResourceID: "tenant"}
-	original := llm.Message{
-		Role:      llm.RoleAssistant,
-		Thinking:  "reasoning",
-		ToolCalls: []llm.ToolCall{{Index: 0, ID: "call-1", Name: "lookup", Arguments: `{"q":"go"}`}},
-		ProviderData: &llm.ProviderData{
-			Provider: "test",
-			Version:  2,
-			Data:     []byte(`{"signature":"abc"}`),
-		},
+	reasoning := llm.NewReasoningPart("reasoning")
+	call := llm.NewToolCallPart(llm.ToolCall{
+		CallID: "call-1",
+		Name:   "lookup",
+		Input:  json.RawMessage(`{"q":"go"}`),
+	})
+	if err := call.Set("test", map[string]string{"signature": "abc"}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	original := llm.AssistantMessageWithParts(reasoning, call)
+	original.Provider = make(llm.ProviderData)
+	if err := original.Provider.Set("test", map[string]string{"response_id": "resp-1"}); err != nil {
+		t.Fatalf("Set: %v", err)
 	}
 	if err := store.Append(ctx, sess, llm.UserMessage("find"), original); err != nil {
 		t.Fatalf("Append: %v", err)
@@ -145,36 +149,57 @@ func testReplayState(t *testing.T, store session.Store) {
 		t.Fatalf("messages = %d, want 2", len(messages))
 	}
 	assistant := messages[1]
-	if assistant.Thinking != "reasoning" {
-		t.Errorf("Thinking = %q", assistant.Thinking)
+	if got := reasoningTextOf(assistant); got != "reasoning" {
+		t.Errorf("reasoning = %q", got)
 	}
-	if len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].ID != "call-1" {
-		t.Errorf("ToolCalls = %+v", assistant.ToolCalls)
+	calls := assistant.ToolCalls()
+	if len(calls) != 1 || calls[0].CallID != "call-1" || string(calls[0].Input) != `{"q":"go"}` {
+		t.Errorf("ToolCalls = %+v", calls)
 	}
-	if assistant.ProviderData == nil || assistant.ProviderData.Provider != "test" || assistant.ProviderData.Version != 2 {
-		t.Fatalf("ProviderData = %+v", assistant.ProviderData)
+	loadedCall := assistant.Content[1].(*llm.ToolCallPart)
+	var signature map[string]string
+	if err := loadedCall.Get("test", &signature); err != nil {
+		t.Fatalf("Get call provider data: %v", err)
 	}
-	if string(assistant.ProviderData.Data) != `{"signature":"abc"}` {
-		t.Errorf("ProviderData.Data = %s", assistant.ProviderData.Data)
+	if signature["signature"] != "abc" {
+		t.Errorf("call provider data = %v", signature)
+	}
+	var responseID map[string]string
+	if err := assistant.Provider.Get("test", &responseID); err != nil {
+		t.Fatalf("Get message provider data: %v", err)
+	}
+	if responseID["response_id"] != "resp-1" {
+		t.Errorf("message provider data = %v", responseID)
 	}
 
 	// Loaded messages must not alias store state.
-	if len(assistant.ToolCalls) > 0 {
-		assistant.ToolCalls[0].Arguments = `{"q":"mutated"}`
-	}
-	if assistant.ProviderData != nil && len(assistant.ProviderData.Data) > 0 {
-		assistant.ProviderData.Data[0] = '['
-	}
+	loadedCall.Input[0] = '['
+	loadedCall.Provider["test"] = json.RawMessage(`{"signature":"mutated"}`)
+	assistant.Provider["test"] = json.RawMessage(`{"response_id":"mutated"}`)
 	reloaded, err := store.Load(ctx, sess)
 	if err != nil {
 		t.Fatalf("Load again: %v", err)
 	}
-	if reloaded[1].ToolCalls[0].Arguments != `{"q":"go"}` {
-		t.Error("mutating loaded tool calls changed store state")
+	reloadedCall := reloaded[1].Content[1].(*llm.ToolCallPart)
+	if string(reloadedCall.Input) != `{"q":"go"}` {
+		t.Error("mutating loaded tool input changed store state")
 	}
-	if string(reloaded[1].ProviderData.Data) != `{"signature":"abc"}` {
-		t.Error("mutating loaded provider data changed store state")
+	if string(reloadedCall.Provider["test"]) != `{"signature":"abc"}` {
+		t.Error("mutating loaded call provider data changed store state")
 	}
+	if string(reloaded[1].Provider["test"]) != `{"response_id":"resp-1"}` {
+		t.Error("mutating loaded message provider data changed store state")
+	}
+}
+
+func reasoningTextOf(message llm.Message) string {
+	var out string
+	for _, part := range message.Content {
+		if reasoning, ok := part.(*llm.ReasoningPart); ok {
+			out += reasoning.Text
+		}
+	}
+	return out
 }
 
 func testValidation(t *testing.T, store session.Store) {

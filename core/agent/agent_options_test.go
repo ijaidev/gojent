@@ -41,7 +41,7 @@ func TestAgent_ApplyAgentOptions(t *testing.T) {
 		Budget:         agent.Budget{MaxSteps: 4, MaxToolCalls: 2, MaxTotalTokens: 100, MaxDuration: time.Minute},
 		Retry:          agent.RetryPolicy{MaxAttempts: 3, InitialDelay: time.Second, MaxDelay: time.Minute},
 		ToolTimeout:    30 * time.Second,
-		Thinking:       &llm.ThinkingConfig{Level: llm.ThinkingLevelHigh},
+		Reasoning:      &llm.ReasoningConfig{Level: llm.ReasoningLevelHigh},
 		ResponseFormat: &llm.ResponseFormat{Type: llm.ResponseFormatJSON},
 		Temperature:    &temperature,
 		MaxTokens:      &maxTokens,
@@ -71,8 +71,8 @@ func TestAgent_ApplyAgentOptions(t *testing.T) {
 	if got.ToolTimeout != 30*time.Second {
 		t.Errorf("ToolTimeout = %v, want 30s", got.ToolTimeout)
 	}
-	if got.Thinking == nil || got.Thinking.Level != llm.ThinkingLevelHigh {
-		t.Errorf("Thinking = %+v, want high", got.Thinking)
+	if got.Reasoning == nil || got.Reasoning.Level != llm.ReasoningLevelHigh {
+		t.Errorf("Reasoning = %+v, want high", got.Reasoning)
 	}
 	if got.ResponseFormat == nil || got.ResponseFormat.Type != llm.ResponseFormatJSON {
 		t.Errorf("ResponseFormat = %+v, want JSON", got.ResponseFormat)
@@ -94,7 +94,7 @@ func TestAgent_ApplyAgentOptions(t *testing.T) {
 	*got.Temperature = 0.9
 	*got.MaxTokens = 5
 	*got.TopP = 0.1
-	got.Thinking.Level = llm.ThinkingLevelLow
+	got.Reasoning.Level = llm.ReasoningLevelLow
 	got.ResponseFormat.Type = llm.ResponseFormatText
 
 	again := a.ApplyAgentOptions(agent.RunOptions{})
@@ -107,8 +107,8 @@ func TestAgent_ApplyAgentOptions(t *testing.T) {
 	if again.TopP == nil || *again.TopP != topP {
 		t.Errorf("TopP after mutation = %v, want %v", again.TopP, topP)
 	}
-	if again.Thinking == nil || again.Thinking.Level != llm.ThinkingLevelHigh {
-		t.Errorf("Thinking after mutation = %+v, want high", again.Thinking)
+	if again.Reasoning == nil || again.Reasoning.Level != llm.ReasoningLevelHigh {
+		t.Errorf("Reasoning after mutation = %+v, want high", again.Reasoning)
 	}
 	if again.ResponseFormat == nil || again.ResponseFormat.Type != llm.ResponseFormatJSON {
 		t.Errorf("ResponseFormat after mutation = %+v, want JSON", again.ResponseFormat)
@@ -135,7 +135,7 @@ func TestAgent_ApplyAgentOptionsRunOverrides(t *testing.T) {
 		Budget:         agent.Budget{MaxSteps: 4, MaxToolCalls: 2, MaxTotalTokens: 100, MaxDuration: time.Minute},
 		Retry:          agent.RetryPolicy{MaxAttempts: 3, InitialDelay: time.Second, MaxDelay: time.Minute},
 		ToolTimeout:    30 * time.Second,
-		Thinking:       &llm.ThinkingConfig{Level: llm.ThinkingLevelHigh},
+		Reasoning:      &llm.ReasoningConfig{Level: llm.ReasoningLevelHigh},
 		ResponseFormat: &llm.ResponseFormat{Type: llm.ResponseFormatJSON},
 		Temperature:    &agentTemperature,
 		MaxTokens:      &agentMaxTokens,
@@ -151,7 +151,7 @@ func TestAgent_ApplyAgentOptionsRunOverrides(t *testing.T) {
 		Budget:         agent.Budget{MaxSteps: 8},
 		Retry:          agent.RetryPolicy{MaxAttempts: 1},
 		ToolTimeout:    -1,
-		Thinking:       &llm.ThinkingConfig{Level: llm.ThinkingLevelLow},
+		Reasoning:      &llm.ReasoningConfig{Level: llm.ReasoningLevelLow},
 		ResponseFormat: &llm.ResponseFormat{Type: llm.ResponseFormatText},
 		Temperature:    &runTemperature,
 		MaxTokens:      &runMaxTokens,
@@ -180,8 +180,8 @@ func TestAgent_ApplyAgentOptionsRunOverrides(t *testing.T) {
 	if got.ToolTimeout != -1 {
 		t.Errorf("ToolTimeout = %v, want -1", got.ToolTimeout)
 	}
-	if got.Thinking == nil || got.Thinking.Level != llm.ThinkingLevelLow {
-		t.Errorf("Thinking = %+v, want low", got.Thinking)
+	if got.Reasoning == nil || got.Reasoning.Level != llm.ReasoningLevelLow {
+		t.Errorf("Reasoning = %+v, want low", got.Reasoning)
 	}
 	if got.ResponseFormat == nil || got.ResponseFormat.Type != llm.ResponseFormatText {
 		t.Errorf("ResponseFormat = %+v, want text", got.ResponseFormat)
@@ -213,19 +213,19 @@ func TestAgent_ApplyAgentOptionsNilAgent(t *testing.T) {
 
 func TestAgent_OptionsAreSnapshotted(t *testing.T) {
 	temperature := 0.1
-	thinking := &llm.ThinkingConfig{Level: llm.ThinkingLevelLow}
+	thinking := &llm.ReasoningConfig{Level: llm.ReasoningLevelLow}
 	format := &llm.ResponseFormat{Type: llm.ResponseFormatJSON}
 	model := &scriptModel{steps: []step{finalText("ok")}}
 	a := mustAgent(t, agent.Config{
 		Name:           "assistant",
 		Model:          model,
-		Thinking:       thinking,
+		Reasoning:      thinking,
 		ResponseFormat: format,
 		Temperature:    &temperature,
 	})
 
 	temperature = 0.9
-	thinking.Level = llm.ThinkingLevelHigh
+	thinking.Level = llm.ReasoningLevelHigh
 	format.Type = llm.ResponseFormatText
 
 	if _, err := a.Generate(context.Background(), "hi"); err != nil {
@@ -235,8 +235,8 @@ func TestAgent_OptionsAreSnapshotted(t *testing.T) {
 	if request.Temperature == nil || *request.Temperature != 0.1 {
 		t.Errorf("Temperature = %v, want 0.1", request.Temperature)
 	}
-	if request.Thinking == nil || request.Thinking.Level != llm.ThinkingLevelLow {
-		t.Errorf("Thinking = %+v, want low", request.Thinking)
+	if request.Reasoning == nil || request.Reasoning.Level != llm.ReasoningLevelLow {
+		t.Errorf("Reasoning = %+v, want low", request.Reasoning)
 	}
 	if request.ResponseFormat == nil || request.ResponseFormat.Type != llm.ResponseFormatJSON {
 		t.Errorf("ResponseFormat = %+v, want JSON", request.ResponseFormat)
