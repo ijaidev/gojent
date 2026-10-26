@@ -4,6 +4,7 @@ use (
 	.
 	./codjent
 	./examples/google
+	./providers/anthropic
 	./providers/google
 	./stores/postgres
 	./stores/sqlite

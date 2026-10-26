@@ -1,6 +1,6 @@
 # Run all unit tests across the whole package
 test:
-    go test -v ./... ./providers/google/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/... ./codjent/...
+    go test -v ./... ./providers/anthropic/... ./providers/google/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/... ./codjent/...
 
 # Run the database integration tests (requires GOJENT_POSTGRES_DSN)
 test-integration:
@@ -8,7 +8,7 @@ test-integration:
 
 # Run static analysis and linting across all packages
 lint:
-    golangci-lint run ./... ./providers/google/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/... ./codjent/...
+    golangci-lint run ./... ./providers/anthropic/... ./providers/google/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/... ./codjent/...
 
 # Run codjent's local backend
 codjent:
@@ -45,7 +45,7 @@ check: fmt-check tidy-check lint test
 tidy:
     #!/usr/bin/env bash
     set -e
-    for dir in . providers/google examples/google stores/sqlite stores/postgres codjent; do
+    for dir in . providers/anthropic providers/google examples/google stores/sqlite stores/postgres codjent; do
         echo "== $dir =="
         (cd "$dir" && go mod tidy)
     done
@@ -56,7 +56,7 @@ tidy:
 tidy-check:
     #!/usr/bin/env bash
     set -e
-    for dir in . providers/google examples/google stores/sqlite stores/postgres codjent; do
+    for dir in . providers/anthropic providers/google examples/google stores/sqlite stores/postgres codjent; do
         diff=$(cd "$dir" && go mod tidy -diff 2>&1 || true)
         if [ -n "$diff" ]; then
             echo "[ERROR] Module $dir is not tidy:"

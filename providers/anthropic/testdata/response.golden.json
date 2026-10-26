@@ -1,0 +1,43 @@
+{
+  "finish_reason": "tool_calls",
+  "id": "msg_1",
+  "message": {
+    "content": [
+      {
+        "provider": {
+          "anthropic": {
+            "signature": "sig-1"
+          }
+        },
+        "text": "considering",
+        "type": "reasoning"
+      },
+      {
+        "text": "checking",
+        "type": "text"
+      },
+      {
+        "call_id": "toolu_1",
+        "input": {
+          "q": "go"
+        },
+        "kind": "function",
+        "name": "lookup",
+        "status": "completed",
+        "type": "tool_call"
+      }
+    ],
+    "role": "assistant",
+    "status": "completed"
+  },
+  "model": "claude-test",
+  "raw_finish_reason": "tool_use",
+  "status": "completed",
+  "usage": {
+    "cached_tokens": 3,
+    "completion_tokens": 5,
+    "prompt_tokens": 15,
+    "reasoning_tokens": 1,
+    "total_tokens": 20
+  }
+}
