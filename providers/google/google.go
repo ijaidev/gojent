@@ -135,11 +135,6 @@ func New(ctx context.Context, cfg Config) (*Model, error) {
 	}, nil
 }
 
-// NewModel is an alias for New.
-func NewModel(ctx context.Context, cfg Config) (*Model, error) {
-	return New(ctx, cfg)
-}
-
 // resolveAPIKey returns the API key used for a new client. Explicit
 // configuration always beats the environment: the provider's APIKey field
 // first, then ClientConfig.APIKey, then GEMINI_API_KEY, then GOOGLE_API_KEY.

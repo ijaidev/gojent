@@ -250,13 +250,6 @@ func (a *Assembler) grow(index int) {
 	}
 }
 
-// Parts returns the parts assembled so far.
-func (a *Assembler) Parts() []Part {
-	out := make([]Part, len(a.parts))
-	copy(out, a.parts)
-	return out
-}
-
 // Finish returns the assembled response. It requires a terminal MessageEnd and
 // at least one non-empty part.
 func (a *Assembler) Finish() (*Response, error) {

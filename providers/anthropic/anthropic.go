@@ -104,11 +104,6 @@ func New(_ context.Context, cfg Config) (*Model, error) {
 	}, nil
 }
 
-// NewModel is an alias for New.
-func NewModel(ctx context.Context, cfg Config) (*Model, error) {
-	return New(ctx, cfg)
-}
-
 // resolveAPIKey returns the configured key, falling back to the environment
 // variable the SDK itself reads.
 func resolveAPIKey(cfg Config) string {

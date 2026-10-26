@@ -144,7 +144,7 @@ agent prefers a model's `Stream` method when it implements `llm.Streamer`.
 
 The core exposes four extension points:
 
-- `llm.Model` (optionally `llm.Streamer` and `llm.InfoProvider`)
+- `llm.Model` (optionally `llm.Streamer`); `Info()` is required
 - `tool.Tool`
 - `session.Store`
 - `agent.Policy`, `agent.Approver`, and `agent.Sink`
@@ -203,7 +203,10 @@ cancellations are contained by the runtime.
 Ready-made bundles live in `tools`:
 
 ```go
-import "github.com/ijaidev/gojent/tools/fs"
+import (
+	"github.com/ijaidev/gojent/tools"
+	"github.com/ijaidev/gojent/tools/fs"
+)
 
 fsTools, _ := tools.StandardFilesystemTools(fs.Config{BaseDir: "/workspace"})
 ```
@@ -311,7 +314,7 @@ go test ./...
 Shared conformance suites catch adapter drift:
 
 - `core/llm/llmtest` checks that generation and streaming agree on text,
-  thinking, tool calls, usage, and finish reasons.
+  reasoning, tool calls, usage, and finish reasons.
 - `core/session/sessiontest` checks ordering, tenant isolation, atomic append,
   replay state, validation, and cancellation.
 

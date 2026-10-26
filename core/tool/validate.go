@@ -388,8 +388,3 @@ func invalid(path, format string, args ...any) error {
 	}
 	return fmt.Errorf("%w: %s: %s", ErrInvalidInput, path, fmt.Sprintf(format, args...))
 }
-
-// IsValidationError reports whether err came from schema validation.
-func IsValidationError(err error) bool {
-	return errors.Is(err, ErrInvalidInput)
-}

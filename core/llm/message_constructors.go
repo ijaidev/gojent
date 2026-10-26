@@ -31,24 +31,6 @@ func AssistantMessageWithParts(parts ...Part) Message {
 	return Message{Role: RoleAssistant, Content: NonEmptyParts(parts)}
 }
 
-// ToolResultMessage creates a completed tool result for one call.
-func ToolResultMessage(callID, content string) Message {
-	return ToolResultsMessage(ToolResult{
-		CallID:  callID,
-		Status:  ToolStatusCompleted,
-		Content: NonEmptyParts([]Part{NewTextPart(content)}),
-	})
-}
-
-// ToolErrorMessage creates an error tool result for one call.
-func ToolErrorMessage(callID, content string) Message {
-	return ToolResultsMessage(ToolResult{
-		CallID:  callID,
-		Status:  ToolStatusError,
-		Content: NonEmptyParts([]Part{NewTextPart(content)}),
-	})
-}
-
 // ToolResultsMessage groups results for one assistant turn in a single user
 // message, in the given order (D5, D17).
 func ToolResultsMessage(results ...ToolResult) Message {

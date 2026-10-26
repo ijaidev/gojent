@@ -23,7 +23,6 @@ type Agent struct {
 	instructions string
 	model        llm.Model
 	tools        []tool.Tool
-	toolByName   map[string]tool.Tool
 
 	policy         Policy
 	approver       Approver
@@ -101,18 +100,12 @@ func New(cfg Config) (*Agent, error) {
 		return cmp.Compare(a.Spec().Name, b.Spec().Name)
 	})
 
-	byName := make(map[string]tool.Tool, len(tools))
-	for _, candidate := range tools {
-		byName[candidate.Spec().Name] = candidate
-	}
-
 	return &Agent{
 		name:           cfg.Name,
 		description:    cfg.Description,
 		instructions:   cfg.Instructions,
 		model:          cfg.Model,
 		tools:          tools,
-		toolByName:     byName,
 		policy:         cfg.Policy,
 		approver:       cfg.Approver,
 		store:          cfg.Store,
@@ -152,35 +145,10 @@ func (a *Agent) Instructions() string {
 	return a.instructions
 }
 
-// Model returns the agent model.
-func (a *Agent) Model() llm.Model {
-	if a == nil {
-		return nil
-	}
-	return a.model
-}
-
 // Tools returns a copy of the tool list, sorted by name.
 func (a *Agent) Tools() []tool.Tool {
 	if a == nil {
 		return nil
 	}
 	return slices.Clone(a.tools)
-}
-
-// Policy returns the agent's default policy, or nil.
-func (a *Agent) Policy() Policy {
-	if a == nil {
-		return nil
-	}
-	return a.policy
-}
-
-// Tool looks up a tool by name.
-func (a *Agent) Tool(name string) (tool.Tool, bool) {
-	if a == nil {
-		return nil, false
-	}
-	candidate, ok := a.toolByName[name]
-	return candidate, ok
 }
