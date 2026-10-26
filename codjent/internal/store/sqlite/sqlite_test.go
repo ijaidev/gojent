@@ -3,11 +3,13 @@ package sqlite
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -422,5 +424,40 @@ func TestDatabaseFilePermissions(t *testing.T) {
 	}
 	if perm := info.Mode().Perm(); perm != 0o600 {
 		t.Fatalf("database mode = %o, want 600", perm)
+	}
+}
+
+func TestNewRejectsLegacySchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "codjent.db")
+	db, err := sql.Open("sqlite", dataSourceName(path, false))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE messages (
+			seq INTEGER PRIMARY KEY AUTOINCREMENT,
+			id TEXT NOT NULL UNIQUE,
+			thread_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL DEFAULT '[]',
+			created_at TEXT NOT NULL
+		)`)
+	if err != nil {
+		t.Fatalf("create legacy table: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	store, err := New(context.Background(), path)
+	if err == nil {
+		_ = store.Close()
+		t.Fatal("New accepted a v1 database")
+	}
+	if !strings.Contains(err.Error(), "v1 message layout") {
+		t.Fatalf("error = %v, want a v1 layout message", err)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Fatalf("error = %v, want the database path", err)
 	}
 }

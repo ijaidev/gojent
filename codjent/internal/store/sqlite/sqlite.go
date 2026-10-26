@@ -21,8 +21,8 @@ import (
 const timeLayout = "2006-01-02T15:04:05.000000000Z"
 
 // schema stores the canonical llm.Message JSON with its format version. The
-// SDK is unreleased, so there is no migration from the v1 layout: drop old
-// development databases and let New recreate them.
+// SDK is unreleased, so there is no migration from the v1 layout: New rejects
+// old development databases and the operator drops them.
 var schema = fmt.Sprintf(`
 CREATE TABLE IF NOT EXISTS threads (
     id TEXT PRIMARY KEY,
@@ -94,11 +94,42 @@ func New(ctx context.Context, path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: connect: %w", err)
 	}
+	if err := ensureCompatibleSchema(ctx, db, path); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if _, err := db.ExecContext(ctx, schema); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: migrate: %w", err)
 	}
 	return store, nil
+}
+
+// ensureCompatibleSchema fails fast when an existing database predates the v2
+// message layout. The v1 rows cannot be decoded into canonical messages, so the
+// operator must remove the file instead of hitting a missing-column error at
+// query time.
+func ensureCompatibleSchema(ctx context.Context, db *sql.DB, path string) error {
+	var columns int
+	err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info('messages')`).Scan(&columns)
+	if err != nil {
+		return fmt.Errorf("sqlite: inspect messages table: %w", err)
+	}
+	if columns == 0 {
+		return nil
+	}
+
+	var hasFormatVersion int
+	err = db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'format_version'`).Scan(&hasFormatVersion)
+	if err != nil {
+		return fmt.Errorf("sqlite: inspect messages table: %w", err)
+	}
+	if hasFormatVersion == 0 {
+		return fmt.Errorf("sqlite: %q uses the v1 message layout, which is not migrated: move or delete the file", path)
+	}
+	return nil
 }
 
 func dataSourceName(path string, inMemory bool) string {
