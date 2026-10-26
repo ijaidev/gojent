@@ -6,6 +6,7 @@ use (
 	./examples/google
 	./providers/anthropic
 	./providers/google
+	./providers/openai
 	./stores/postgres
 	./stores/sqlite
 )

@@ -1,0 +1,125 @@
+{
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "input": [
+    {
+      "content": [
+        {
+          "text": "look",
+          "type": "input_text"
+        },
+        {
+          "detail": "auto",
+          "image_url": "data:image/png;base64,cG5nLWJ5dGVz",
+          "type": "input_image"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "encrypted_content": "encrypted-1",
+      "id": "rs_1",
+      "status": "completed",
+      "summary": [
+        {
+          "text": "weigh options",
+          "type": "summary_text"
+        }
+      ],
+      "type": "reasoning"
+    },
+    {
+      "content": [
+        {
+          "text": "calling",
+          "type": "input_text"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "arguments": "{\"q\":\"go\"}",
+      "call_id": "call_1",
+      "id": "fc_1",
+      "name": "lookup",
+      "status": "completed",
+      "type": "function_call"
+    },
+    {
+      "action": {
+        "query": "go",
+        "type": "search"
+      },
+      "id": "ws_1",
+      "status": "completed",
+      "type": "web_search_call"
+    },
+    {
+      "call_id": "call_1",
+      "output": "42\n{\"answer\":42}",
+      "type": "function_call_output"
+    }
+  ],
+  "instructions": "follow the rules\n\nbe terse",
+  "max_output_tokens": 1024,
+  "model": "gpt-test",
+  "reasoning": {
+    "effort": "high",
+    "summary": "auto"
+  },
+  "temperature": 0.2,
+  "text": {
+    "format": {
+      "name": "answer",
+      "schema": {
+        "properties": {
+          "answer": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "answer"
+        ],
+        "type": "object"
+      },
+      "strict": true,
+      "type": "json_schema"
+    }
+  },
+  "tool_choice": {
+    "name": "lookup",
+    "type": "function"
+  },
+  "tools": [
+    {
+      "description": "find a thing",
+      "name": "lookup",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "q": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "q"
+        ],
+        "type": "object"
+      },
+      "strict": true,
+      "type": "function"
+    },
+    {
+      "name": "notes",
+      "parameters": {
+        "type": "object"
+      },
+      "type": "function"
+    },
+    {
+      "type": "web_search_preview"
+    }
+  ],
+  "top_p": 0.9
+}

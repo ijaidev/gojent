@@ -1,0 +1,52 @@
+{
+  "finish_reason": "tool_calls",
+  "id": "resp_1",
+  "message": {
+    "content": [
+      {
+        "provider": {
+          "openai": {
+            "encrypted_content": "encrypted-1",
+            "item_id": "rs_1",
+            "status": "completed"
+          }
+        },
+        "summary": [
+          "thinking hard"
+        ],
+        "type": "reasoning"
+      },
+      {
+        "text": "checking",
+        "type": "text"
+      },
+      {
+        "call_id": "call_1",
+        "input": {
+          "q": "go"
+        },
+        "item_id": "fc_1",
+        "kind": "function",
+        "name": "lookup",
+        "provider": {
+          "openai": {
+            "status": "completed"
+          }
+        },
+        "type": "tool_call"
+      }
+    ],
+    "role": "assistant",
+    "status": "completed"
+  },
+  "model": "gpt-test",
+  "raw_finish_reason": "completed",
+  "status": "completed",
+  "usage": {
+    "cached_tokens": 3,
+    "completion_tokens": 5,
+    "prompt_tokens": 10,
+    "reasoning_tokens": 1,
+    "total_tokens": 15
+  }
+}

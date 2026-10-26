@@ -23,6 +23,7 @@ Optional providers and stores are separate modules:
 ```bash
 go get github.com/ijaidev/gojent/providers/anthropic
 go get github.com/ijaidev/gojent/providers/google
+go get github.com/ijaidev/gojent/providers/openai
 go get github.com/ijaidev/gojent/stores/sqlite
 go get github.com/ijaidev/gojent/stores/postgres
 ```
@@ -134,6 +135,7 @@ agent prefers a model's `Stream` method when it implements `llm.Streamer`.
 | `providers/mockllm` | Deterministic model for tests and examples (part of the root module). |
 | `providers/anthropic` | Anthropic Messages adapter module. |
 | `providers/google` | Google Gemini adapter module. |
+| `providers/openai` | OpenAI Responses adapter module. |
 | `stores/sqlite` | Durable SQLite session store module. |
 | `stores/postgres` | Durable PostgreSQL session store module. |
 | `examples/...` | Runnable examples; `examples/google` is its own module. |
@@ -300,6 +302,7 @@ Implement `agent.Sink` or pass `agent.SinkFunc` to receive `RunStart`,
 go test ./...
 (cd providers/anthropic && go test ./...)
 (cd providers/google && go test ./...)
+(cd providers/openai && go test ./...)
 (cd stores/sqlite && go test ./...)
 (cd stores/postgres && go test ./...)
 (cd examples/google && go test ./...)
@@ -356,6 +359,7 @@ core/session       session identity, store contract, memory store
 tools              filesystem, command, web, and task tools
 providers/anthropic Anthropic Messages adapter (separate module)
 providers/google   Gemini adapter (separate module)
+providers/openai   OpenAI Responses adapter (separate module)
 providers/mockllm  deterministic test model
 stores/sqlite      SQLite store (separate module)
 stores/postgres    PostgreSQL store (separate module)
