@@ -16,6 +16,8 @@ frontend lives in [`frontend/`](frontend) and is designed to feel like
   Gen AI, each with an optional custom base URL, its own model list, and static
   or per-run dynamic HTTP headers.
 - File read/write/edit/list tools sandboxed to one workspace.
+- Image attachments in prompts: pick, drag/drop, or paste PNG, JPEG, and WebP
+  files, then replay them with the thread.
 - `execute_command` requires approval in `ask` mode and runs without prompts in
   `full` mode.
 - Per-thread provider, model, and access-mode settings.
@@ -184,6 +186,29 @@ curl -sS http://127.0.0.1:8787/api/threads/<thread-id>/messages \
   -H 'content-type: application/json' \
   -d '{"content":"Run the tests and fix the failure."}'
 ```
+
+Attach images by adding an `attachments` array. `data` is standard base64 of
+the raw file bytes, without a `data:` prefix:
+
+```sh
+curl -sS http://127.0.0.1:8787/api/threads/<thread-id>/messages \
+  -H 'content-type: application/json' \
+  -d '{
+    "content": "What is wrong with this layout?",
+    "attachments": [{
+      "filename": "screen.png",
+      "mime_type": "image/png",
+      "data": "<base64>"
+    }]
+  }'
+```
+
+Supported formats are PNG, JPEG, and WebP. A message can contain up to four
+images, at most 5 MiB each and 8 MiB total; a thread is capped at 12 MiB of
+images. Images are stored in the SQLite transcript and sent to the configured
+model provider whenever the conversation is replayed, so only attach files you
+are comfortable sharing with that provider. A text-only model will reject the
+request at the provider even though the codjent UI accepts the attachment.
 
 Stream events:
 

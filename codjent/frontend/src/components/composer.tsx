@@ -6,14 +6,33 @@ import {
   Check,
   ChevronDown,
   Folder,
+  ImagePlus,
   LockKeyhole,
   Sparkles,
   Square,
   Unlock,
+  X,
 } from "lucide-react";
-import { type KeyboardEvent, useEffect, useRef, useState } from "react";
+import {
+  type ClipboardEvent,
+  type DragEvent,
+  type KeyboardEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { Spinner } from "@/components/spinner";
-import type { SendOptions } from "@/hooks/use-codjent";
+import type { SendMessage, SendOptions } from "@/hooks/use-codjent";
+import {
+  formatBytes,
+  MAX_ATTACHMENTS,
+  MAX_IMAGE_BYTES,
+  MAX_MESSAGE_BYTES,
+  type PendingAttachment,
+  prepareAttachment,
+  toAttachmentInput,
+  totalAttachmentBytes,
+} from "@/lib/attachments";
 import type {
   AccessMode,
   ProviderInfo,
@@ -21,7 +40,7 @@ import type {
   Thread,
   UpdateThreadInput,
 } from "@/lib/types";
-import { cn, statusCopy } from "@/lib/utils";
+import { cn, errorMessage, statusCopy } from "@/lib/utils";
 
 interface ComposerProps {
   thread: Thread | null;
@@ -32,7 +51,7 @@ interface ComposerProps {
   liveStatus?: RunStatus;
   large?: boolean;
   autoFocus?: boolean;
-  onSend: (content: string, options?: SendOptions) => Promise<boolean>;
+  onSend: SendMessage;
   onStop: () => void;
   onUpdateThread: (input: UpdateThreadInput) => Promise<Thread | null>;
 }
@@ -71,7 +90,13 @@ export function Composer({
     providers[0]?.default_model ?? "",
   );
   const [draftAccess, setDraftAccess] = useState<AccessMode>("ask");
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const preparingRef = useRef(false);
 
   useEffect(() => {
     if (thread || draftProvider) {
@@ -108,6 +133,98 @@ export function Composer({
     providers.find((item) => item.id === providerID) ?? providers[0];
   const controlsDisabled = busy || sending || updating;
 
+  const addFiles = async (files: FileList | File[]) => {
+    const selected = Array.from(files);
+    if (selected.length === 0 || preparingRef.current || controlsDisabled) {
+      return;
+    }
+
+    preparingRef.current = true;
+    setPreparing(true);
+    setAttachmentError(null);
+
+    const next = [...attachments];
+    let total = totalAttachmentBytes(next);
+    try {
+      for (const file of selected) {
+        if (next.length >= MAX_ATTACHMENTS) {
+          setAttachmentError(
+            `You can attach up to ${MAX_ATTACHMENTS} images per message.`,
+          );
+          break;
+        }
+        try {
+          const prepared = await prepareAttachment(file);
+          if (total + prepared.size > MAX_MESSAGE_BYTES) {
+            setAttachmentError(
+              `Images must total ${formatBytes(MAX_MESSAGE_BYTES)} or less per message.`,
+            );
+            break;
+          }
+          next.push(prepared);
+          total += prepared.size;
+        } catch (error) {
+          setAttachmentError(errorMessage(error));
+        }
+      }
+      setAttachments(next);
+    } finally {
+      preparingRef.current = false;
+      setPreparing(false);
+    }
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments((current) =>
+      current.filter((attachment) => attachment.id !== id),
+    );
+    setAttachmentError(null);
+  };
+
+  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    if (files.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    void addFiles(files);
+  };
+
+  const handleDragEnter = (event: DragEvent<HTMLElement>) => {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    setDragging(true);
+  };
+
+  const handleDragOver = (event: DragEvent<HTMLElement>) => {
+    if (!Array.from(event.dataTransfer.types).includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+
+  const handleDragLeave = (event: DragEvent<HTMLElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      return;
+    }
+    setDragging(false);
+  };
+
+  const handleDrop = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    setDragging(false);
+    if (controlsDisabled || preparingRef.current) {
+      return;
+    }
+    void addFiles(event.dataTransfer.files);
+  };
+
   const chooseModel = async (nextProvider: string, nextModel: string) => {
     if (thread) {
       setUpdating(true);
@@ -137,7 +254,12 @@ export function Composer({
 
   const submit = async () => {
     const content = value.trim();
-    if (!content || busy || sending) {
+    if (
+      (!content && attachments.length === 0) ||
+      busy ||
+      sending ||
+      preparing
+    ) {
       return;
     }
     const options: SendOptions | undefined = thread
@@ -147,9 +269,15 @@ export function Composer({
           model: modelID,
           access_mode: access,
         };
-    const sent = await onSend(content, options);
+    const sent = await onSend(
+      content,
+      options,
+      attachments.map(toAttachmentInput),
+    );
     if (sent) {
       setValue("");
+      setAttachments([]);
+      setAttachmentError(null);
       textareaRef.current?.focus();
     }
   };
@@ -186,12 +314,88 @@ export function Composer({
         large ? "max-w-[780px]" : "max-w-[800px]",
       )}
     >
-      <div
+      <fieldset
+        aria-label="Message composer"
         className={cn(
-          "composer-card rounded-[20px] border border-line bg-surface transition focus-within:border-line-strong",
+          "composer-card relative m-0 min-w-0 rounded-[20px] border border-line bg-surface p-0 transition focus-within:border-line-strong",
           large ? "min-h-[148px]" : "min-h-[104px]",
+          dragging && "border-accent",
         )}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
       >
+        <input
+          ref={fileInputRef}
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          multiple
+          onChange={(event) => {
+            const files = Array.from(event.target.files ?? []);
+            event.target.value = "";
+            if (files.length > 0) {
+              void addFiles(files);
+            }
+          }}
+          type="file"
+        />
+
+        {dragging ? (
+          <div className="pointer-events-none absolute inset-2 z-20 grid place-items-center rounded-2xl border-2 border-dashed border-accent bg-accent-soft/95">
+            <span className="inline-flex items-center gap-2 text-[12px] font-medium text-accent">
+              <ImagePlus className="size-4" />
+              Drop images to attach
+            </span>
+          </div>
+        ) : null}
+
+        {attachments.length > 0 ? (
+          <div className="flex flex-wrap gap-2 px-3 pt-3">
+            {attachments.map((attachment) => (
+              <div
+                className="flex max-w-full items-center gap-2 rounded-xl border border-line bg-surface-muted/60 p-1.5 pr-1"
+                key={attachment.id}
+              >
+                {/* biome-ignore lint/performance/noImgElement: data URLs are local and cannot be optimized by next/image */}
+                <img
+                  alt={attachment.filename}
+                  className="size-10 shrink-0 rounded-lg object-cover"
+                  height={40}
+                  src={attachment.previewURL}
+                  width={40}
+                />
+                <span className="min-w-0">
+                  <span className="block max-w-[170px] truncate text-[10.5px] font-medium text-ink">
+                    {attachment.filename}
+                  </span>
+                  <span className="block text-[9.5px] text-faint">
+                    {formatBytes(attachment.size)}
+                  </span>
+                </span>
+                <button
+                  aria-label={`Remove ${attachment.filename}`}
+                  className="grid size-6 shrink-0 place-items-center rounded-md text-faint transition hover:bg-surface hover:text-ink disabled:opacity-40"
+                  disabled={preparing}
+                  onClick={() => removeAttachment(attachment.id)}
+                  type="button"
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {attachmentError ? (
+          <p
+            className="px-4 pt-2 text-[10.5px] leading-4 text-danger"
+            role="alert"
+          >
+            {attachmentError}
+          </p>
+        ) : null}
+
         <textarea
           ref={textareaRef}
           aria-label="Message codjent"
@@ -202,12 +406,32 @@ export function Composer({
           disabled={busy || sending}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           placeholder={placeholder}
           rows={1}
           value={value}
         />
 
         <div className="flex items-center gap-1.5 px-2.5 pb-2.5">
+          <button
+            type="button"
+            aria-label="Attach images"
+            className="grid size-8 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={
+              controlsDisabled ||
+              preparing ||
+              attachments.length >= MAX_ATTACHMENTS
+            }
+            onClick={() => fileInputRef.current?.click()}
+            title={`Attach images (PNG, JPEG, WebP; up to ${MAX_ATTACHMENTS}, ${formatBytes(MAX_IMAGE_BYTES)} each)`}
+          >
+            {preparing ? (
+              <Spinner className="size-3.5" />
+            ) : (
+              <ImagePlus className="size-4" />
+            )}
+          </button>
+
           <Menu.Root>
             <Menu.Trigger
               className="inline-flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11.5px] font-medium text-muted outline-none transition hover:bg-surface-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
@@ -346,7 +570,11 @@ export function Composer({
                 type="button"
                 aria-label="Send message"
                 className="grid size-8 place-items-center rounded-full bg-ink text-app transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:bg-line-strong disabled:text-faint"
-                disabled={!value.trim() || sending}
+                disabled={
+                  (!value.trim() && attachments.length === 0) ||
+                  sending ||
+                  preparing
+                }
                 onClick={() => void submit()}
               >
                 {sending ? (
@@ -358,7 +586,7 @@ export function Composer({
             )}
           </div>
         </div>
-      </div>
+      </fieldset>
 
       <div className="mt-2 flex items-center justify-between gap-3 px-2 text-[10px] text-faint">
         <span className="inline-flex min-w-0 items-center gap-1.5">

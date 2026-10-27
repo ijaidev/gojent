@@ -16,6 +16,13 @@ export interface Part {
   mime_type?: string;
   data?: string;
   url?: string;
+  filename?: string;
+}
+
+export interface AttachmentInput {
+  filename?: string;
+  mime_type: string;
+  data: string;
 }
 
 export interface ToolCall {

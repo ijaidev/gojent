@@ -20,13 +20,16 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Markdown } from "@/components/markdown";
 import { Spinner } from "@/components/spinner";
 import type { LiveRun, LiveTool } from "@/hooks/use-codjent";
-import type { Message, PendingApproval, ToolCall } from "@/lib/types";
+import type { Message, Part, PendingApproval, ToolCall } from "@/lib/types";
 import { isActiveStatus } from "@/lib/types";
 import {
+  cn,
   formatElapsed,
   formatToolArguments,
+  messageFiles,
   messageText,
   parseCommand,
+  partFileURL,
   toolLabel,
   toolResultMap,
 } from "@/lib/utils";
@@ -210,6 +213,76 @@ function Thinking({ text }: { text: string }) {
   );
 }
 
+function FileGrid({ parts }: { parts: Part[] }) {
+  const [preview, setPreview] = useState<string | null>(null);
+  const files = parts
+    .map((part) => ({ part, url: partFileURL(part) }))
+    .filter((file): file is { part: Part; url: string } => file.url !== null);
+
+  useEffect(() => {
+    if (!preview) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPreview(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [preview]);
+
+  if (files.length === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      <div
+        className={cn(
+          "grid gap-2",
+          files.length > 1 ? "grid-cols-2" : "grid-cols-1",
+        )}
+      >
+        {files.map((file, index) => (
+          <button
+            className="overflow-hidden rounded-xl border border-line bg-code"
+            key={`${file.part.filename ?? "image"}-${index}`}
+            onClick={() => setPreview(file.url)}
+            type="button"
+          >
+            {/* biome-ignore lint/performance/noImgElement: data URLs are local and cannot be optimized by next/image */}
+            <img
+              alt={file.part.filename ?? `Attachment ${index + 1}`}
+              className={cn(
+                "w-full object-contain",
+                files.length > 1 ? "max-h-[220px]" : "max-h-[360px]",
+              )}
+              loading="lazy"
+              src={file.url}
+            />
+          </button>
+        ))}
+      </div>
+      {preview ? (
+        <button
+          aria-label="Close image preview"
+          className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-6"
+          onClick={() => setPreview(null)}
+          type="button"
+        >
+          {/* biome-ignore lint/performance/noImgElement: data URLs are local and cannot be optimized by next/image */}
+          <img
+            alt=""
+            className="max-h-[90vh] max-w-[90vw] rounded-xl object-contain"
+            src={preview}
+          />
+        </button>
+      ) : null}
+    </>
+  );
+}
+
 function ApprovalCard({
   approval,
   workspaceName,
@@ -384,13 +457,17 @@ function LiveTurn({
 
 function UserMessage({ message }: { message: Message }) {
   const text = messageText(message);
-  if (!text) {
+  const files = messageFiles(message);
+  if (!text && files.length === 0) {
     return null;
   }
   return (
     <div className="flex justify-end">
-      <div className="max-w-[88%] whitespace-pre-wrap rounded-[20px] bg-surface-muted px-5 py-3.5 text-[13.5px] leading-6 text-ink">
-        {text}
+      <div className="max-w-[88%] rounded-[20px] bg-surface-muted px-3 py-3 text-[13.5px] leading-6 text-ink">
+        <FileGrid parts={files} />
+        {text ? (
+          <div className="whitespace-pre-wrap px-2 py-1.5">{text}</div>
+        ) : null}
       </div>
     </div>
   );
@@ -464,8 +541,9 @@ export function Transcript({
         }
 
         const text = messageText(message);
+        const files = messageFiles(message);
         const hasTools = (message.tool_calls?.length ?? 0) > 0;
-        if (!text && !message.thinking && !hasTools) {
+        if (!text && !message.thinking && !hasTools && files.length === 0) {
           return null;
         }
 
@@ -473,6 +551,7 @@ export function Transcript({
           <div className="space-y-3" key={message.id}>
             {message.thinking ? <Thinking text={message.thinking} /> : null}
             {text ? <Markdown>{text}</Markdown> : null}
+            {files.length > 0 ? <FileGrid parts={files} /> : null}
             {hasTools ? (
               <div className="space-y-2">
                 {message.tool_calls?.map((call) => {

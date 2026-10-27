@@ -4,8 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import {
   type AccessMode,
+  type AttachmentInput,
   isActiveStatus,
   type Message,
+  type Part,
   type PendingApproval,
   type ProviderInfo,
   type RunEvent,
@@ -47,6 +49,12 @@ export interface SendOptions {
   model?: string;
   access_mode?: AccessMode;
 }
+
+export type SendMessage = (
+  content: string,
+  options?: SendOptions,
+  attachments?: AttachmentInput[],
+) => Promise<boolean>;
 
 interface SavedSelection {
   read(): string | null;
@@ -92,6 +100,16 @@ function liveFromRun(run: RunInfo): LiveRun {
     reconnecting: false,
     startedAt: Number.isFinite(startedAt) ? startedAt : Date.now(),
   };
+}
+
+function messageTitle(text: string, attachments: AttachmentInput[]): string {
+  if (text) {
+    return text;
+  }
+  if (attachments.length === 1) {
+    return attachments[0].filename || "1 image";
+  }
+  return `${attachments.length} images`;
 }
 
 function settingsPatch(
@@ -482,9 +500,13 @@ export function useCodjent() {
   }, [commitSelection]);
 
   const sendMessage = useCallback(
-    async (content: string, options?: SendOptions): Promise<boolean> => {
+    async (
+      content: string,
+      options?: SendOptions,
+      attachments: AttachmentInput[] = [],
+    ): Promise<boolean> => {
       const text = content.trim();
-      if (!text) {
+      if (!text && attachments.length === 0) {
         return false;
       }
 
@@ -538,11 +560,20 @@ export function useCodjent() {
 
         const threadIDValue = threadID;
         const now = new Date().toISOString();
+        const contentParts: Part[] = [
+          ...attachments.map((attachment) => ({
+            type: "file",
+            mime_type: attachment.mime_type,
+            data: attachment.data,
+            filename: attachment.filename,
+          })),
+          ...(text ? [{ type: "text" as const, text }] : []),
+        ];
         const optimistic: Message = {
           id: `local_${Date.now()}`,
           thread_id: threadIDValue,
           role: "user",
-          content: [{ type: "text", text }],
+          content: contentParts,
           created_at: now,
         };
         setDetail((prev) => {
@@ -557,7 +588,7 @@ export function useCodjent() {
           return next;
         });
 
-        const run = await api.startMessage(threadIDValue, text);
+        const run = await api.startMessage(threadIDValue, text, attachments);
         const live = liveFromRun(run);
         terminalRef.current.delete(run.id);
         setLiveRuns((prev) => ({ ...prev, [threadIDValue]: live }));
@@ -565,7 +596,7 @@ export function useCodjent() {
 
         const title =
           thread?.title === "New thread"
-            ? truncate(text)
+            ? truncate(messageTitle(text, attachments))
             : (thread?.title ?? "New thread");
         setThreads((prev) =>
           prev.map((item) =>

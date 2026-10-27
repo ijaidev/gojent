@@ -1,4 +1,4 @@
-import type { Message, RunStatus, Thread, ToolCall } from "@/lib/types";
+import type { Message, Part, RunStatus, Thread, ToolCall } from "@/lib/types";
 
 export function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -70,6 +70,22 @@ export function messageText(message: Message): string {
     .filter((part) => part.type === "text")
     .map((part) => part.text ?? "")
     .join("");
+}
+
+export function messageFiles(message: Message): Part[] {
+  return message.content.filter(
+    (part) => part.type === "file" && Boolean(part.url || part.data),
+  );
+}
+
+export function partFileURL(part: Part): string | null {
+  if (part.url) {
+    return part.url;
+  }
+  if (part.data) {
+    return `data:${part.mime_type ?? "application/octet-stream"};base64,${part.data}`;
+  }
+  return null;
 }
 
 export function toolResultMap(messages: Message[]): Map<string, Message> {

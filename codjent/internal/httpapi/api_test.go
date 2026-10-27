@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -100,6 +101,105 @@ func TestThreadAndRunFlow(t *testing.T) {
 	resp = doJSON(t, client, http.MethodGet, server.URL+"/api/threads/"+thread.ID, nil, nil)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("get deleted thread status = %d", resp.StatusCode)
+	}
+}
+
+func TestStartMessageWithImage(t *testing.T) {
+	model := mockllm.New("I can see the image.")
+	server, _ := newTestServer(t, model, "mock-llm", app.AccessAsk)
+	client := server.Client()
+
+	var thread app.Thread
+	resp := doJSON(t, client, http.MethodPost, server.URL+"/api/threads", map[string]any{}, &thread)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create thread status = %d", resp.StatusCode)
+	}
+
+	image := []byte("\x89PNG\r\n\x1a\n" + strings.Repeat("\x00", 32))
+	var run app.RunInfo
+	resp = doJSON(t, client, http.MethodPost, server.URL+"/api/threads/"+thread.ID+"/messages", map[string]any{
+		"content": "Describe this screenshot.",
+		"attachments": []map[string]any{{
+			"filename":  "screen.png",
+			"mime_type": "image/png",
+			"data":      base64.StdEncoding.EncodeToString(image),
+		}},
+	}, &run)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("start message status = %d", resp.StatusCode)
+	}
+
+	events := readEvents(t, client, server.URL+"/api/runs/"+run.ID+"/events")
+	assertEventType(t, events, app.EventRunCompleted)
+
+	var detail threadDetail
+	resp = doJSON(t, client, http.MethodGet, server.URL+"/api/threads/"+thread.ID, nil, &detail)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get thread status = %d", resp.StatusCode)
+	}
+	if len(detail.Messages) != 2 {
+		t.Fatalf("messages = %+v", detail.Messages)
+	}
+	user := detail.Messages[0]
+	if len(user.Content) != 2 || user.Content[0].Type != llm.PartTypeFile {
+		t.Fatalf("user content = %+v", user.Content)
+	}
+	if user.Content[0].Filename != "screen.png" ||
+		user.Content[0].MIMEType != "image/png" ||
+		!strings.EqualFold(
+			base64.StdEncoding.EncodeToString(user.Content[0].Data),
+			base64.StdEncoding.EncodeToString(image),
+		) {
+		t.Fatalf("file view = %+v", user.Content[0])
+	}
+
+	last := model.LastCall()
+	if last == nil {
+		t.Fatal("model received no request")
+	}
+	var requestFile *llm.FilePart
+	for _, message := range last.Messages {
+		for _, part := range message.Content {
+			if file, ok := part.(*llm.FilePart); ok {
+				requestFile = file
+			}
+		}
+	}
+	if requestFile == nil || requestFile.Filename != "screen.png" ||
+		!strings.EqualFold(
+			base64.StdEncoding.EncodeToString(requestFile.Data),
+			base64.StdEncoding.EncodeToString(image),
+		) {
+		t.Fatalf("model request image = %+v", requestFile)
+	}
+}
+
+func TestStartMessageRejectsInvalidImageAndOversizedBody(t *testing.T) {
+	server, _ := newTestServer(t, mockllm.New("unused"), "mock-llm", app.AccessAsk)
+	client := server.Client()
+
+	var thread app.Thread
+	resp := doJSON(t, client, http.MethodPost, server.URL+"/api/threads", map[string]any{}, &thread)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create thread status = %d", resp.StatusCode)
+	}
+
+	resp = doJSON(t, client, http.MethodPost, server.URL+"/api/threads/"+thread.ID+"/messages", map[string]any{
+		"content": "bad image",
+		"attachments": []map[string]any{{
+			"mime_type": "image/png",
+			"data":      "not base64",
+		}},
+	}, nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid image status = %d", resp.StatusCode)
+	}
+
+	resp = doJSON(t, client, http.MethodPost, server.URL+"/api/threads/"+thread.ID+"/messages", map[string]any{
+		"content": strings.Repeat("a", maxMessageRequestBody+1),
+	}, nil)
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized body status = %d", resp.StatusCode)
 	}
 }
 

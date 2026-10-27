@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { Composer } from "@/components/composer";
 import { Transcript } from "@/components/transcript";
-import type { LiveRun, SendOptions } from "@/hooks/use-codjent";
+import type { LiveRun, SendMessage } from "@/hooks/use-codjent";
 import type {
   Message,
   ProviderInfo,
@@ -19,7 +19,7 @@ interface ThreadViewProps {
   providers: ProviderInfo[];
   workspaceName: string;
   sending: boolean;
-  onSend: (content: string, options?: SendOptions) => Promise<boolean>;
+  onSend: SendMessage;
   onStop: () => void;
   onResolveApproval: (approvalID: string, allow: boolean) => Promise<boolean>;
   onUpdateThread: (input: UpdateThreadInput) => Promise<Thread | null>;

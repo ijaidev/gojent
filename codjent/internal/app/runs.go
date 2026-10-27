@@ -254,13 +254,30 @@ func (r *run) subscribe(after int64) (backlog []Event, live <-chan Event, cancel
 	return r.bus.subscribe(after)
 }
 
-// StartMessage persists a user message and starts an agent run for the thread.
-// The returned run streams through Subscribe; the caller does not need to keep
-// the request context alive.
+// StartMessage persists a text-only user message and starts an agent run.
 func (s *Service) StartMessage(ctx context.Context, threadID, content string) (*RunInfo, error) {
-	content = strings.TrimSpace(content)
-	if content == "" {
-		return nil, fmt.Errorf("%w: message content is required", ErrInvalidInput)
+	return s.StartMessageWith(ctx, threadID, StartMessageInput{Content: content})
+}
+
+// StartMessageWith persists a user message and starts an agent run for the
+// thread. The returned run streams through Subscribe; the caller does not need
+// to keep the request context alive.
+func (s *Service) StartMessageWith(ctx context.Context, threadID string, input StartMessageInput) (*RunInfo, error) {
+	content := strings.TrimSpace(input.Content)
+	if content == "" && len(input.Attachments) == 0 {
+		return nil, fmt.Errorf("%w: message content or an image attachment is required", ErrInvalidInput)
+	}
+	if len(content) > maxMessageContentBytes {
+		return nil, fmt.Errorf(
+			"%w: message content exceeds the %d KiB limit",
+			ErrInvalidInput,
+			maxMessageContentBytes>>10,
+		)
+	}
+
+	images, imageBytes, err := buildImageParts(input.Attachments)
+	if err != nil {
+		return nil, err
 	}
 
 	thread, err := s.store.GetThread(ctx, threadID)
@@ -283,7 +300,21 @@ func (s *Service) StartMessage(ctx context.Context, threadID, content string) (*
 		s.mu.Unlock()
 		return nil, err
 	}
-	user := userMessage(thread.ID, content, nowUTC())
+	if used := imageBytesInMessages(history); used+imageBytes > maxThreadImageBytes {
+		s.mu.Unlock()
+		return nil, fmt.Errorf(
+			"%w: this thread has reached the %d MiB image limit; start a new thread for more images",
+			ErrInvalidInput,
+			maxThreadImageBytes>>20,
+		)
+	}
+
+	parts := make([]llm.Part, 0, len(images)+1)
+	parts = append(parts, images...)
+	if content != "" {
+		parts = append(parts, llm.NewTextPart(content))
+	}
+	user := userMessageWithParts(thread.ID, parts, nowUTC())
 	r := newRun(s.ctx, thread, history, user)
 	s.runs[r.id] = r
 	s.activeByThread[threadID] = r.id
@@ -296,7 +327,7 @@ func (s *Service) StartMessage(ctx context.Context, threadID, content string) (*
 	}
 
 	if thread.Title == defaultThreadTitle {
-		thread.Title = truncateTitle(content)
+		thread.Title = truncateTitle(messageTitle(content, images))
 		thread.UpdatedAt = nowUTC()
 		if err := s.store.UpdateThread(ctx, thread); err != nil {
 			// A title is cosmetic; the run should still proceed.

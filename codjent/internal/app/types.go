@@ -142,6 +142,7 @@ type PartView struct {
 	MIMEType string       `json:"mime_type,omitempty"`
 	Data     []byte       `json:"data,omitempty"`
 	URL      string       `json:"url,omitempty"`
+	Filename string       `json:"filename,omitempty"`
 }
 
 // ToolCallView is the frontend-facing projection of a canonical tool call.
@@ -272,6 +273,7 @@ func partViews(parts []llm.Part) []PartView {
 				MIMEType: p.MIMEType,
 				Data:     p.Data,
 				URL:      p.URL,
+				Filename: p.Filename,
 			})
 		}
 	}
@@ -334,6 +336,13 @@ type CreateThreadInput struct {
 	AccessMode AccessMode `json:"access_mode"`
 }
 
+// StartMessageInput is the request body for starting a user message. Content
+// may be empty when at least one attachment is present.
+type StartMessageInput struct {
+	Content     string            `json:"content"`
+	Attachments []AttachmentInput `json:"attachments,omitempty"`
+}
+
 // UpdateThreadInput is a partial thread update.
 type UpdateThreadInput struct {
 	Title      *string     `json:"title,omitempty"`
@@ -377,11 +386,11 @@ func messageFromLLM(threadID string, m *llm.Message, now time.Time) *Message {
 	}
 }
 
-func userMessage(threadID, content string, now time.Time) *Message {
+func userMessageWithParts(threadID string, parts []llm.Part, now time.Time) *Message {
 	return &Message{
 		ID:        newID("msg"),
 		ThreadID:  threadID,
-		Payload:   llm.UserMessage(content),
+		Payload:   llm.UserMessageWithParts(parts...),
 		CreatedAt: now,
 	}
 }

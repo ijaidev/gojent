@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -255,6 +256,176 @@ func TestFullAccessRunPersistsTranscript(t *testing.T) {
 	marker := filepath.Join(workspace, "unused")
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatalf("unexpected marker")
+	}
+}
+
+func TestStartMessageWithImage(t *testing.T) {
+	svc, _, model, _ := newTestService(t, AccessAsk, scriptedStep{text: "I can see it."})
+
+	thread, err := svc.CreateThread(context.Background(), CreateThreadInput{})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	run, err := svc.StartMessageWith(context.Background(), thread.ID, StartMessageInput{
+		Content: "  what is this?  ",
+		Attachments: []AttachmentInput{{
+			Filename: "screen.png",
+			MIMEType: "image/png",
+			Data:     testPNG,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("StartMessageWith: %v", err)
+	}
+
+	reader := subscribe(t, svc, run.ID)
+	events := reader.drain(t)
+	reader.cancel()
+	assertEvent(t, events, EventRunCompleted)
+
+	detail, err := svc.GetThread(context.Background(), thread.ID)
+	if err != nil {
+		t.Fatalf("GetThread: %v", err)
+	}
+	if detail.Thread.Title != "what is this?" {
+		t.Fatalf("auto title = %q", detail.Thread.Title)
+	}
+	if len(detail.Messages) != 2 {
+		t.Fatalf("message count = %d", len(detail.Messages))
+	}
+
+	user := detail.Messages[0]
+	if user.Role() != llm.RoleUser {
+		t.Fatalf("user role = %q", user.Role())
+	}
+	if len(user.Payload.Content) != 2 {
+		t.Fatalf("user content = %+v", user.Payload.Content)
+	}
+	file, ok := user.Payload.Content[0].(*llm.FilePart)
+	if !ok {
+		t.Fatalf("first part type = %T", user.Payload.Content[0])
+	}
+	if file.MIMEType != "image/png" || file.Filename != "screen.png" ||
+		!bytes.Equal(file.Data, testPNG) {
+		t.Fatalf("file part = %+v", file)
+	}
+	text, ok := user.Payload.Content[1].(*llm.TextPart)
+	if !ok || text.Text != "what is this?" {
+		t.Fatalf("text part = %+v", user.Payload.Content[1])
+	}
+
+	view := user.Views()[0]
+	if len(view.Content) != 2 ||
+		view.Content[0].Type != llm.PartTypeFile ||
+		view.Content[0].Filename != "screen.png" ||
+		!bytes.Equal(view.Content[0].Data, testPNG) {
+		t.Fatalf("user view = %+v", view)
+	}
+
+	requests := model.snapshotRequests()
+	if len(requests) != 1 {
+		t.Fatalf("model requests = %d, want 1", len(requests))
+	}
+	var requestFile *llm.FilePart
+	for _, message := range requests[0].Messages {
+		for _, part := range message.Content {
+			if candidate, ok := part.(*llm.FilePart); ok {
+				requestFile = candidate
+			}
+		}
+	}
+	if requestFile == nil || requestFile.Filename != "screen.png" ||
+		!bytes.Equal(requestFile.Data, testPNG) {
+		t.Fatalf("model request image = %+v", requestFile)
+	}
+}
+
+func TestStartMessageWithImageOnly(t *testing.T) {
+	svc, _, _, _ := newTestService(t, AccessAsk, scriptedStep{text: "Got it."})
+
+	thread, err := svc.CreateThread(context.Background(), CreateThreadInput{})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	run, err := svc.StartMessageWith(context.Background(), thread.ID, StartMessageInput{
+		Attachments: []AttachmentInput{{
+			Filename: "screen.png",
+			MIMEType: "image/png",
+			Data:     testPNG,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("StartMessageWith: %v", err)
+	}
+	reader := subscribe(t, svc, run.ID)
+	reader.drain(t)
+	reader.cancel()
+
+	detail, err := svc.GetThread(context.Background(), thread.ID)
+	if err != nil {
+		t.Fatalf("GetThread: %v", err)
+	}
+	if detail.Thread.Title != "screen.png" {
+		t.Fatalf("auto title = %q", detail.Thread.Title)
+	}
+	user := detail.Messages[0]
+	if len(user.Payload.Content) != 1 {
+		t.Fatalf("user content = %+v", user.Payload.Content)
+	}
+	if _, ok := user.Payload.Content[0].(*llm.FilePart); !ok {
+		t.Fatalf("part type = %T", user.Payload.Content[0])
+	}
+}
+
+func TestStartMessageWithRejectsInvalidInput(t *testing.T) {
+	svc, store, _, _ := newTestService(t, AccessAsk, scriptedStep{text: "unused"})
+	thread, err := svc.CreateThread(context.Background(), CreateThreadInput{})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		input StartMessageInput
+	}{
+		{name: "empty", input: StartMessageInput{}},
+		{
+			name:  "oversized text",
+			input: StartMessageInput{Content: strings.Repeat("a", maxMessageContentBytes+1)},
+		},
+		{
+			name: "invalid image",
+			input: StartMessageInput{
+				Attachments: []AttachmentInput{{MIMEType: "image/png"}},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := svc.StartMessageWith(context.Background(), thread.ID, test.input); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+
+	store.mu.Lock()
+	store.messages[thread.ID] = append(store.messages[thread.ID], &Message{
+		ID:       "msg_existing",
+		ThreadID: thread.ID,
+		Payload: llm.UserMessageWithParts(
+			llm.FileFromBytes(make([]byte, maxThreadImageBytes), "image/png"),
+		),
+	})
+	store.mu.Unlock()
+
+	if _, err := svc.StartMessageWith(context.Background(), thread.ID, StartMessageInput{
+		Attachments: []AttachmentInput{{
+			MIMEType: "image/png",
+			Data:     testPNG,
+		}},
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("thread image limit error = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -675,6 +846,7 @@ func (m *scriptedModel) Info() llm.Info {
 			Tools:             true,
 			ParallelToolCalls: true,
 			Reasoning:         true,
+			Vision:            true,
 		},
 	}
 }

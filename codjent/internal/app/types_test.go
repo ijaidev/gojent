@@ -74,7 +74,8 @@ func TestMessageViewsProjectAssistantParts(t *testing.T) {
 	}
 	if view.Content[1].Type != llm.PartTypeFile ||
 		view.Content[1].MIMEType != "image/png" ||
-		string(view.Content[1].Data) != "image-bytes" {
+		string(view.Content[1].Data) != "image-bytes" ||
+		view.Content[1].Filename != "diagram.png" {
 		t.Fatalf("file view = %+v", view.Content[1])
 	}
 	if view.Content[2].Type != llm.PartTypeRefusal || view.Content[2].Text != "declined" {
@@ -86,12 +87,12 @@ func TestMessageViewsProjectAssistantParts(t *testing.T) {
 		t.Fatalf("marshal view: %v", err)
 	}
 	text := string(encoded)
-	for _, forbidden := range []string{"provider", "thought_signature", "web_search", "call_server", "filename", "item_1"} {
+	for _, forbidden := range []string{"provider", "thought_signature", "web_search", "call_server", "item_1"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("view JSON exposes %q: %s", forbidden, text)
 		}
 	}
-	for _, required := range []string{`"thinking"`, `"tool_calls"`, `"arguments"`, `"mime_type"`, `"data"`} {
+	for _, required := range []string{`"thinking"`, `"tool_calls"`, `"arguments"`, `"mime_type"`, `"data"`, `"filename"`} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("view JSON missing %s: %s", required, text)
 		}

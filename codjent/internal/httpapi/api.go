@@ -15,7 +15,10 @@ import (
 	"github.com/ijaidev/gojent/codjent/internal/provider/catalog"
 )
 
-const maxRequestBody = 1 << 20
+const (
+	maxRequestBody        = 1 << 20
+	maxMessageRequestBody = 16 << 20
+)
 
 type api struct {
 	service *app.Service
@@ -185,14 +188,12 @@ func (a *api) deleteThread(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) startMessage(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Content string `json:"content"`
-	}
-	if err := readJSON(w, r, &input); err != nil {
+	var input app.StartMessageInput
+	if err := readJSONLimit(w, r, &input, maxMessageRequestBody); err != nil {
 		writeError(w, err)
 		return
 	}
-	run, err := a.service.StartMessage(r.Context(), r.PathValue("threadID"), input.Content)
+	run, err := a.service.StartMessageWith(r.Context(), r.PathValue("threadID"), input)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -281,13 +282,17 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, target any) error {
+	return readJSONLimit(w, r, target, maxRequestBody)
+}
+
+func readJSONLimit(w http.ResponseWriter, r *http.Request, target any, limit int64) error {
 	if r.ContentLength != 0 {
 		contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
 		if !strings.HasPrefix(contentType, "application/json") {
 			return fmt.Errorf("%w: Content-Type must be application/json", app.ErrInvalidInput)
 		}
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
@@ -311,7 +316,10 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
+	var maxBytesError *http.MaxBytesError
 	switch {
+	case errors.As(err, &maxBytesError):
+		status = http.StatusRequestEntityTooLarge
 	case errors.Is(err, app.ErrThreadNotFound),
 		errors.Is(err, app.ErrRunNotFound),
 		errors.Is(err, app.ErrApprovalNotFound),

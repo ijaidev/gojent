@@ -1,4 +1,5 @@
 import type {
+  AttachmentInput,
   CreateThreadInput,
   HealthInfo,
   ProviderConfig,
@@ -151,12 +152,20 @@ export const api = {
     });
   },
 
-  startMessage(threadID: string, content: string): Promise<RunInfo> {
+  startMessage(
+    threadID: string,
+    content: string,
+    attachments?: AttachmentInput[],
+  ): Promise<RunInfo> {
     return request<RunInfo>(
       `/api/threads/${encodeURIComponent(threadID)}/messages`,
       {
         method: "POST",
-        body: JSON.stringify({ content }),
+        body: JSON.stringify(
+          attachments && attachments.length > 0
+            ? { content, attachments }
+            : { content },
+        ),
       },
     );
   },
