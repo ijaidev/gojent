@@ -78,6 +78,34 @@ export interface ProviderInfo {
   models: ModelInfo[];
 }
 
+export type ProviderFormat =
+  | "openai-responses"
+  | "openai-completion"
+  | "anthropic"
+  | "google";
+
+export interface ProviderConfig {
+  id: string;
+  name: string;
+  format: ProviderFormat;
+  base_url: string;
+  default_model: string;
+  models: ModelInfo[];
+  api_key_set: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProviderConfigInput {
+  name: string;
+  format: ProviderFormat;
+  base_url: string;
+  default_model: string;
+  models: ModelInfo[];
+  api_key?: string;
+  clear_api_key?: boolean;
+}
+
 export interface Usage {
   prompt_tokens: number;
   completion_tokens: number;

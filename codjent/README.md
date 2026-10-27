@@ -11,7 +11,9 @@ frontend lives in [`frontend/`](frontend) and is designed to feel like
 - Multiple persistent threads backed by SQLite.
 - A responsive web UI with a thread sidebar, live transcript, tool cards,
   approval cards, cancellation, and per-thread settings.
-- Google Gemini as the only provider (the provider seam is ready for more).
+- Multiple provider configurations stored in SQLite and managed at `/settings`:
+  OpenAI Responses, OpenAI Chat Completions, Anthropic Messages, and Google
+  Gen AI, each with an optional custom base URL and its own model list.
 - File read/write/edit/list tools sandboxed to one workspace.
 - `execute_command` requires approval in `ask` mode and runs without prompts in
   `full` mode.
@@ -23,11 +25,9 @@ future milestone.
 
 ## Run
 
-Go 1.25 or newer is required. The Gemini key is resolved by the existing
-gojent Google provider from `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
+Go 1.25 or newer is required.
 
 ```sh
-export GEMINI_API_KEY=...
 go run ./codjent/cmd/codjent
 ```
 
@@ -37,6 +37,17 @@ Or from the repository root:
 just codjent
 ```
 
+A fresh install starts with no providers. Open
+<http://127.0.0.1:8787/settings> to add an endpoint, an optional API key, and
+one or more models. Provider settings are persisted in the local SQLite
+database.
+
+For backwards compatibility, codjent seeds a Google provider on first run when
+`GEMINI_API_KEY` or `GOOGLE_API_KEY` is set, when `CODJENT_GOOGLE_MODELS` /
+`CODJENT_MODEL` is configured, or when existing threads reference the former
+`google` provider. The Google adapter also resolves those environment keys at
+request time when no key is stored in the database.
+
 The server listens on `127.0.0.1:8787` by default. Useful options:
 
 ```sh
@@ -44,7 +55,8 @@ go run ./codjent/cmd/codjent \
   --addr 127.0.0.1:8787 \
   --workspace /path/to/repo \
   --data-dir .local/codjent \
-  --model gemini-3.8-flash \
+  --provider <provider-id> \
+  --model <model-id> \
   --access-mode ask \
   --frontend-dir codjent/frontend/out
 ```
@@ -89,9 +101,9 @@ point the UI at a different API origin.
 | `CODJENT_ADDR` | `127.0.0.1:8787` | HTTP listen address |
 | `CODJENT_DATA_DIR` | OS data dir | SQLite directory |
 | `CODJENT_WORKSPACE` | current directory | Agent workspace |
-| `CODJENT_PROVIDER` | `google` | Default provider ID |
-| `CODJENT_MODEL` | provider default | Default model ID |
-| `CODJENT_GOOGLE_MODELS` | `gemini-3.8-flash` | Comma-separated model picker values |
+| `CODJENT_PROVIDER` | first runnable provider | Default provider ID for new threads |
+| `CODJENT_MODEL` | provider default | Default model ID for new threads |
+| `CODJENT_GOOGLE_MODELS` | unset | Google model IDs used when seeding a Google provider on first run |
 | `CODJENT_ACCESS_MODE` | `ask` | `ask` or `full` |
 | `CODJENT_MAX_STEPS` | `20` | ReAct step limit per run |
 | `CODJENT_ALLOWED_ORIGINS` | localhost:3000 origins | Browser CORS allowlist |
@@ -113,7 +125,11 @@ All endpoints are under `/api`.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Health and workspace path |
-| `GET` | `/providers` | Provider and model catalog |
+| `GET` | `/providers` | Runnable providers and their models |
+| `GET` | `/settings/providers` | Provider configurations (API keys masked) |
+| `POST` | `/settings/providers` | Create a provider configuration |
+| `PUT` | `/settings/providers/{id}` | Update a provider configuration |
+| `DELETE` | `/settings/providers/{id}` | Delete an unused provider configuration |
 | `GET` | `/threads` | List threads, newest first |
 | `POST` | `/threads` | Create a thread |
 | `GET` | `/threads/{id}` | Thread plus transcript |
@@ -125,12 +141,29 @@ All endpoints are under `/api`.
 | `POST` | `/runs/{id}/approvals/{approvalID}` | Allow or deny a tool call |
 | `POST` | `/runs/{id}/cancel` | Cancel an active run |
 
+Provider configurations are only exposed by the default binary, which wires the
+dynamic catalog. API keys are never returned. On update, omit `api_key` (or
+send an empty string) to keep the stored secret, and set `clear_api_key` to
+remove it. A provider cannot be deleted while any thread references it; the API
+returns `409 Conflict`.
+
+Create a provider:
+
+```sh
+curl -sS http://127.0.0.1:8787/api/settings/providers \
+  -H 'content-type: application/json' \
+  -d '{"name":"Local","format":"openai-completion","base_url":"http://localhost:11434/v1","default_model":"llama3","models":[{"id":"llama3","name":"Llama 3"}],"api_key":""}'
+```
+
+The four `format` values are `openai-responses`, `openai-completion`,
+`anthropic`, and `google`. `base_url` is optional and must use HTTP or HTTPS.
+
 Create a thread:
 
 ```sh
 curl -sS http://127.0.0.1:8787/api/threads \
   -H 'content-type: application/json' \
-  -d '{"title":"Fix the failing test","provider":"google","model":"gemini-3.8-flash","access_mode":"ask"}'
+  -d '{"title":"Fix the failing test","provider":"<provider-id>","model":"<model-id>","access_mode":"ask"}'
 ```
 
 Start a run:
@@ -174,14 +207,19 @@ The backend follows a deep-module layout:
 - `internal/app` owns the thread/run lifecycle, approval gate, event log, and
   transcript persistence contract. It is the only package that knows how a
   codjent run is assembled.
-- `internal/store/sqlite` is the SQLite implementation of `app.Store`.
-- `internal/provider` is the provider registry seam; `internal/provider/google`
-  adapts gojent's Gemini provider.
-- `internal/httpapi` is a thin JSON/SSE adapter over `app.Service`; it can also
-  serve the exported frontend from `--frontend-dir`.
+- `internal/store/sqlite` is the SQLite implementation of `app.Store` and the
+  provider configuration store.
+- `internal/provider` is the provider registry seam; `internal/provider/catalog`
+  is the SQLite-backed dynamic catalog that validates CRUD input, builds
+  adapters for each format, and exposes only runnable providers to `app`.
+  `internal/provider/google` adapts gojent's Gemini provider.
+- `internal/httpapi` is a thin JSON/SSE adapter over `app.Service`; it also
+  serves provider settings CRUD and the exported frontend from
+  `--frontend-dir`.
 - `frontend` is a static Next.js export. `lib/api.ts` is the browser boundary,
   `hooks/use-codjent.ts` owns thread state and SSE resumption, and
-  `components/` renders the T3-inspired interface.
+  `components/` renders the T3-inspired interface. The `/settings` route
+  manages providers and models.
 - `cmd/codjent` wires configuration, storage, providers, HTTP, and static
   frontend serving.
 
@@ -198,5 +236,6 @@ golangci-lint run ./...
 
 cd frontend
 pnpm lint
+pnpm exec tsc --noEmit
 pnpm build
 ```

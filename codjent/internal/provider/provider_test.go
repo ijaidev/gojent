@@ -2,8 +2,11 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ijaidev/gojent/core/llm"
@@ -88,6 +91,164 @@ func TestRegistryClonesModelLists(t *testing.T) {
 	infos[0].Models[0].ID = "mutated"
 	if got := registry.List()[0].Models[0].ID; got != "m" {
 		t.Fatalf("model list mutated: %q", got)
+	}
+}
+
+func TestConfigInputNormalize(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   ConfigInput
+		want    ConfigInput
+		wantErr bool
+	}{
+		{
+			name: "trims and defaults",
+			input: ConfigInput{
+				Name:    "  Local  ",
+				Format:  FormatOpenAICompletion,
+				BaseURL: " http://localhost:11434/v1/ ",
+				Models:  []ModelInfo{{ID: " llama3 ", Name: "  "}},
+			},
+			want: ConfigInput{
+				Name:         "Local",
+				Format:       FormatOpenAICompletion,
+				BaseURL:      "http://localhost:11434/v1",
+				DefaultModel: "llama3",
+				Models:       []ModelInfo{{ID: "llama3", Name: "llama3"}},
+			},
+		},
+		{
+			name: "keeps explicit default",
+			input: ConfigInput{
+				Name:         "Remote",
+				Format:       FormatAnthropic,
+				DefaultModel: "b",
+				Models:       []ModelInfo{{ID: "a"}, {ID: "b", Name: "B"}},
+			},
+			want: ConfigInput{
+				Name:         "Remote",
+				Format:       FormatAnthropic,
+				DefaultModel: "b",
+				Models:       []ModelInfo{{ID: "a", Name: "a"}, {ID: "b", Name: "B"}},
+			},
+		},
+		{
+			name:  "allows no models",
+			input: ConfigInput{Name: "Empty", Format: FormatGoogle},
+			want:  ConfigInput{Name: "Empty", Format: FormatGoogle, Models: []ModelInfo{}},
+		},
+		{
+			name:    "requires name",
+			input:   ConfigInput{Format: FormatGoogle},
+			wantErr: true,
+		},
+		{
+			name:    "rejects long name",
+			input:   ConfigInput{Name: strings.Repeat("x", 81), Format: FormatGoogle},
+			wantErr: true,
+		},
+		{
+			name:    "rejects unknown format",
+			input:   ConfigInput{Name: "x", Format: "vendor"},
+			wantErr: true,
+		},
+		{
+			name:    "rejects bad base URL",
+			input:   ConfigInput{Name: "x", Format: FormatGoogle, BaseURL: "ftp://example.com"},
+			wantErr: true,
+		},
+		{
+			name:    "rejects credentials in base URL",
+			input:   ConfigInput{Name: "x", Format: FormatGoogle, BaseURL: "https://user:pass@example.com"},
+			wantErr: true,
+		},
+		{
+			name:    "rejects base URL query",
+			input:   ConfigInput{Name: "x", Format: FormatGoogle, BaseURL: "https://example.com/v1?key=secret"},
+			wantErr: true,
+		},
+		{
+			name:    "rejects base URL fragment",
+			input:   ConfigInput{Name: "x", Format: FormatGoogle, BaseURL: "https://example.com/v1#fragment"},
+			wantErr: true,
+		},
+		{
+			name:    "rejects duplicate models",
+			input:   ConfigInput{Name: "x", Format: FormatGoogle, Models: []ModelInfo{{ID: "a"}, {ID: "a"}}},
+			wantErr: true,
+		},
+		{
+			name:    "rejects missing model ID",
+			input:   ConfigInput{Name: "x", Format: FormatGoogle, Models: []ModelInfo{{Name: "a"}}},
+			wantErr: true,
+		},
+		{
+			name:    "rejects default outside models",
+			input:   ConfigInput{Name: "x", Format: FormatGoogle, DefaultModel: "z", Models: []ModelInfo{{ID: "a"}}},
+			wantErr: true,
+		},
+		{
+			name:    "rejects set and clear API key",
+			input:   ConfigInput{Name: "x", Format: FormatGoogle, APIKey: "secret", ClearAPIKey: true},
+			wantErr: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := test.input
+			err := input.Normalize()
+			if test.wantErr {
+				if !errors.Is(err, ErrInvalidConfig) {
+					t.Fatalf("Normalize error = %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Normalize: %v", err)
+			}
+			if !reflect.DeepEqual(input, test.want) {
+				t.Fatalf("Normalize = %+v, want %+v", input, test.want)
+			}
+		})
+	}
+}
+
+func TestConfigPublicHidesAPIKey(t *testing.T) {
+	config := Config{
+		ID:     "one",
+		APIKey: "secret",
+		Models: []ModelInfo{{ID: "m"}},
+	}
+	public := config.Public()
+	if public.APIKey != "" {
+		t.Fatalf("public API key = %q", public.APIKey)
+	}
+	if !public.APIKeySet {
+		t.Fatal("APIKeySet = false")
+	}
+	public.Models[0].ID = "mutated"
+	if config.Models[0].ID != "m" {
+		t.Fatal("Public did not clone models")
+	}
+
+	data, err := json.Marshal(public)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(data), "secret") {
+		t.Fatalf("serialized config leaks secret: %s", data)
+	}
+}
+
+func TestFormats(t *testing.T) {
+	for _, format := range Formats() {
+		if !format.Valid() {
+			t.Fatalf("format %q is not valid", format)
+		}
+	}
+	if Format("other").Valid() {
+		t.Fatal("unknown format reported valid")
 	}
 }
 

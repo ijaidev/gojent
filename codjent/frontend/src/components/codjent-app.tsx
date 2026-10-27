@@ -4,10 +4,12 @@ import {
   CircleAlert,
   Folder,
   Menu,
+  Server,
   Settings2,
   ShieldAlert,
   ShieldCheck,
 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { CodjentMark } from "@/components/brand";
 import { Composer } from "@/components/composer";
@@ -120,6 +122,13 @@ function Header({
 
       <div className="ml-auto flex items-center gap-1.5">
         <LiveStatusPill live={live} />
+        <Link
+          aria-label="Provider settings"
+          className="grid size-8 place-items-center rounded-lg text-muted transition hover:bg-surface-muted hover:text-ink"
+          href="/settings"
+        >
+          <Server className="size-4" />
+        </Link>
         <button
           type="button"
           aria-label="Thread settings"
@@ -196,6 +205,36 @@ function ConnectionError({ message }: { message: string }) {
           <code className="rounded border border-line bg-code px-1.5 py-0.5 font-mono text-[10px]">
             go run ./codjent/cmd/codjent
           </code>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function ProviderSetup() {
+  return (
+    <div className="flex flex-1 items-center justify-center px-6">
+      <div className="w-full max-w-md rounded-2xl border border-line bg-surface p-6 text-center">
+        <div className="mx-auto grid size-10 place-items-center rounded-xl bg-accent-soft text-accent">
+          <Server className="size-5" />
+        </div>
+        <h2 className="mt-3 text-[15px] font-semibold">
+          Connect a model provider
+        </h2>
+        <p className="mt-1.5 text-[11px] leading-5 text-muted">
+          Add an endpoint, an optional API key, and at least one model. codjent
+          stores provider settings locally in SQLite.
+        </p>
+        <Link
+          className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-ink px-3.5 py-2 text-[11px] font-medium text-app transition hover:opacity-85"
+          href="/settings"
+        >
+          <Server className="size-3.5" />
+          Open provider settings
+        </Link>
+        <p className="mt-3 text-[10px] leading-4 text-faint">
+          Supports OpenAI Responses, OpenAI Chat Completions, Anthropic, and
+          Google Gen AI.
         </p>
       </div>
     </div>
@@ -303,11 +342,10 @@ export function CodjentApp() {
       return <LoadingScreen />;
     }
     if (codjent.providers.length === 0) {
-      return (
-        <ConnectionError
-          message={codjent.error ?? "The codjent backend is not available."}
-        />
-      );
+      if (codjent.error) {
+        return <ConnectionError message={codjent.error} />;
+      }
+      return <ProviderSetup />;
     }
     if (codjent.selectedID) {
       const detail = codjent.detail;

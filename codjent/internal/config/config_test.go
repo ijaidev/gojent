@@ -44,7 +44,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.DataDir != dir {
 		t.Fatalf("data dir = %q, want %q", cfg.DataDir, dir)
 	}
-	if cfg.Provider != DefaultProvider || cfg.Model != "" {
+	if cfg.Provider != "" || cfg.Model != "" {
 		t.Fatalf("provider/model = %q/%q", cfg.Provider, cfg.Model)
 	}
 	if cfg.MaxSteps != DefaultMaxSteps || cfg.AccessMode != app.AccessAsk {

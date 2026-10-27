@@ -43,8 +43,29 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS providers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    format TEXT NOT NULL,
+    base_url TEXT NOT NULL DEFAULT '',
+    default_model TEXT NOT NULL DEFAULT '',
+    api_key TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS provider_models (
+    provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    model_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    PRIMARY KEY (provider_id, model_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_threads_updated_at ON threads(updated_at);
 CREATE INDEX IF NOT EXISTS idx_messages_thread_seq ON messages(thread_id, seq);
+CREATE INDEX IF NOT EXISTS idx_threads_provider ON threads(provider);
+CREATE INDEX IF NOT EXISTS idx_provider_models_position ON provider_models(provider_id, position);
 `, llm.FormatVersion)
 
 // Store is a SQLite-backed app.Store.

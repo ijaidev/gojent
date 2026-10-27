@@ -267,7 +267,7 @@ func TestCORSAndErrors(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("preflight status = %d", resp.StatusCode)
 	}
-	if got := resp.Header.Get("Access-Control-Allow-Methods"); !strings.Contains(got, "POST") {
+	if got := resp.Header.Get("Access-Control-Allow-Methods"); !strings.Contains(got, "POST") || !strings.Contains(got, "PUT") {
 		t.Fatalf("allow methods = %q", got)
 	}
 

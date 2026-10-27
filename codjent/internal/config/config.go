@@ -19,8 +19,6 @@ import (
 const (
 	// DefaultAddr keeps the agent on loopback: it can execute commands.
 	DefaultAddr = "127.0.0.1:8787"
-	// DefaultProvider is the only provider implemented today.
-	DefaultProvider = "google"
 	// DefaultMaxSteps bounds the ReAct loop.
 	DefaultMaxSteps = 20
 )
@@ -50,7 +48,7 @@ func Load() (Config, error) {
 		Addr:           envOr("CODJENT_ADDR", DefaultAddr),
 		DataDir:        dataDir,
 		Workspace:      strings.TrimSpace(os.Getenv("CODJENT_WORKSPACE")),
-		Provider:       envOr("CODJENT_PROVIDER", DefaultProvider),
+		Provider:       strings.TrimSpace(os.Getenv("CODJENT_PROVIDER")),
 		Model:          strings.TrimSpace(os.Getenv("CODJENT_MODEL")),
 		GoogleModels:   splitCSV(os.Getenv("CODJENT_GOOGLE_MODELS")),
 		MaxSteps:       DefaultMaxSteps,
@@ -112,9 +110,6 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.DataDir) == "" {
 		return fmt.Errorf("config: data directory is required")
-	}
-	if strings.TrimSpace(c.Provider) == "" {
-		return fmt.Errorf("config: provider is required")
 	}
 	if c.MaxSteps <= 0 {
 		return fmt.Errorf("config: max steps must be positive")

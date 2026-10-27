@@ -88,6 +88,72 @@ func TestThreadCRUD(t *testing.T) {
 	}
 }
 
+func TestDynamicProviderDefaults(t *testing.T) {
+	store := newFakeStore()
+	models := &fakeModels{model: &scriptedModel{}}
+	svc, err := New(Config{
+		Store:             store,
+		Models:            models,
+		Workspace:         t.TempDir(),
+		DefaultProvider:   "removed",
+		DefaultModel:      "old-model",
+		DefaultAccessMode: AccessAsk,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := svc.Close(ctx); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+	ctx := context.Background()
+
+	// A fresh install has no providers and cannot create threads yet.
+	if _, err := svc.CreateThread(ctx, CreateThreadInput{}); !errors.Is(err, provider.ErrUnknownProvider) {
+		t.Fatalf("create without providers = %v, want ErrUnknownProvider", err)
+	}
+
+	// Adding a provider after startup makes empty input resolve to it, even
+	// though the startup default no longer exists.
+	models.info = provider.Info{
+		ID:           "first",
+		Name:         "First",
+		DefaultModel: "m1",
+		Models:       []provider.ModelInfo{{ID: "m1", Name: "M1"}},
+	}
+	thread, err := svc.CreateThread(ctx, CreateThreadInput{})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	if thread.Provider != "first" || thread.Model != "m1" {
+		t.Fatalf("thread selection = %s/%s", thread.Provider, thread.Model)
+	}
+
+	// Replacing the default provider also works; the stale startup default is
+	// not pinned.
+	models.info = provider.Info{
+		ID:           "second",
+		Name:         "Second",
+		DefaultModel: "m2",
+		Models:       []provider.ModelInfo{{ID: "m2", Name: "M2"}},
+	}
+	thread, err = svc.CreateThread(ctx, CreateThreadInput{})
+	if err != nil {
+		t.Fatalf("CreateThread after switch: %v", err)
+	}
+	if thread.Provider != "second" || thread.Model != "m2" {
+		t.Fatalf("thread selection after switch = %s/%s", thread.Provider, thread.Model)
+	}
+
+	// An explicit provider is still validated as given.
+	if _, err := svc.CreateThread(ctx, CreateThreadInput{Provider: "first", Model: "m1"}); !errors.Is(err, provider.ErrUnknownProvider) {
+		t.Fatalf("explicit stale provider = %v, want ErrUnknownProvider", err)
+	}
+}
+
 func TestFullAccessRunPersistsTranscript(t *testing.T) {
 	svc, _, model, workspace := newTestService(t, AccessFull,
 		scriptedStep{
@@ -625,6 +691,9 @@ type fakeModels struct {
 }
 
 func (f *fakeModels) List() []provider.Info {
+	if f.info.ID == "" {
+		return nil
+	}
 	info := f.info
 	info.Models = slices.Clone(f.info.Models)
 	return []provider.Info{info}

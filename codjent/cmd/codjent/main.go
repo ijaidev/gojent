@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/ijaidev/gojent/codjent/internal/config"
 	"github.com/ijaidev/gojent/codjent/internal/httpapi"
 	"github.com/ijaidev/gojent/codjent/internal/provider"
+	"github.com/ijaidev/gojent/codjent/internal/provider/catalog"
 	googleprovider "github.com/ijaidev/gojent/codjent/internal/provider/google"
 	"github.com/ijaidev/gojent/codjent/internal/store/sqlite"
 )
@@ -55,17 +57,19 @@ func run() error {
 		return err
 	}
 
-	registry, err := provider.NewRegistry(
-		googleprovider.New(cfg.GoogleProviderConfig()),
-	)
+	catalog, err := catalog.New(context.Background(), store)
 	if err != nil {
+		_ = store.Close()
+		return err
+	}
+	if err := seedGoogleProvider(context.Background(), catalog, store, cfg); err != nil {
 		_ = store.Close()
 		return err
 	}
 
 	service, err := app.New(app.Config{
 		Store:             store,
-		Models:            registry,
+		Models:            catalog,
 		Workspace:         cfg.Workspace,
 		DefaultProvider:   cfg.Provider,
 		DefaultModel:      cfg.Model,
@@ -79,7 +83,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.NewWithStatic(service, cfg.AllowedOrigins, frontendDir),
+		Handler:           httpapi.NewWithCatalog(service, catalog, cfg.AllowedOrigins, frontendDir),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -100,8 +104,8 @@ func run() error {
 	} else {
 		log.Printf("frontend: API only (pass --frontend-dir to serve the built UI)")
 	}
-	if os.Getenv("GEMINI_API_KEY") == "" && os.Getenv("GOOGLE_API_KEY") == "" {
-		log.Printf("warning: GEMINI_API_KEY or GOOGLE_API_KEY is not set; model runs will fail until configured")
+	if len(catalog.Configs()) == 0 {
+		log.Printf("providers: none configured; open /settings to add one")
 	}
 
 	select {
@@ -125,4 +129,45 @@ func run() error {
 		return err
 	}
 	return nil
+}
+
+// seedGoogleProvider preserves the former static Google provider on first run.
+// It only acts when no providers are configured and either Google settings are
+// present or existing threads still reference the old "google" provider. Fresh
+// installs can therefore open settings with no provider.
+func seedGoogleProvider(ctx context.Context, cat *catalog.Catalog, store *sqlite.Store, cfg config.Config) error {
+	if len(cat.Configs()) > 0 {
+		return nil
+	}
+
+	models := slices.Clone(cfg.GoogleModels)
+	if model := strings.TrimSpace(cfg.Model); model != "" && !slices.Contains(models, model) {
+		models = append(models, model)
+	}
+	hasKey := strings.TrimSpace(os.Getenv("GEMINI_API_KEY")) != "" ||
+		strings.TrimSpace(os.Getenv("GOOGLE_API_KEY")) != ""
+	if len(models) == 0 && !hasKey {
+		count, err := store.CountThreadsByProvider(ctx, googleprovider.ID)
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return nil
+		}
+	}
+	if len(models) == 0 {
+		models = []string{googleprovider.DefaultModel}
+	}
+
+	infos := make([]provider.ModelInfo, len(models))
+	for index, id := range models {
+		infos[index] = provider.ModelInfo{ID: id, Name: id}
+	}
+	_, err := cat.Seed(ctx, googleprovider.ID, provider.ConfigInput{
+		Name:         "Google Gemini",
+		Format:       provider.FormatGoogle,
+		DefaultModel: cfg.Model,
+		Models:       infos,
+	})
+	return err
 }

@@ -1,6 +1,8 @@
 import type {
   CreateThreadInput,
   HealthInfo,
+  ProviderConfig,
+  ProviderConfigInput,
   ProviderInfo,
   RunInfo,
   Thread,
@@ -89,6 +91,36 @@ export const api = {
 
   providers(): Promise<ProviderInfo[]> {
     return request<ProviderInfo[]>("/api/providers");
+  },
+
+  listProviderConfigs(): Promise<ProviderConfig[]> {
+    return request<ProviderConfig[]>("/api/settings/providers");
+  },
+
+  createProviderConfig(input: ProviderConfigInput): Promise<ProviderConfig> {
+    return request<ProviderConfig>("/api/settings/providers", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  updateProviderConfig(
+    id: string,
+    input: ProviderConfigInput,
+  ): Promise<ProviderConfig> {
+    return request<ProviderConfig>(
+      `/api/settings/providers/${encodeURIComponent(id)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(input),
+      },
+    );
+  },
+
+  deleteProviderConfig(id: string): Promise<void> {
+    return request<void>(`/api/settings/providers/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
   },
 
   listThreads(): Promise<Thread[]> {

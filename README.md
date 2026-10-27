@@ -135,7 +135,7 @@ agent prefers a model's `Stream` method when it implements `llm.Streamer`.
 | `providers/mockllm` | Deterministic model for tests and examples (part of the root module). |
 | `providers/anthropic` | Anthropic Messages adapter module. |
 | `providers/google` | Google Gemini adapter module. |
-| `providers/openai` | OpenAI Responses adapter module. |
+| `providers/openai` | OpenAI Responses and Chat Completions adapter module. |
 | `stores/sqlite` | Durable SQLite session store module. |
 | `stores/postgres` | Durable PostgreSQL session store module. |
 | `examples/...` | Runnable examples; `examples/google` is its own module. |
@@ -362,7 +362,7 @@ core/session       session identity, store contract, memory store
 tools              filesystem, command, web, and task tools
 providers/anthropic Anthropic Messages adapter (separate module)
 providers/google   Gemini adapter (separate module)
-providers/openai   OpenAI Responses adapter (separate module)
+providers/openai   OpenAI Responses and Chat Completions adapter (separate module)
 providers/mockllm  deterministic test model
 stores/sqlite      SQLite store (separate module)
 stores/postgres    PostgreSQL store (separate module)

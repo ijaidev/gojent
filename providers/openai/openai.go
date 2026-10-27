@@ -1,5 +1,5 @@
-// Package openai provides an OpenAI Responses API model provider implementing
-// Gojent's core LLM contract.
+// Package openai provides OpenAI model providers implementing Gojent's core LLM
+// contract: the Responses API and the Chat Completions API.
 //
 // The Responses API is item-oriented rather than message-oriented. The adapter
 // maps canonical parts onto input items and back: assistant text becomes
@@ -9,6 +9,10 @@
 //
 // Replay mode sends the full canonical transcript. Server mode continues from
 // a previous response ID and lets OpenAI retain conversation state.
+//
+// Chat Completions is stateless and message-oriented. ChatCompletionModel
+// targets /chat/completions, including OpenAI-compatible local and hosted
+// endpoints.
 package openai
 
 import (

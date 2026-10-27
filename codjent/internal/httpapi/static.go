@@ -23,9 +23,17 @@ func frontendHandler(dir string) http.Handler {
 		cleaned := path.Clean("/" + r.URL.Path)
 		if cleaned != "/" {
 			requested := filepath.Join(dir, filepath.FromSlash(strings.TrimPrefix(cleaned, "/")))
-			if info, err := os.Stat(requested); err == nil && !info.IsDir() {
-				files.ServeHTTP(w, r)
-				return
+			if info, err := os.Stat(requested); err == nil {
+				if !info.IsDir() {
+					files.ServeHTTP(w, r)
+					return
+				}
+				// Next.js writes each static route to <route>/index.html.
+				page := filepath.Join(requested, "index.html")
+				if pageInfo, pageErr := os.Stat(page); pageErr == nil && !pageInfo.IsDir() {
+					http.ServeFile(w, r, page)
+					return
+				}
 			}
 			if strings.Contains(path.Base(cleaned), ".") {
 				http.NotFound(w, r)

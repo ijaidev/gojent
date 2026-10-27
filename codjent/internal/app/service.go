@@ -68,9 +68,6 @@ func New(cfg Config) (*Service, error) {
 	}
 
 	infos := cfg.Models.List()
-	if len(infos) == 0 {
-		return nil, errors.New("app: at least one provider is required")
-	}
 
 	workspace := strings.TrimSpace(cfg.Workspace)
 	if workspace == "" {
@@ -92,20 +89,22 @@ func New(cfg Config) (*Service, error) {
 		return nil, fmt.Errorf("app: workspace %q is not a directory", workspace)
 	}
 
+	// A fresh install has no providers. The service still starts so the UI can
+	// open settings; thread creation fails until a provider is configured.
 	defaultProvider := strings.TrimSpace(cfg.DefaultProvider)
-	if defaultProvider == "" {
-		defaultProvider = infos[0].ID
-	}
-	providerInfo, ok := findProvider(infos, defaultProvider)
-	if !ok {
-		return nil, fmt.Errorf("%w: %s", provider.ErrUnknownProvider, defaultProvider)
-	}
 	defaultModel := strings.TrimSpace(cfg.DefaultModel)
-	if defaultModel == "" {
-		defaultModel = providerInfo.DefaultModel
-	}
-	if !hasModel(providerInfo, defaultModel) {
-		return nil, fmt.Errorf("%w: %s/%s", provider.ErrUnknownModel, defaultProvider, defaultModel)
+	if len(infos) > 0 {
+		if defaultProvider == "" {
+			defaultProvider = infos[0].ID
+		}
+		providerInfo, ok := findProvider(infos, defaultProvider)
+		if !ok {
+			providerInfo = infos[0]
+			defaultProvider = providerInfo.ID
+		}
+		if defaultModel == "" || !hasModel(providerInfo, defaultModel) {
+			defaultModel = providerInfo.DefaultModel
+		}
 	}
 
 	accessMode := cfg.DefaultAccessMode
@@ -169,15 +168,11 @@ func (s *Service) CreateThread(ctx context.Context, input CreateThreadInput) (*T
 	if title == "" {
 		title = defaultThreadTitle
 	}
-	providerID := strings.TrimSpace(input.Provider)
-	if providerID == "" {
-		providerID = s.defaultProvider
-	}
-	modelID := strings.TrimSpace(input.Model)
-	if modelID == "" {
-		modelID = s.defaultModel
-	}
-	if err := s.validateModel(providerID, modelID); err != nil {
+	providerID, modelID, err := s.resolveSelection(
+		strings.TrimSpace(input.Provider),
+		strings.TrimSpace(input.Model),
+	)
+	if err != nil {
 		return nil, err
 	}
 	accessMode := input.AccessMode
@@ -280,9 +275,12 @@ func (s *Service) UpdateThread(ctx context.Context, id string, input UpdateThrea
 	if !thread.AccessMode.Valid() {
 		return nil, fmt.Errorf("%w: access mode %q", ErrInvalidInput, thread.AccessMode)
 	}
-	if err := s.validateModel(thread.Provider, thread.Model); err != nil {
+	providerID, modelID, err := s.resolveSelection(thread.Provider, thread.Model)
+	if err != nil {
 		return nil, err
 	}
+	thread.Provider = providerID
+	thread.Model = modelID
 
 	thread.UpdatedAt = nowUTC()
 	if err := s.store.UpdateThread(ctx, thread); err != nil {
@@ -360,15 +358,33 @@ func (s *Service) clearFinishedActiveLocked(threadID string) {
 	}
 }
 
-func (s *Service) validateModel(providerID, modelID string) error {
-	info, ok := findProvider(s.models.List(), providerID)
+// resolveSelection fills empty provider and model IDs from the service defaults
+// and the current catalog, then validates the result. Explicit non-empty IDs
+// are validated as given.
+func (s *Service) resolveSelection(providerID, modelID string) (string, string, error) {
+	infos := s.models.List()
+	if providerID == "" {
+		providerID = s.defaultProvider
+		// The configured default may have been deleted since startup. Empty
+		// input means "use the default", so fall back to the current catalog.
+		if _, ok := findProvider(infos, providerID); !ok && len(infos) > 0 {
+			providerID = infos[0].ID
+		}
+	}
+	info, ok := findProvider(infos, providerID)
 	if !ok {
-		return fmt.Errorf("%w: %s", provider.ErrUnknownProvider, providerID)
+		return "", "", fmt.Errorf("%w: %s", provider.ErrUnknownProvider, providerID)
+	}
+	if modelID == "" {
+		modelID = s.defaultModel
+		if !hasModel(info, modelID) {
+			modelID = info.DefaultModel
+		}
 	}
 	if !hasModel(info, modelID) {
-		return fmt.Errorf("%w: %s/%s", provider.ErrUnknownModel, providerID, modelID)
+		return "", "", fmt.Errorf("%w: %s/%s", provider.ErrUnknownModel, providerID, modelID)
 	}
-	return nil
+	return providerID, modelID, nil
 }
 
 func findProvider(infos []provider.Info, id string) (provider.Info, bool) {

@@ -1,6 +1,7 @@
 "use client";
 
-import { Folder, Plus, Search, SquarePen, X } from "lucide-react";
+import { Folder, Plus, Search, Settings2, SquarePen, X } from "lucide-react";
+import Link from "next/link";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { CodjentMark, CodjentWordmark } from "@/components/brand";
 import { Spinner } from "@/components/spinner";
@@ -302,8 +303,15 @@ export function Sidebar({
           )}
         </div>
 
-        <div className="shrink-0 border-t border-line px-4 py-3">
-          <div className="flex items-center justify-between text-[10.5px] text-faint">
+        <div className="shrink-0 border-t border-line px-3 py-2">
+          <Link
+            className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] font-medium text-muted transition hover:bg-surface-hover hover:text-ink"
+            href="/settings"
+          >
+            <Settings2 className="size-3.5" />
+            Providers &amp; models
+          </Link>
+          <div className="mt-1 flex items-center justify-between px-2 text-[10px] text-faint">
             <span>Built on gojent</span>
             <span className="font-mono">v0.1</span>
           </div>

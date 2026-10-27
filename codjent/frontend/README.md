@@ -38,13 +38,16 @@ full run instructions.
 
 ## Layout
 
-- `src/app` — app shell, theme tokens, and static entry points.
-- `src/components` — sidebar, transcript, composer, settings, and tool/approval
-  cards.
+- `src/app` — app shell, theme tokens, and static entry points (`/` and
+  `/settings`).
+- `src/components` — sidebar, transcript, composer, thread settings, provider
+  settings, and tool/approval cards.
 - `src/hooks/use-codjent.ts` — thread state, run lifecycle, SSE replay, and
   approvals.
 - `src/lib/api.ts` — the browser/API boundary.
 - `src/lib/types.ts` — API wire types shared by the UI.
+- `src/lib/providers.ts` — provider format labels, descriptions, and endpoint
+  hints.
 
 ## Checks
 

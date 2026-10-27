@@ -15,8 +15,14 @@ func TestFrontendHandler(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "assets"), 0o755); err != nil {
 		t.Fatalf("mkdir assets: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(dir, "settings"), 0o755); err != nil {
+		t.Fatalf("mkdir settings: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("codjent app"), 0o600); err != nil {
 		t.Fatalf("write index: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings", "index.html"), []byte("settings page"), 0o600); err != nil {
+		t.Fatalf("write settings index: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "assets", "app.js"), []byte("console.log(1)"), 0o600); err != nil {
 		t.Fatalf("write asset: %v", err)
@@ -33,6 +39,8 @@ func TestFrontendHandler(t *testing.T) {
 	}{
 		{path: "/", status: http.StatusOK, body: "codjent app", contentType: "text/html"},
 		{path: "/assets/app.js", status: http.StatusOK, body: "console.log(1)", contentType: "text/javascript"},
+		{path: "/settings", status: http.StatusOK, body: "settings page", contentType: "text/html"},
+		{path: "/settings/", status: http.StatusOK, body: "settings page", contentType: "text/html"},
 		{path: "/threads/abc", status: http.StatusOK, body: "codjent app", contentType: "text/html"},
 		{path: "/missing.js", status: http.StatusNotFound},
 		{path: "/api/unknown", status: http.StatusNotFound},
