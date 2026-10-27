@@ -15,8 +15,12 @@ func (m *Model) Generate(ctx context.Context, req *llm.Request) (*llm.Response, 
 	if err != nil {
 		return nil, err
 	}
+	opts, err := m.headerOptions(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-	message, err := m.client.Messages.New(ctx, params)
+	message, err := m.client.Messages.New(ctx, params, opts...)
 	if err != nil {
 		return nil, wrapError(err)
 	}
@@ -32,6 +36,10 @@ func (m *Model) Stream(ctx context.Context, req *llm.Request) (llm.Stream, error
 	if err != nil {
 		return nil, err
 	}
+	opts, err := m.headerOptions(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	streamCtx, cancel := context.WithCancel(ctx)
 	events := make(chan llm.StreamEvent, 16)
@@ -41,7 +49,7 @@ func (m *Model) Stream(ctx context.Context, req *llm.Request) (llm.Stream, error
 		defer close(events)
 		defer close(errCh)
 
-		sdkStream := m.client.Messages.NewStreaming(streamCtx, params)
+		sdkStream := m.client.Messages.NewStreaming(streamCtx, params, opts...)
 		defer func() {
 			_ = sdkStream.Close()
 		}()

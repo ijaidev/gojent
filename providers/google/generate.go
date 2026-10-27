@@ -32,6 +32,9 @@ func (m *Model) Generate(ctx context.Context, req *llm.Request) (*llm.Response, 
 	if err != nil {
 		return nil, err
 	}
+	if err := m.applyHeaders(ctx, config); err != nil {
+		return nil, err
+	}
 
 	resp, err := m.client.Models.GenerateContent(ctx, m.modelID, contents, config)
 	if err != nil {
@@ -61,6 +64,9 @@ func (m *Model) Stream(ctx context.Context, req *llm.Request) (llm.Stream, error
 	}
 	config, err := m.convertConfig(req, systemInstruction)
 	if err != nil {
+		return nil, err
+	}
+	if err := m.applyHeaders(ctx, config); err != nil {
 		return nil, err
 	}
 

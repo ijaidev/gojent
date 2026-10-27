@@ -5,9 +5,12 @@ package google
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
 
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/providers/internal/httpheader"
 	"google.golang.org/genai"
 )
 
@@ -65,6 +68,22 @@ type Config struct {
 	// It is copied before use, and its APIKey takes precedence over the
 	// GEMINI_API_KEY / GOOGLE_API_KEY environment variables.
 	ClientConfig *genai.ClientConfig
+	// Headers are sent with every request. The map is copied at construction;
+	// mutating it afterwards does not change the model.
+	//
+	// Request headers override ClientConfig.HTTPOptions.Headers with the same
+	// name. They cannot override the x-goog-api-key header, which the SDK sets
+	// after applying request headers.
+	Headers http.Header
+	// HeaderFunc returns additional headers for each model call. It runs once
+	// per Generate or Stream call, after the request is validated and before
+	// any network I/O. Returned values override Headers with the same name.
+	// Returning an error fails the call.
+	//
+	// HeaderFunc may run concurrently for parallel runs sharing this model. It
+	// must be safe for concurrent use and should derive per-run values from
+	// ctx rather than captured state.
+	HeaderFunc func(ctx context.Context) (http.Header, error)
 	// Reasoning optionally configures provider-level default reasoning settings.
 	Reasoning *llm.ReasoningConfig
 	// ReasoningLevel optionally configures the provider-level default thinking
@@ -78,9 +97,11 @@ type Config struct {
 // Model implements the llm.Model and llm.Streamer interfaces using Google's
 // Gen AI SDK.
 type Model struct {
-	modelID   string
-	client    *genai.Client
-	reasoning *llm.ReasoningConfig
+	modelID    string
+	client     *genai.Client
+	headers    http.Header
+	headerFunc func(ctx context.Context) (http.Header, error)
+	reasoning  *llm.ReasoningConfig
 }
 
 var (
@@ -93,6 +114,10 @@ func New(ctx context.Context, cfg Config) (*Model, error) {
 	modelID := cfg.Model
 	if modelID == "" {
 		return nil, ErrModelNotSet
+	}
+	headers, err := httpheader.Merge(cfg.Headers)
+	if err != nil {
+		return nil, fmt.Errorf("google: %w", err)
 	}
 
 	client := cfg.Client
@@ -129,9 +154,11 @@ func New(ctx context.Context, cfg Config) (*Model, error) {
 	}
 
 	return &Model{
-		modelID:   modelID,
-		client:    client,
-		reasoning: reasoning,
+		modelID:    modelID,
+		client:     client,
+		headers:    headers,
+		headerFunc: cfg.HeaderFunc,
+		reasoning:  reasoning,
 	}, nil
 }
 
@@ -176,6 +203,45 @@ func (m *Model) Info() llm.Info {
 			PromptCaching:     llm.CacheModeAutomatic,
 		},
 	}
+}
+
+// requestHeaders merges the model's static headers with the dynamic headers
+// for this call.
+func (m *Model) requestHeaders(ctx context.Context) (http.Header, error) {
+	if m.headerFunc == nil {
+		return m.headers, nil
+	}
+	dynamic, err := m.headerFunc(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("google: header function: %w", err)
+	}
+	headers, err := httpheader.Merge(m.headers, dynamic)
+	if err != nil {
+		return nil, fmt.Errorf("google: %w", err)
+	}
+	return headers, nil
+}
+
+// applyHeaders adds the request headers to a GenerateContent config. Values
+// from HeaderFunc override static values with the same name.
+func (m *Model) applyHeaders(ctx context.Context, cfg *genai.GenerateContentConfig) error {
+	headers, err := m.requestHeaders(ctx)
+	if err != nil {
+		return err
+	}
+	if len(headers) == 0 {
+		return nil
+	}
+	if cfg.HTTPOptions == nil {
+		cfg.HTTPOptions = &genai.HTTPOptions{}
+	}
+	if cfg.HTTPOptions.Headers == nil {
+		cfg.HTTPOptions.Headers = make(http.Header, len(headers))
+	}
+	for name, values := range headers {
+		cfg.HTTPOptions.Headers[name] = append([]string(nil), values...)
+	}
+	return nil
 }
 
 // resolveReasoning merges request-level reasoning with provider defaults.

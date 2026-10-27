@@ -4,6 +4,9 @@
 // A Store has exactly two operations: Load and the atomic Append. Advanced
 // durability features such as sequences, leases, and checkpoints belong in
 // store modules, not in the core.
+//
+// NewContext and FromContext carry the current Session through a run so tools
+// and provider adapters can read conversation identity without extra plumbing.
 package session
 
 import (

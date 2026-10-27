@@ -18,14 +18,20 @@ var updateGolden = flag.Bool("update", false, "rewrite testdata golden files")
 // newTestModel starts a fake Responses API and returns a model pointed at it.
 func newTestModel(t *testing.T, handler http.HandlerFunc) *Model {
 	t.Helper()
+	return newTestModelWithConfig(t, Config{}, handler)
+}
+
+// newTestModelWithConfig starts a fake Responses API for a caller-supplied
+// config. Model, APIKey, and BaseURL are replaced with test values.
+func newTestModelWithConfig(t *testing.T, cfg Config, handler http.HandlerFunc) *Model {
+	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 
-	model, err := New(context.Background(), Config{
-		Model:   "gpt-test",
-		APIKey:  "test-key",
-		BaseURL: server.URL,
-	})
+	cfg.Model = "gpt-test"
+	cfg.APIKey = "test-key"
+	cfg.BaseURL = server.URL
+	model, err := New(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

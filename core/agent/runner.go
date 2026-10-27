@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/core/session"
 )
 
 // runner is one agent execution. name and instructions are snapshotted from the
@@ -64,6 +65,9 @@ func newRunner(a *Agent, opts RunOptions) (*runner, error) {
 }
 
 func (r *runner) run(ctx context.Context, input ...llm.Message) (resp *Response, err error) {
+	if r.opts.Session != nil {
+		ctx = session.NewContext(ctx, *r.opts.Session)
+	}
 	input = mergeMedia(input, r.opts.Media)
 	started := time.Now()
 	runID := newRunID()

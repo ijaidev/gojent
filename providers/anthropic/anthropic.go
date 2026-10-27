@@ -11,11 +11,15 @@ package anthropic
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
+	"slices"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/providers/internal/httpheader"
 )
 
 const providerName = "anthropic"
@@ -46,6 +50,21 @@ type Config struct {
 	// Client is an optional pre-configured SDK client. When set, APIKey and
 	// BaseURL are ignored.
 	Client *anthropic.Client
+	// Headers are sent with every request. The map is copied at construction;
+	// mutating it afterwards does not change the model.
+	//
+	// Request headers override SDK-generated defaults, including
+	// Authorization and X-Api-Key. Do not put untrusted values here.
+	Headers http.Header
+	// HeaderFunc returns additional headers for each model call. It runs once
+	// per Generate or Stream call, after the request is validated and before
+	// any network I/O. Returned values override Headers with the same name.
+	// Returning an error fails the call.
+	//
+	// HeaderFunc may run concurrently for parallel runs sharing this model. It
+	// must be safe for concurrent use and should derive per-run values from
+	// ctx rather than captured state.
+	HeaderFunc func(ctx context.Context) (http.Header, error)
 	// MaxTokens is the default max_tokens for requests that do not set one.
 	// Zero means DefaultMaxTokens.
 	MaxTokens int
@@ -57,10 +76,12 @@ type Config struct {
 // Model implements the llm.Model and llm.Streamer interfaces using the
 // Anthropic Messages API.
 type Model struct {
-	modelID   string
-	client    anthropic.Client
-	maxTokens int
-	reasoning *llm.ReasoningConfig
+	modelID    string
+	client     anthropic.Client
+	headers    http.Header
+	headerFunc func(ctx context.Context) (http.Header, error)
+	maxTokens  int
+	reasoning  *llm.ReasoningConfig
 }
 
 var (
@@ -72,6 +93,10 @@ var (
 func New(_ context.Context, cfg Config) (*Model, error) {
 	if cfg.Model == "" {
 		return nil, ErrModelNotSet
+	}
+	headers, err := httpheader.Merge(cfg.Headers)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: %w", err)
 	}
 
 	var client anthropic.Client
@@ -97,10 +122,12 @@ func New(_ context.Context, cfg Config) (*Model, error) {
 	}
 
 	return &Model{
-		modelID:   cfg.Model,
-		client:    client,
-		maxTokens: maxTokens,
-		reasoning: cfg.Reasoning.Clone(),
+		modelID:    cfg.Model,
+		client:     client,
+		headers:    headers,
+		headerFunc: cfg.HeaderFunc,
+		maxTokens:  maxTokens,
+		reasoning:  cfg.Reasoning.Clone(),
 	}, nil
 }
 
@@ -157,6 +184,51 @@ func (m *Model) Info() llm.Info {
 			Citations:          false,
 		},
 	}
+}
+
+// requestHeaders merges the model's static headers with the dynamic headers
+// for this call.
+func (m *Model) requestHeaders(ctx context.Context) (http.Header, error) {
+	if m.headerFunc == nil {
+		return m.headers, nil
+	}
+	dynamic, err := m.headerFunc(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: header function: %w", err)
+	}
+	headers, err := httpheader.Merge(m.headers, dynamic)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: %w", err)
+	}
+	return headers, nil
+}
+
+// headerOptions converts headers into SDK request options. Names are sorted so
+// the generated option list is deterministic.
+func (m *Model) headerOptions(ctx context.Context) ([]option.RequestOption, error) {
+	headers, err := m.requestHeaders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(headers) == 0 {
+		return nil, nil
+	}
+
+	names := make([]string, 0, len(headers))
+	for name := range headers {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	opts := make([]option.RequestOption, 0, len(headers))
+	for _, name := range names {
+		values := headers[name]
+		opts = append(opts, option.WithHeader(name, values[0]))
+		for _, value := range values[1:] {
+			opts = append(opts, option.WithHeaderAdd(name, value))
+		}
+	}
+	return opts, nil
 }
 
 // resolveReasoning merges request-level reasoning with provider defaults.
