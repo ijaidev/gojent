@@ -15,7 +15,7 @@ import (
 
 // partState is the per-part replay state Anthropic needs. It lives in
 // PartMeta.Provider["anthropic"] and annotates canonical content; it never
-// replaces it (D11).
+// replaces it.
 //
 // Thinking signatures and redacted-thinking payloads must be replayed exactly.
 // Hosted-tool result blocks are recorded verbatim so a paused turn can be sent
@@ -138,7 +138,7 @@ func appendContent(out []anthropic.MessageParam, role anthropic.MessageParamRole
 }
 
 // convertUserContent translates one user turn. Tool results stay in the user
-// turn as tool_result blocks; there is no tool role (D5, D17).
+// turn as tool_result blocks; there is no tool role.
 func convertUserContent(parts []llm.Part) ([]anthropic.ContentBlockParamUnion, error) {
 	out := make([]anthropic.ContentBlockParamUnion, 0, len(parts))
 	for index, part := range parts {
@@ -288,7 +288,7 @@ func convertToolCallBlocks(part *llm.ToolCallPart) ([]anthropic.ContentBlockPara
 }
 
 // hostedResultTypes are the result blocks a hosted tool can return. They are
-// recorded verbatim and replayed without local execution (D9).
+// recorded verbatim and replayed without local execution.
 var hostedResultTypes = map[string]struct{}{
 	"web_search_tool_result":                 {},
 	"web_fetch_tool_result":                  {},
@@ -426,7 +426,7 @@ func toolInputValue(input json.RawMessage) (any, error) {
 }
 
 // convertFileBlock translates a canonical file part into an image or document
-// block. MIMEType decides the encoding (D2, D3).
+// block. MIMEType decides the encoding.
 func convertFileBlock(part *llm.FilePart) (anthropic.ContentBlockParamUnion, error) {
 	mimeType := normalizeMIME(part.MIMEType)
 	if mimeType == "" {

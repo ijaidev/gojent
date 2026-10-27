@@ -7,8 +7,8 @@ import (
 )
 
 // FormatVersion is the message-model version written by MarshalMessage.
-// Persisted messages written by another version must be rejected, not guessed
-// at (D15).
+// Persisted messages written by another version must be rejected, not
+// guessed at.
 const FormatVersion = 2
 
 func decodeParts(raw []json.RawMessage) ([]Part, error) {
@@ -27,7 +27,7 @@ func decodeParts(raw []json.RawMessage) ([]Part, error) {
 }
 
 // decodePart dispatches on the JSON type discriminator. Unknown types fail
-// closed (D18).
+// closed.
 func decodePart(raw json.RawMessage) (Part, error) {
 	var header struct {
 		Type PartType `json:"type"`
@@ -113,7 +113,7 @@ func MarshalMessage(m Message) ([]byte, error) {
 }
 
 // UnmarshalMessage decodes a message written by MarshalMessage. A missing or
-// different format_version is an error, never a best-effort parse (D15).
+// different format_version is an error, never a best-effort parse.
 func UnmarshalMessage(data []byte) (Message, error) {
 	var header struct {
 		FormatVersion int `json:"format_version"`

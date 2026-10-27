@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// ToolKind classifies who executes a tool call (D10).
+// ToolKind classifies who executes a tool call.
 type ToolKind string
 
 const (
@@ -61,7 +61,7 @@ func (s ToolStatus) valid() bool {
 //
 // ItemID is the provider's item identity (for example an OpenAI Responses
 // item). CallID is the correlation ID used by results. They are different
-// fields and must not be conflated (D7).
+// fields and must not be conflated.
 type ToolCall struct {
 	// ItemID identifies the provider item that carried the call.
 	ItemID string `json:"item_id,omitempty"`
@@ -72,7 +72,7 @@ type ToolCall struct {
 	// Kind selects the execution path. Empty means function.
 	Kind ToolKind `json:"kind,omitempty"`
 	// Input is the JSON value passed to the tool. For custom tools it is a
-	// JSON string; for function tools it is a JSON object (D8).
+	// JSON string; for function tools it is a JSON object.
 	Input json.RawMessage `json:"input,omitempty"`
 	// Status is the provider-reported call status, when it reports one.
 	Status ToolStatus `json:"status,omitempty"`
@@ -208,7 +208,7 @@ func (p *ToolCallPart) validate() error {
 	return p.ToolCall.validate()
 }
 
-// ToolResultPart is a tool result in a user message (D5).
+// ToolResultPart is a tool result in a user message.
 type ToolResultPart struct {
 	partBase
 	ToolResult

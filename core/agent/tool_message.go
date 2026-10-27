@@ -55,7 +55,7 @@ func toolErrorResult(call tool.Call, status llm.ToolStatus, err error) llm.ToolR
 }
 
 // resultMessage wraps one result in a user message for event observation.
-// The runner groups all results for a step before persisting (D17).
+// The runner groups all results for a step before persisting.
 func resultMessage(result llm.ToolResult) llm.Message {
 	return llm.ToolResultsMessage(result)
 }

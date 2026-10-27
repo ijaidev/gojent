@@ -12,7 +12,7 @@ import (
 
 // partState is the per-part replay state the Responses adapter needs. It lives
 // in PartMeta.Provider["openai"] and annotates canonical content; it never
-// replaces it (D11).
+// replaces it.
 //
 // OpenAI returns reasoning summaries but not readable reasoning text, and
 // encrypted reasoning plus the provider item ID are required to replay the
@@ -204,7 +204,7 @@ func contentPart(kind llm.PartType, text string) llm.Part {
 }
 
 // functionCallPart converts one function_call output item. The item ID and
-// correlation call ID stay separate (D7). Canonical Status is left empty; the
+// correlation call ID stay separate. Canonical Status is left empty; the
 // provider status is recorded in part metadata so Generate and Stream agree.
 func functionCallPart(item *responses.ResponseOutputItemUnion, includeStatus bool) (*llm.ToolCallPart, error) {
 	if item.CallID == "" {

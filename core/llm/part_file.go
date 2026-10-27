@@ -10,7 +10,7 @@ import (
 
 // FilePart is one media or document payload. MIMEType decides how an adapter
 // encodes it, so there are no separate image, audio, video, or document part
-// types (D2, D3).
+// types.
 //
 // Exactly one source must be set: inline Data, a URL, or a provider FileID.
 type FilePart struct {

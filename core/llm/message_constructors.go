@@ -32,7 +32,7 @@ func AssistantMessageWithParts(parts ...Part) Message {
 }
 
 // ToolResultsMessage groups results for one assistant turn in a single user
-// message, in the given order (D5, D17).
+// message, in the given order.
 func ToolResultsMessage(results ...ToolResult) Message {
 	parts := make([]Part, 0, len(results))
 	for index := range results {

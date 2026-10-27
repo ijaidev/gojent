@@ -15,8 +15,8 @@ import (
 const DefaultToolTimeout = 2 * time.Minute
 
 // runTools executes locally-runnable calls and groups every result into one
-// user message, in call order (D17). Server calls are recorded in the
-// assistant message and never executed (D10, invariant 9).
+// user message, in call order. Server calls are recorded in the assistant
+// message and never executed.
 func (r *runner) runTools(ctx context.Context, assistant llm.Message, step int) (llm.Message, bool, error) {
 	results := make([]llm.ToolResult, 0, len(assistant.ToolCalls()))
 	budgetExceeded := false

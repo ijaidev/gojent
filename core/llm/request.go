@@ -13,7 +13,7 @@ const (
 )
 
 // State describes conversation state handling. The zero value is replay mode;
-// server state is always explicit, never inferred from PreviousID (D13).
+// server state is always explicit, never inferred from PreviousID.
 type State struct {
 	// Mode is replay (default) or server.
 	Mode StateMode `json:"mode,omitempty"`

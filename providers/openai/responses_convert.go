@@ -147,7 +147,7 @@ func inputTextContent(text string) responses.ResponseInputContentUnionParam {
 }
 
 // inputFileContent maps one canonical file onto input_image or input_file.
-// MIMEType is authoritative (D2, D3).
+// MIMEType is authoritative.
 func inputFileContent(part *llm.FilePart) (responses.ResponseInputContentUnionParam, error) {
 	mimeType := normalizeOpenAIMIME(part.MIMEType)
 	if mimeType == "" {

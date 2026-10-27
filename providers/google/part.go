@@ -12,7 +12,7 @@ import (
 
 // partProviderState is the per-part replay state Gemini needs. It lives in
 // PartMeta.Provider["google"] and annotates canonical content; it never
-// replaces it (D11). Thought signatures must be replayed on the same part.
+// replaces it. Thought signatures must be replayed on the same part.
 type partProviderState struct {
 	ThoughtSignature []byte `json:"thought_signature,omitempty"`
 }

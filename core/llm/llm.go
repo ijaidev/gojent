@@ -10,7 +10,7 @@ import "context"
 // Model is the provider contract required by the agent runner.
 //
 // Info is mandatory: the runner checks capabilities before building a request
-// rather than probing for optional interfaces (D12).
+// rather than probing for optional interfaces.
 type Model interface {
 	// ModelID returns the provider-facing model identifier.
 	ModelID() string

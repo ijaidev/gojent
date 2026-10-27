@@ -64,7 +64,7 @@ type Thread struct {
 // payload plus the app envelope (identity, thread, timestamp).
 //
 // There is no stored Thinking, ToolCalls, or ToolCallID. Those are read-only
-// views derived from canonical parts by MessageView (D22).
+// views derived from canonical parts by MessageView.
 type Message struct {
 	ID        string      `json:"id"`
 	ThreadID  string      `json:"thread_id"`

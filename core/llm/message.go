@@ -7,14 +7,14 @@ import (
 )
 
 // Role identifies a message author. Tool results are parts inside user
-// messages; there is no tool role (D5).
+// messages; there is no tool role.
 type Role string
 
 const (
 	// RoleSystem carries high-level instructions.
 	RoleSystem Role = "system"
 	// RoleDeveloper carries developer instructions. Adapters hoist or
-	// concatenate it with system instructions (D16).
+	// concatenate it with system instructions.
 	RoleDeveloper Role = "developer"
 	// RoleUser carries human, application, or tool-result input.
 	RoleUser Role = "user"
@@ -56,7 +56,7 @@ func (s MessageStatus) valid() bool {
 
 // Message is one turn in a conversation.
 //
-// Content is the only ordered content stream (D4). ItemID, Status, Phase, and
+// Content is the only ordered content stream. ItemID, Status, Phase, and
 // Name are envelope metadata. Provider holds message-level metadata and never
 // replaces canonical parts.
 type Message struct {

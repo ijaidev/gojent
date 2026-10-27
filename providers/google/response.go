@@ -28,7 +28,7 @@ func blockedResponseError(resp *genai.GenerateContentResponse) error {
 }
 
 // firstCandidate returns the only candidate Gojent exposes. Multi-candidate
-// responses are out of scope (D21).
+// responses are out of scope.
 func firstCandidate(resp *genai.GenerateContentResponse) *genai.Candidate {
 	if resp == nil || len(resp.Candidates) == 0 {
 		return nil

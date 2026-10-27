@@ -6,7 +6,7 @@ import (
 )
 
 // Assembler turns canonical stream events into one message. Part indices are
-// authoritative: index 0 is a valid part index (D14).
+// authoritative: index 0 is a valid part index.
 type Assembler struct {
 	role Role
 

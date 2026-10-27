@@ -9,7 +9,7 @@ import (
 )
 
 // checkRequestFeatures rejects requests the model cannot honor instead of
-// letting an adapter silently degrade them (D12).
+// letting an adapter silently degrade them.
 func checkRequestFeatures(modelID string, features llm.Features, request *llm.Request) error {
 	var missing []string
 	add := func(feature string) {

@@ -12,7 +12,7 @@ const (
 	PartTypeReasoning PartType = "reasoning"
 	// PartTypeFile is one media or document payload. MIMEType decides how
 	// providers encode it; there are no separate image/audio/video/document
-	// part types (D2, D3).
+	// part types.
 	PartTypeFile PartType = "file"
 	// PartTypeToolCall is a model request to invoke a tool.
 	PartTypeToolCall PartType = "tool_call"
@@ -23,7 +23,7 @@ const (
 )
 
 // Part is a closed sum type. The unexported method prevents implementations
-// outside this package. Unknown JSON part types fail closed (D1, D18).
+// outside this package. Unknown JSON part types fail closed.
 type Part interface {
 	PartType() PartType
 	Meta() *PartMeta
@@ -33,7 +33,7 @@ type Part interface {
 // PartMeta carries annotations shared by every part.
 type PartMeta struct {
 	// Provider holds per-part replay state keyed by provider. It annotates
-	// canonical content and never replaces it (D11).
+	// canonical content and never replaces it.
 	Provider ProviderData `json:"provider,omitempty"`
 }
 
