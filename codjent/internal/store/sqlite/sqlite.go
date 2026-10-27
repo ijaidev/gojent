@@ -62,10 +62,20 @@ CREATE TABLE IF NOT EXISTS provider_models (
     PRIMARY KEY (provider_id, model_id)
 );
 
+CREATE TABLE IF NOT EXISTS provider_headers (
+    provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    value TEXT NOT NULL,
+    dynamic INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (provider_id, name)
+);
+
 CREATE INDEX IF NOT EXISTS idx_threads_updated_at ON threads(updated_at);
 CREATE INDEX IF NOT EXISTS idx_messages_thread_seq ON messages(thread_id, seq);
 CREATE INDEX IF NOT EXISTS idx_threads_provider ON threads(provider);
 CREATE INDEX IF NOT EXISTS idx_provider_models_position ON provider_models(provider_id, position);
+CREATE INDEX IF NOT EXISTS idx_provider_headers_position ON provider_headers(provider_id, position);
 `, llm.FormatVersion)
 
 // Store is a SQLite-backed app.Store.

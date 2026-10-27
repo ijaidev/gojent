@@ -64,7 +64,8 @@ func canonicalChatParts(message *sdk.ChatCompletionMessage) ([]llm.Part, error) 
 	if message.Refusal != "" {
 		parts = append(parts, llm.NewRefusalPart(message.Refusal))
 	}
-	for index, call := range message.ToolCalls {
+	for index := range message.ToolCalls {
+		call := &message.ToolCalls[index]
 		if call.ID == "" {
 			return nil, fmt.Errorf("%w: tool call %d has no id", llm.ErrInvalidToolCall, index)
 		}

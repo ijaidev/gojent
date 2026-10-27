@@ -84,6 +84,12 @@ export type ProviderFormat =
   | "anthropic"
   | "google";
 
+export interface ProviderHeader {
+  name: string;
+  value: string;
+  dynamic: boolean;
+}
+
 export interface ProviderConfig {
   id: string;
   name: string;
@@ -91,6 +97,7 @@ export interface ProviderConfig {
   base_url: string;
   default_model: string;
   models: ModelInfo[];
+  headers: ProviderHeader[];
   api_key_set: boolean;
   created_at: string;
   updated_at: string;
@@ -102,6 +109,7 @@ export interface ProviderConfigInput {
   base_url: string;
   default_model: string;
   models: ModelInfo[];
+  headers: ProviderHeader[];
   api_key?: string;
   clear_api_key?: boolean;
 }

@@ -3,7 +3,11 @@ package catalog_test
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +15,8 @@ import (
 	"github.com/ijaidev/gojent/codjent/internal/provider"
 	"github.com/ijaidev/gojent/codjent/internal/provider/catalog"
 	"github.com/ijaidev/gojent/codjent/internal/store/sqlite"
+	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/core/session"
 )
 
 func newTestCatalog(t *testing.T) (*catalog.Catalog, *sqlite.Store) {
@@ -297,5 +303,82 @@ func TestCatalogSeedPreservesExisting(t *testing.T) {
 	}
 	if len(cat.Configs()) != 1 {
 		t.Fatalf("Configs = %+v, want one seeded provider", cat.Configs())
+	}
+}
+
+func TestCatalogAppliesStaticAndDynamicHeaders(t *testing.T) {
+	var (
+		requests int
+		got      http.Header
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		got = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"id": "chatcmpl_1",
+			"object": "chat.completion",
+			"created": 1700000000,
+			"model": "test-model",
+			"choices": [{
+				"index": 0,
+				"finish_reason": "stop",
+				"logprobs": null,
+				"message": {"role": "assistant", "content": "hello"}
+			}],
+			"usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+		}`)
+	}))
+	defer server.Close()
+
+	cat, _ := newTestCatalog(t)
+	ctx := context.Background()
+	created, err := cat.Create(ctx, provider.ConfigInput{
+		Name:    "Gateway",
+		Format:  provider.FormatOpenAICompletion,
+		BaseURL: server.URL,
+		Models:  []provider.ModelInfo{{ID: "test-model"}},
+		APIKey:  "test-key",
+		Headers: []provider.Header{
+			{Name: "X-Static", Value: "static-value"},
+			{Name: "x-opencode-session", Value: "{{session.id}}", Dynamic: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(created.Headers) != 2 || !created.Headers[1].Dynamic {
+		t.Fatalf("created headers = %+v", created.Headers)
+	}
+
+	model, err := cat.NewModel(ctx, created.ID, "test-model")
+	if err != nil {
+		t.Fatalf("NewModel: %v", err)
+	}
+	runCtx := session.NewContext(ctx, session.Session{ID: "thread-1"})
+	if _, err := model.Generate(runCtx, &llm.Request{
+		Messages: []llm.Message{llm.UserMessage("hi")},
+	}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+	if value := got.Get("X-Static"); value != "static-value" {
+		t.Fatalf("X-Static = %q, want static-value", value)
+	}
+	if value := got.Get("X-Opencode-Session"); value != "thread-1" {
+		t.Fatalf("X-Opencode-Session = %q, want thread-1", value)
+	}
+
+	// Dynamic headers need a session; without one the call fails before any
+	// network request is made.
+	if _, err := model.Generate(ctx, &llm.Request{
+		Messages: []llm.Message{llm.UserMessage("hi")},
+	}); err == nil || !strings.Contains(err.Error(), "session") {
+		t.Fatalf("Generate without session error = %v, want a session error", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests after failed call = %d, want 1", requests)
 	}
 }

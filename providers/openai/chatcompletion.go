@@ -3,8 +3,11 @@ package openai
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"slices"
 
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/providers/internal/httpheader"
 	sdk "github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/packages/param"
@@ -27,6 +30,21 @@ type ChatCompletionConfig struct {
 	// Client is an optional pre-configured SDK client. When set, APIKey and
 	// BaseURL are ignored.
 	Client *sdk.Client
+	// Headers are sent with every request. The map is copied at construction;
+	// mutating it afterwards does not change the model.
+	//
+	// Request headers override SDK-generated defaults, including
+	// Authorization. Do not put untrusted values here.
+	Headers http.Header
+	// HeaderFunc returns additional headers for each model call. It runs once
+	// per Generate or Stream call, after the request is validated and before
+	// any network I/O. Returned values override Headers with the same name.
+	// Returning an error fails the call.
+	//
+	// HeaderFunc may run concurrently for parallel runs sharing this model. It
+	// must be safe for concurrent use and should derive per-run values from
+	// ctx rather than captured state.
+	HeaderFunc func(ctx context.Context) (http.Header, error)
 	// Reasoning optionally configures provider-level default reasoning
 	// settings. Request-level settings take precedence.
 	Reasoning *llm.ReasoningConfig
@@ -35,9 +53,11 @@ type ChatCompletionConfig struct {
 // ChatCompletionModel implements llm.Model and llm.Streamer using the OpenAI
 // Chat Completions API.
 type ChatCompletionModel struct {
-	modelID   string
-	client    sdk.Client
-	reasoning *llm.ReasoningConfig
+	modelID    string
+	client     sdk.Client
+	headers    http.Header
+	headerFunc func(ctx context.Context) (http.Header, error)
+	reasoning  *llm.ReasoningConfig
 }
 
 var (
@@ -49,6 +69,10 @@ var (
 func NewChatCompletion(_ context.Context, cfg ChatCompletionConfig) (*ChatCompletionModel, error) {
 	if cfg.Model == "" {
 		return nil, ErrModelNotSet
+	}
+	headers, err := httpheader.Merge(cfg.Headers)
+	if err != nil {
+		return nil, fmt.Errorf("openai: %w", err)
 	}
 
 	var client sdk.Client
@@ -66,9 +90,11 @@ func NewChatCompletion(_ context.Context, cfg ChatCompletionConfig) (*ChatComple
 	}
 
 	return &ChatCompletionModel{
-		modelID:   cfg.Model,
-		client:    client,
-		reasoning: cfg.Reasoning.Clone(),
+		modelID:    cfg.Model,
+		client:     client,
+		headers:    headers,
+		headerFunc: cfg.HeaderFunc,
+		reasoning:  cfg.Reasoning.Clone(),
 	}, nil
 }
 
@@ -101,7 +127,11 @@ func (m *ChatCompletionModel) Generate(ctx context.Context, req *llm.Request) (*
 	if err != nil {
 		return nil, err
 	}
-	completion, err := m.client.Chat.Completions.New(ctx, params)
+	opts, err := m.headerOptions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	completion, err := m.client.Chat.Completions.New(ctx, params, opts...)
 	if err != nil {
 		return nil, wrapError(err)
 	}
@@ -120,9 +150,58 @@ func (m *ChatCompletionModel) Stream(ctx context.Context, req *llm.Request) (llm
 	params.StreamOptions = sdk.ChatCompletionStreamOptionsParam{
 		IncludeUsage: param.NewOpt(true),
 	}
+	opts, err := m.headerOptions(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-	stream := m.client.Chat.Completions.NewStreaming(ctx, params)
+	stream := m.client.Chat.Completions.NewStreaming(ctx, params, opts...)
 	return newChatCompletionStream(ctx, stream, m.modelID), nil
+}
+
+// requestHeaders merges the model's static headers with the dynamic headers
+// for this call.
+func (m *ChatCompletionModel) requestHeaders(ctx context.Context) (http.Header, error) {
+	if m.headerFunc == nil {
+		return m.headers, nil
+	}
+	dynamic, err := m.headerFunc(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("openai: header function: %w", err)
+	}
+	headers, err := httpheader.Merge(m.headers, dynamic)
+	if err != nil {
+		return nil, fmt.Errorf("openai: %w", err)
+	}
+	return headers, nil
+}
+
+// headerOptions converts headers into SDK request options. Names are sorted so
+// the generated option list is deterministic.
+func (m *ChatCompletionModel) headerOptions(ctx context.Context) ([]option.RequestOption, error) {
+	headers, err := m.requestHeaders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(headers) == 0 {
+		return nil, nil
+	}
+
+	names := make([]string, 0, len(headers))
+	for name := range headers {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	opts := make([]option.RequestOption, 0, len(headers))
+	for _, name := range names {
+		values := headers[name]
+		opts = append(opts, option.WithHeader(name, values[0]))
+		for _, value := range values[1:] {
+			opts = append(opts, option.WithHeaderAdd(name, value))
+		}
+	}
+	return opts, nil
 }
 
 // requestParams builds one Chat Completions request. Every feature the adapter
@@ -146,7 +225,7 @@ func (m *ChatCompletionModel) requestParams(req *llm.Request) (sdk.ChatCompletio
 		return sdk.ChatCompletionNewParams{}, err
 	}
 	params := sdk.ChatCompletionNewParams{
-		Model:    shared.ChatModel(m.modelID),
+		Model:    m.modelID,
 		Messages: messages,
 	}
 

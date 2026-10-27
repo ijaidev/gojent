@@ -13,7 +13,8 @@ frontend lives in [`frontend/`](frontend) and is designed to feel like
   approval cards, cancellation, and per-thread settings.
 - Multiple provider configurations stored in SQLite and managed at `/settings`:
   OpenAI Responses, OpenAI Chat Completions, Anthropic Messages, and Google
-  Gen AI, each with an optional custom base URL and its own model list.
+  Gen AI, each with an optional custom base URL, its own model list, and static
+  or per-run dynamic HTTP headers.
 - File read/write/edit/list tools sandboxed to one workspace.
 - `execute_command` requires approval in `ask` mode and runs without prompts in
   `full` mode.
@@ -152,11 +153,21 @@ Create a provider:
 ```sh
 curl -sS http://127.0.0.1:8787/api/settings/providers \
   -H 'content-type: application/json' \
-  -d '{"name":"Local","format":"openai-completion","base_url":"http://localhost:11434/v1","default_model":"llama3","models":[{"id":"llama3","name":"Llama 3"}],"api_key":""}'
+  -d '{"name":"Local","format":"openai-completion","base_url":"http://localhost:11434/v1","default_model":"llama3","models":[{"id":"llama3","name":"Llama 3"}],"headers":[{"name":"x-opencode-session","value":"{{session.id}}","dynamic":true}],"api_key":""}'
 ```
 
 The four `format` values are `openai-responses`, `openai-completion`,
 `anthropic`, and `google`. `base_url` is optional and must use HTTP or HTTPS.
+
+`headers` is an optional array of custom request headers. A static header
+(`"dynamic": false`, the default) sends its value verbatim. A dynamic header
+(`"dynamic": true`) resolves its value from the current run before every model
+call. Supported placeholders are `{{session.id}}` (the conversation/thread ID)
+and `{{session.resource_id}}`. For example, the header above sends
+`x-opencode-session: <thread-id>` with every request. Header names are
+case-insensitive and must be unique within a provider. The Google adapter
+cannot override `x-goog-api-key` because its SDK sets that header after request
+headers; configure the Google API key through the provider's key field instead.
 
 Create a thread:
 

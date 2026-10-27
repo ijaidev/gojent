@@ -13,6 +13,7 @@ import (
 
 	"github.com/ijaidev/gojent/core/llm"
 	"github.com/ijaidev/gojent/core/llm/llmtest"
+	"github.com/ijaidev/gojent/core/session"
 )
 
 // newTestChatModel starts a fake Chat Completions API and returns a model
@@ -497,5 +498,128 @@ func TestChatCompletionStreamRejectsEmptyStream(t *testing.T) {
 			}
 			return
 		}
+	}
+}
+
+func TestChatCompletionSendsConfiguredHeaders(t *testing.T) {
+	var got http.Header
+	handler := chatHandler(t, chatCompletionFixture(map[string]any{
+		"role":       "assistant",
+		"content":    "hello",
+		"refusal":    nil,
+		"tool_calls": nil,
+	}, "stop"))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		handler(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	model, err := NewChatCompletion(context.Background(), ChatCompletionConfig{
+		Model:   "gpt-test",
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+		Headers: http.Header{
+			"X-Static":   {"static"},
+			"X-Tenant":   {"static-tenant"},
+			"User-Agent": {"codjent/1.0"},
+		},
+		HeaderFunc: func(ctx context.Context) (http.Header, error) {
+			sess, ok := session.FromContext(ctx)
+			if !ok {
+				return nil, errors.New("missing session")
+			}
+			return http.Header{
+				"X-Tenant":  {sess.ResourceID},
+				"X-Session": {sess.ID},
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewChatCompletion: %v", err)
+	}
+
+	ctx := session.NewContext(context.Background(), session.Session{ID: "thread-1", ResourceID: "tenant-a"})
+	if _, err := model.Generate(ctx, &llm.Request{
+		Messages: []llm.Message{llm.UserMessage("hi")},
+	}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	if value := got.Get("X-Static"); value != "static" {
+		t.Errorf("X-Static = %q, want static", value)
+	}
+	if value := got.Get("X-Tenant"); value != "tenant-a" {
+		t.Errorf("X-Tenant = %q, want tenant-a", value)
+	}
+	if value := got.Get("X-Session"); value != "thread-1" {
+		t.Errorf("X-Session = %q, want thread-1", value)
+	}
+	if value := got.Get("User-Agent"); value != "codjent/1.0" {
+		t.Errorf("User-Agent = %q, want codjent/1.0", value)
+	}
+}
+
+func TestChatCompletionStreamSendsConfiguredHeaders(t *testing.T) {
+	var got http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		writeChatSSE(t, w,
+			chatChunk(map[string]any{"role": "assistant", "content": "hello"}, "stop"),
+			chatUsageChunk(),
+		)
+	}))
+	t.Cleanup(server.Close)
+
+	model, err := NewChatCompletion(context.Background(), ChatCompletionConfig{
+		Model:   "gpt-test",
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+		Headers: http.Header{"X-Static": {"static"}},
+		HeaderFunc: func(ctx context.Context) (http.Header, error) {
+			sess, ok := session.FromContext(ctx)
+			if !ok {
+				return nil, errors.New("missing session")
+			}
+			return http.Header{"X-Session": {sess.ID}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewChatCompletion: %v", err)
+	}
+
+	ctx := session.NewContext(context.Background(), session.Session{ID: "thread-1"})
+	stream, err := model.Stream(ctx, &llm.Request{
+		Messages: []llm.Message{llm.UserMessage("hi")},
+	})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	for {
+		if _, err := stream.Recv(); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			t.Fatalf("Recv: %v", err)
+		}
+	}
+
+	if value := got.Get("X-Static"); value != "static" {
+		t.Errorf("X-Static = %q, want static", value)
+	}
+	if value := got.Get("X-Session"); value != "thread-1" {
+		t.Errorf("X-Session = %q, want thread-1", value)
+	}
+}
+
+func TestNewChatCompletionRejectsInvalidHeaders(t *testing.T) {
+	_, err := NewChatCompletion(context.Background(), ChatCompletionConfig{
+		Model:   "gpt-test",
+		Headers: http.Header{"Bad Name": {"value"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "openai:") {
+		t.Fatalf("NewChatCompletion error = %v, want an openai-prefixed error", err)
 	}
 }

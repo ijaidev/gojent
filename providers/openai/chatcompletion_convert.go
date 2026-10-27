@@ -132,7 +132,7 @@ func convertChatAssistantMessage(message *llm.Message) (sdk.ChatCompletionMessag
 				ID: p.CallID,
 				Function: sdk.ChatCompletionMessageToolCallFunctionParam{
 					Name:      p.Name,
-					Arguments: string(arguments),
+					Arguments: arguments,
 				},
 			})
 		default:

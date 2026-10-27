@@ -44,6 +44,11 @@ func (s *Store) ListProviderConfigs(ctx context.Context) ([]*provider.Config, er
 			return nil, err
 		}
 		config.Models = models
+		headers, err := s.listProviderHeaders(ctx, config.ID)
+		if err != nil {
+			return nil, err
+		}
+		config.Headers = headers
 	}
 	return configs, nil
 }
@@ -65,6 +70,11 @@ func (s *Store) GetProviderConfig(ctx context.Context, id string) (*provider.Con
 		return nil, err
 	}
 	config.Models = models
+	headers, err := s.listProviderHeaders(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	config.Headers = headers
 	return config, nil
 }
 
@@ -89,6 +99,9 @@ func (s *Store) CreateProviderConfig(ctx context.Context, config *provider.Confi
 		return fmt.Errorf("sqlite: create provider: %w", err)
 	}
 	if err := insertProviderModels(ctx, tx, config); err != nil {
+		return err
+	}
+	if err := insertProviderHeaders(ctx, tx, config); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -131,6 +144,12 @@ func (s *Store) UpdateProviderConfig(ctx context.Context, config *provider.Confi
 		return fmt.Errorf("sqlite: replace provider models: %w", err)
 	}
 	if err := insertProviderModels(ctx, tx, config); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM provider_headers WHERE provider_id = ?`, config.ID); err != nil {
+		return fmt.Errorf("sqlite: replace provider headers: %w", err)
+	}
+	if err := insertProviderHeaders(ctx, tx, config); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -217,6 +236,46 @@ func insertProviderModels(ctx context.Context, tx *sql.Tx, config *provider.Conf
 			config.ID, position, model.ID, model.Name,
 		); err != nil {
 			return fmt.Errorf("sqlite: create provider model: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) listProviderHeaders(ctx context.Context, providerID string) ([]provider.Header, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT name, value, dynamic FROM provider_headers
+		WHERE provider_id = ? ORDER BY position ASC`, providerID)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: list provider headers: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	headers := make([]provider.Header, 0)
+	for rows.Next() {
+		var (
+			header  provider.Header
+			dynamic int
+		)
+		if err := rows.Scan(&header.Name, &header.Value, &dynamic); err != nil {
+			return nil, fmt.Errorf("sqlite: scan provider header: %w", err)
+		}
+		header.Dynamic = dynamic != 0
+		headers = append(headers, header)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: list provider headers: %w", err)
+	}
+	return headers, nil
+}
+
+func insertProviderHeaders(ctx context.Context, tx *sql.Tx, config *provider.Config) error {
+	for position, header := range config.Headers {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO provider_headers (provider_id, position, name, value, dynamic)
+			VALUES (?, ?, ?, ?, ?)`,
+			config.ID, position, header.Name, header.Value, header.Dynamic,
+		); err != nil {
+			return fmt.Errorf("sqlite: create provider header: %w", err)
 		}
 	}
 	return nil

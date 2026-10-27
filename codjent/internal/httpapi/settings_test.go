@@ -74,6 +74,10 @@ func TestProviderSettingsFlow(t *testing.T) {
 			map[string]any{"id": "llama3", "name": "Llama 3"},
 			map[string]any{"id": "qwen3"},
 		},
+		"headers": []any{
+			map[string]any{"name": "x-opencode-session", "value": "{{session.id}}", "dynamic": true},
+			map[string]any{"name": "X-Static", "value": "one"},
+		},
 		"api_key": "secret-key",
 	}, &created)
 	if resp.StatusCode != http.StatusCreated {
@@ -87,6 +91,13 @@ func TestProviderSettingsFlow(t *testing.T) {
 	}
 	if len(created.Models) != 2 || created.Models[1].Name != "qwen3" {
 		t.Fatalf("created models = %+v", created.Models)
+	}
+	if len(created.Headers) != 2 ||
+		created.Headers[0].Name != "X-Opencode-Session" ||
+		created.Headers[0].Value != "{{session.id}}" ||
+		!created.Headers[0].Dynamic ||
+		created.Headers[1].Name != "X-Static" {
+		t.Fatalf("created headers = %+v", created.Headers)
 	}
 
 	// The stored secret must never appear in a list response.
@@ -116,12 +127,16 @@ func TestProviderSettingsFlow(t *testing.T) {
 		"format":        "openai-completion",
 		"default_model": "qwen3",
 		"models":        []any{map[string]any{"id": "qwen3", "name": "Qwen 3"}},
+		"headers":       []any{map[string]any{"name": "X-Static", "value": "two"}},
 	}, &updated)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("update status = %d", resp.StatusCode)
 	}
 	if updated.Name != "Renamed" || updated.DefaultModel != "qwen3" || len(updated.Models) != 1 {
 		t.Fatalf("updated = %+v", updated)
+	}
+	if len(updated.Headers) != 1 || updated.Headers[0].Value != "two" || updated.Headers[0].Dynamic {
+		t.Fatalf("updated headers = %+v", updated.Headers)
 	}
 	if !updated.APIKeySet {
 		t.Fatal("update cleared the stored API key")
@@ -177,6 +192,40 @@ func TestProviderSettingsErrors(t *testing.T) {
 	}, nil)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("unknown format status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+
+	resp = doJSON(t, client, http.MethodPost, base, map[string]any{
+		"name":   "Local",
+		"format": "openai-completion",
+		"headers": []any{
+			map[string]any{"name": "X-Test", "value": "a"},
+			map[string]any{"name": "x-test", "value": "b"},
+		},
+	}, nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("duplicate header status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+
+	resp = doJSON(t, client, http.MethodPost, base, map[string]any{
+		"name":   "Google",
+		"format": "google",
+		"headers": []any{
+			map[string]any{"name": "x-goog-api-key", "value": "other"},
+		},
+	}, nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("google key header status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+
+	resp = doJSON(t, client, http.MethodPost, base, map[string]any{
+		"name":   "Gateway",
+		"format": "openai-completion",
+		"headers": []any{
+			map[string]any{"name": "X-Test", "value": "{{session.missing}}", "dynamic": true},
+		},
+	}, nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown placeholder status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
 	}
 
 	resp = doJSON(t, client, http.MethodPut, base+"/missing", map[string]any{

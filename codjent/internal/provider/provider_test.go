@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/core/session"
 )
 
 type fakeProvider struct {
@@ -115,6 +117,7 @@ func TestConfigInputNormalize(t *testing.T) {
 				BaseURL:      "http://localhost:11434/v1",
 				DefaultModel: "llama3",
 				Models:       []ModelInfo{{ID: "llama3", Name: "llama3"}},
+				Headers:      []Header{},
 			},
 		},
 		{
@@ -130,12 +133,104 @@ func TestConfigInputNormalize(t *testing.T) {
 				Format:       FormatAnthropic,
 				DefaultModel: "b",
 				Models:       []ModelInfo{{ID: "a", Name: "a"}, {ID: "b", Name: "B"}},
+				Headers:      []Header{},
 			},
 		},
 		{
 			name:  "allows no models",
 			input: ConfigInput{Name: "Empty", Format: FormatGoogle},
-			want:  ConfigInput{Name: "Empty", Format: FormatGoogle, Models: []ModelInfo{}},
+			want:  ConfigInput{Name: "Empty", Format: FormatGoogle, Models: []ModelInfo{}, Headers: []Header{}},
+		},
+		{
+			name: "normalizes headers",
+			input: ConfigInput{
+				Name:   "Gateway",
+				Format: FormatOpenAICompletion,
+				Headers: []Header{
+					{Name: " x-opencode-session ", Value: " {{session.id}} ", Dynamic: true},
+					{Name: "x-static", Value: "value"},
+				},
+			},
+			want: ConfigInput{
+				Name:   "Gateway",
+				Format: FormatOpenAICompletion,
+				Models: []ModelInfo{},
+				Headers: []Header{
+					{Name: "X-Opencode-Session", Value: "{{session.id}}", Dynamic: true},
+					{Name: "X-Static", Value: "value"},
+				},
+			},
+		},
+		{
+			name: "allows a template in a static header",
+			input: ConfigInput{
+				Name:    "Gateway",
+				Format:  FormatOpenAICompletion,
+				Headers: []Header{{Name: "X-Static", Value: "{{session.id}}"}},
+			},
+			want: ConfigInput{
+				Name:    "Gateway",
+				Format:  FormatOpenAICompletion,
+				Models:  []ModelInfo{},
+				Headers: []Header{{Name: "X-Static", Value: "{{session.id}}"}},
+			},
+		},
+		{
+			name: "rejects duplicate header names",
+			input: ConfigInput{
+				Name:   "Gateway",
+				Format: FormatOpenAICompletion,
+				Headers: []Header{
+					{Name: "X-Test", Value: "a"},
+					{Name: "x-test", Value: "b"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects invalid header name",
+			input: ConfigInput{
+				Name:    "Gateway",
+				Format:  FormatOpenAICompletion,
+				Headers: []Header{{Name: "Bad Name", Value: "value"}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects invalid header value",
+			input: ConfigInput{
+				Name:    "Gateway",
+				Format:  FormatOpenAICompletion,
+				Headers: []Header{{Name: "X-Test", Value: "a\nb"}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects unknown dynamic placeholder",
+			input: ConfigInput{
+				Name:    "Gateway",
+				Format:  FormatOpenAICompletion,
+				Headers: []Header{{Name: "X-Test", Value: "{{session.missing}}", Dynamic: true}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects malformed dynamic template",
+			input: ConfigInput{
+				Name:    "Gateway",
+				Format:  FormatOpenAICompletion,
+				Headers: []Header{{Name: "X-Test", Value: "{{session.id}", Dynamic: true}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejects google API key override",
+			input: ConfigInput{
+				Name:    "Google",
+				Format:  FormatGoogle,
+				Headers: []Header{{Name: "x-goog-api-key", Value: "other"}},
+			},
+			wantErr: true,
 		},
 		{
 			name:    "requires name",
@@ -238,6 +333,68 @@ func TestConfigPublicHidesAPIKey(t *testing.T) {
 	}
 	if strings.Contains(string(data), "secret") {
 		t.Fatalf("serialized config leaks secret: %s", data)
+	}
+}
+
+func TestResolveHeaderValue(t *testing.T) {
+	sess := session.Session{ID: "thread-1", ResourceID: "tenant-a"}
+	tests := []struct {
+		name     string
+		template string
+		want     string
+		wantErr  bool
+	}{
+		{name: "literal", template: "static-value", want: "static-value"},
+		{name: "session ID", template: "{{session.id}}", want: "thread-1"},
+		{name: "resource ID", template: "{{session.resource_id}}", want: "tenant-a"},
+		{name: "embedded", template: "Bearer {{session.id}}", want: "Bearer thread-1"},
+		{name: "whitespace", template: "{{ session.id }}", want: "thread-1"},
+		{name: "unknown placeholder", template: "{{session.missing}}", wantErr: true},
+		{name: "unterminated placeholder", template: "{{session.id}", wantErr: true},
+		{name: "stray closing braces", template: "session.id}}", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := ResolveHeaderValue(test.template, sess)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("ResolveHeaderValue(%q) = %q, want an error", test.template, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolveHeaderValue(%q): %v", test.template, err)
+			}
+			if got != test.want {
+				t.Fatalf("ResolveHeaderValue(%q) = %q, want %q", test.template, got, test.want)
+			}
+		})
+	}
+
+	if _, err := ResolveHeaderValue("{{session.id}}", session.Session{}); err == nil {
+		t.Fatal("ResolveHeaderValue without a session returned no error")
+	}
+}
+
+func TestNormalizeHeaderLimits(t *testing.T) {
+	headers := make([]Header, maxHeaderCount+1)
+	for index := range headers {
+		headers[index] = Header{Name: fmt.Sprintf("X-Test-%d", index), Value: "value"}
+	}
+	input := ConfigInput{Name: "Gateway", Format: FormatOpenAICompletion, Headers: headers}
+	if err := input.Normalize(); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("Normalize with too many headers = %v, want ErrInvalidConfig", err)
+	}
+}
+
+func TestConfigPublicClonesHeaders(t *testing.T) {
+	config := Config{
+		Headers: []Header{{Name: "X-Test", Value: "value"}},
+	}
+	public := config.Public()
+	public.Headers[0].Value = "mutated"
+	if config.Headers[0].Value != "value" {
+		t.Fatal("Public did not clone headers")
 	}
 }
 

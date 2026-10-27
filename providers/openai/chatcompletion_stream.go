@@ -130,7 +130,8 @@ func (s *chatCompletionStream) applyChunk(chunk *sdk.ChatCompletionChunk) error 
 		s.usage = chatUsage(chunk.Usage)
 	}
 
-	for _, choice := range chunk.Choices {
+	for index := range chunk.Choices {
+		choice := &chunk.Choices[index]
 		// Requests always ask for a single choice.
 		if choice.Index != 0 {
 			continue

@@ -57,19 +57,19 @@ func run() error {
 		return err
 	}
 
-	catalog, err := catalog.New(context.Background(), store)
+	providerCatalog, err := catalog.New(context.Background(), store)
 	if err != nil {
 		_ = store.Close()
 		return err
 	}
-	if err := seedGoogleProvider(context.Background(), catalog, store, cfg); err != nil {
+	if err := seedGoogleProvider(context.Background(), providerCatalog, store, cfg); err != nil {
 		_ = store.Close()
 		return err
 	}
 
 	service, err := app.New(app.Config{
 		Store:             store,
-		Models:            catalog,
+		Models:            providerCatalog,
 		Workspace:         cfg.Workspace,
 		DefaultProvider:   cfg.Provider,
 		DefaultModel:      cfg.Model,
@@ -83,7 +83,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.NewWithCatalog(service, catalog, cfg.AllowedOrigins, frontendDir),
+		Handler:           httpapi.NewWithCatalog(service, providerCatalog, cfg.AllowedOrigins, frontendDir),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -104,7 +104,7 @@ func run() error {
 	} else {
 		log.Printf("frontend: API only (pass --frontend-dir to serve the built UI)")
 	}
-	if len(catalog.Configs()) == 0 {
+	if len(providerCatalog.Configs()) == 0 {
 		log.Printf("providers: none configured; open /settings to add one")
 	}
 

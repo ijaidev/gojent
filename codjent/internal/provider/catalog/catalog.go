@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/ijaidev/gojent/codjent/internal/provider"
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/core/session"
 	anthropic "github.com/ijaidev/gojent/providers/anthropic"
 	google "github.com/ijaidev/gojent/providers/google"
 	openai "github.com/ijaidev/gojent/providers/openai"
@@ -70,7 +72,8 @@ func (c *Catalog) List() []provider.Info {
 	defer c.mu.RUnlock()
 
 	infos := make([]provider.Info, 0, len(c.configs))
-	for _, config := range c.configs {
+	for index := range c.configs {
+		config := &c.configs[index]
 		if len(config.Models) == 0 {
 			continue
 		}
@@ -99,8 +102,8 @@ func (c *Catalog) Configs() []provider.Config {
 	defer c.mu.RUnlock()
 
 	configs := make([]provider.Config, 0, len(c.configs))
-	for _, config := range c.configs {
-		configs = append(configs, config.Public())
+	for index := range c.configs {
+		configs = append(configs, c.configs[index].Public())
 	}
 	return configs
 }
@@ -119,6 +122,7 @@ func (c *Catalog) Create(ctx context.Context, input provider.ConfigInput) (provi
 		BaseURL:      input.BaseURL,
 		DefaultModel: input.DefaultModel,
 		Models:       slices.Clone(input.Models),
+		Headers:      slices.Clone(input.Headers),
 		APIKey:       input.APIKey,
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -166,6 +170,7 @@ func (c *Catalog) Seed(ctx context.Context, id string, input provider.ConfigInpu
 		BaseURL:      input.BaseURL,
 		DefaultModel: input.DefaultModel,
 		Models:       slices.Clone(input.Models),
+		Headers:      slices.Clone(input.Headers),
 		APIKey:       input.APIKey,
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -202,6 +207,7 @@ func (c *Catalog) Update(ctx context.Context, id string, input provider.ConfigIn
 	config.BaseURL = input.BaseURL
 	config.DefaultModel = input.DefaultModel
 	config.Models = slices.Clone(input.Models)
+	config.Headers = slices.Clone(input.Headers)
 	switch {
 	case input.ClearAPIKey:
 		config.APIKey = ""
@@ -249,6 +255,10 @@ func (c *Catalog) reloadLocked(ctx context.Context) error {
 		}
 		snapshot[index] = *config
 		snapshot[index].Models = slices.Clone(config.Models)
+		snapshot[index].Headers = slices.Clone(config.Headers)
+		if snapshot[index].Headers == nil {
+			snapshot[index].Headers = []provider.Header{}
+		}
 	}
 	c.configs = snapshot
 	return nil
@@ -265,9 +275,9 @@ func (c *Catalog) resolve(providerID, modelID string) (provider.Config, string, 
 		return provider.Config{}, "", provider.ErrUnknownProvider
 	}
 	if providerID == "" {
-		for _, config := range c.configs {
-			if len(config.Models) > 0 {
-				providerID = config.ID
+		for index := range c.configs {
+			if len(c.configs[index].Models) > 0 {
+				providerID = c.configs[index].ID
 				break
 			}
 		}
@@ -294,27 +304,43 @@ func (c *Catalog) resolve(providerID, modelID string) (provider.Config, string, 
 }
 
 func newModel(ctx context.Context, config provider.Config, modelID string) (llm.Model, error) {
+	headers, headerFunc, err := headerConfig(config.Headers)
+	if err != nil {
+		return nil, err
+	}
+
 	switch config.Format {
 	case provider.FormatOpenAIResponses:
 		return openai.New(ctx, openai.Config{
-			Model:   modelID,
-			APIKey:  config.APIKey,
-			BaseURL: config.BaseURL,
+			Model:      modelID,
+			APIKey:     config.APIKey,
+			BaseURL:    config.BaseURL,
+			Headers:    headers,
+			HeaderFunc: headerFunc,
 		})
 	case provider.FormatOpenAICompletion:
 		return openai.NewChatCompletion(ctx, openai.ChatCompletionConfig{
-			Model:   modelID,
-			APIKey:  config.APIKey,
-			BaseURL: config.BaseURL,
+			Model:      modelID,
+			APIKey:     config.APIKey,
+			BaseURL:    config.BaseURL,
+			Headers:    headers,
+			HeaderFunc: headerFunc,
 		})
 	case provider.FormatAnthropic:
 		return anthropic.New(ctx, anthropic.Config{
-			Model:   modelID,
-			APIKey:  config.APIKey,
-			BaseURL: config.BaseURL,
+			Model:      modelID,
+			APIKey:     config.APIKey,
+			BaseURL:    config.BaseURL,
+			Headers:    headers,
+			HeaderFunc: headerFunc,
 		})
 	case provider.FormatGoogle:
-		googleConfig := google.Config{Model: modelID, APIKey: config.APIKey}
+		googleConfig := google.Config{
+			Model:      modelID,
+			APIKey:     config.APIKey,
+			Headers:    headers,
+			HeaderFunc: headerFunc,
+		}
 		if config.BaseURL != "" {
 			googleConfig.ClientConfig = &genai.ClientConfig{
 				HTTPOptions: genai.HTTPOptions{BaseURL: config.BaseURL},
@@ -324,6 +350,46 @@ func newModel(ctx context.Context, config provider.Config, modelID string) (llm.
 	default:
 		return nil, fmt.Errorf("%w: format %q", provider.ErrInvalidConfig, config.Format)
 	}
+}
+
+// headerConfig splits stored headers into the static map and a dynamic
+// resolver. Dynamic values are templates resolved from the session carried by
+// the run context, so every model call sees the current conversation identity.
+func headerConfig(headers []provider.Header) (http.Header, func(context.Context) (http.Header, error), error) {
+	var (
+		static  http.Header
+		dynamic []provider.Header
+	)
+	for _, header := range headers {
+		if header.Dynamic {
+			dynamic = append(dynamic, header)
+			continue
+		}
+		if static == nil {
+			static = make(http.Header, len(headers))
+		}
+		static.Set(header.Name, header.Value)
+	}
+	if len(dynamic) == 0 {
+		return static, nil, nil
+	}
+
+	headerFunc := func(ctx context.Context) (http.Header, error) {
+		sess, ok := session.FromContext(ctx)
+		if !ok {
+			return nil, errors.New("provider: dynamic headers require a session in the run context")
+		}
+		resolved := make(http.Header, len(dynamic))
+		for _, header := range dynamic {
+			value, err := provider.ResolveHeaderValue(header.Value, sess)
+			if err != nil {
+				return nil, fmt.Errorf("provider: header %q: %w", header.Name, err)
+			}
+			resolved.Set(header.Name, value)
+		}
+		return resolved, nil
+	}
+	return static, headerFunc, nil
 }
 
 func hasModel(models []provider.ModelInfo, id string) bool {

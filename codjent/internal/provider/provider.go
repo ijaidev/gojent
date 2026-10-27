@@ -72,6 +72,7 @@ type Config struct {
 	BaseURL      string      `json:"base_url"`
 	DefaultModel string      `json:"default_model"`
 	Models       []ModelInfo `json:"models"`
+	Headers      []Header    `json:"headers"`
 	// APIKey is the stored secret. It is deliberately excluded from JSON and
 	// must never be returned to a client.
 	APIKey    string    `json:"-"`
@@ -89,6 +90,7 @@ type ConfigInput struct {
 	BaseURL      string      `json:"base_url"`
 	DefaultModel string      `json:"default_model"`
 	Models       []ModelInfo `json:"models"`
+	Headers      []Header    `json:"headers"`
 	APIKey       string      `json:"api_key"`
 	ClearAPIKey  bool        `json:"clear_api_key"`
 }
@@ -141,6 +143,12 @@ func (in *ConfigInput) Normalize() error {
 	}
 	in.Models = models
 
+	headers, err := normalizeHeaders(in.Format, in.Headers)
+	if err != nil {
+		return err
+	}
+	in.Headers = headers
+
 	in.DefaultModel = strings.TrimSpace(in.DefaultModel)
 	if in.DefaultModel == "" && len(models) > 0 {
 		in.DefaultModel = models[0].ID
@@ -158,6 +166,10 @@ func (c Config) Public() Config {
 	public.APIKey = ""
 	public.APIKeySet = c.APIKey != ""
 	public.Models = slices.Clone(c.Models)
+	public.Headers = slices.Clone(c.Headers)
+	if public.Headers == nil {
+		public.Headers = []Header{}
+	}
 	return public
 }
 

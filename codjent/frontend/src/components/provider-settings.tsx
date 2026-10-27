@@ -22,6 +22,7 @@ import type {
   ProviderConfig,
   ProviderConfigInput,
   ProviderFormat,
+  ProviderHeader,
 } from "@/lib/types";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -37,15 +38,54 @@ interface ModelRow {
   name: string;
 }
 
+interface HeaderRow {
+  key: string;
+  name: string;
+  value: string;
+  dynamic: boolean;
+}
+
 let modelRowKey = 0;
+let headerRowKey = 0;
 
 function newModelRow(id = "", name = ""): ModelRow {
   modelRowKey += 1;
   return { key: `model-${modelRowKey}`, id, name };
 }
 
+function newHeaderRow(header?: ProviderHeader): HeaderRow {
+  headerRowKey += 1;
+  return {
+    key: `header-${headerRowKey}`,
+    name: header?.name ?? "",
+    value: header?.value ?? "",
+    dynamic: header?.dynamic ?? false,
+  };
+}
+
 function formatModels(models: ModelRow[]): ModelRow[] {
   return models.length === 0 ? [newModelRow()] : models;
+}
+
+const dynamicPlaceholderPattern = /\{\{\s*([A-Za-z0-9_.]+)\s*\}\}/g;
+const supportedPlaceholders = new Set(["session.id", "session.resource_id"]);
+
+// dynamicHeaderError mirrors the backend template validation so a typo is
+// caught before the save round-trip.
+function dynamicHeaderError(value: string): string | null {
+  const withoutPlaceholders = value.replace(dynamicPlaceholderPattern, "");
+  if (
+    withoutPlaceholders.includes("{{") ||
+    withoutPlaceholders.includes("}}")
+  ) {
+    return "Use {{session.id}} or {{session.resource_id}}.";
+  }
+  for (const match of value.matchAll(dynamicPlaceholderPattern)) {
+    if (!supportedPlaceholders.has(match[1])) {
+      return `Unknown placeholder {{${match[1]}}}.`;
+    }
+  }
+  return null;
 }
 
 export function ProviderSettings() {
@@ -96,9 +136,9 @@ export function ProviderSettings() {
               Providers
             </h1>
             <p className="mt-1.5 max-w-xl text-[12px] leading-5 text-muted">
-              Connect the model endpoints codjent can use. Credentials and model
-              lists are stored locally in SQLite and never leave this machine
-              except in requests to the endpoint you configure.
+              Connect the model endpoints codjent can use. Credentials, headers,
+              and model lists are stored locally in SQLite and never leave this
+              machine except in requests to the endpoint you configure.
             </p>
           </div>
           <button
@@ -242,6 +282,14 @@ function ProviderCard({
                 {defaultModel || "none"}
               </dd>
             </div>
+            <div className="flex min-w-0 gap-1">
+              <dt>Headers</dt>
+              <dd className="min-w-0 truncate font-mono text-muted">
+                {config.headers?.length
+                  ? config.headers.map((header) => header.name).join(", ")
+                  : "none"}
+              </dd>
+            </div>
           </dl>
         </div>
 
@@ -347,6 +395,7 @@ function ProviderEditorDialog({
   const [baseURL, setBaseURL] = useState("");
   const [apiKey, setAPIKey] = useState("");
   const [clearAPIKey, setClearAPIKey] = useState(false);
+  const [headers, setHeaders] = useState<HeaderRow[]>([]);
   const [models, setModels] = useState<ModelRow[]>([newModelRow()]);
   const [defaultModel, setDefaultModel] = useState("");
   const [saving, setSaving] = useState(false);
@@ -360,6 +409,7 @@ function ProviderEditorDialog({
       setName(config.name);
       setFormat(config.format);
       setBaseURL(config.base_url);
+      setHeaders((config.headers ?? []).map((header) => newHeaderRow(header)));
       setModels(
         formatModels(
           config.models.map((model) => newModelRow(model.id, model.name)),
@@ -370,6 +420,7 @@ function ProviderEditorDialog({
       setName("");
       setFormat("openai-completion");
       setBaseURL("");
+      setHeaders([]);
       setModels([newModelRow()]);
       setDefaultModel("");
     }
@@ -392,6 +443,20 @@ function ProviderEditorDialog({
   const effectiveDefault = modelIDs.includes(defaultModel)
     ? defaultModel
     : (modelIDs[0] ?? "");
+
+  const activeHeaders = headers.filter(
+    (header) => header.name.trim() !== "" || header.value.trim() !== "",
+  );
+  const headerNames = activeHeaders
+    .map((header) => header.name.trim().toLowerCase())
+    .filter((headerName) => headerName !== "");
+  const duplicateHeaderNames = headerNames.filter(
+    (headerName, index) => headerNames.indexOf(headerName) !== index,
+  );
+  const incompleteHeader = activeHeaders.some((header) => !header.name.trim());
+  const invalidDynamicHeader = activeHeaders.find(
+    (header) => header.dynamic && dynamicHeaderError(header.value) !== null,
+  );
 
   const updateModel = (index: number, patch: Partial<ModelRow>) => {
     setModels((prev) =>
@@ -425,8 +490,33 @@ function ProviderEditorDialog({
     }
   };
 
+  const updateHeader = (index: number, patch: Partial<HeaderRow>) => {
+    setHeaders((prev) =>
+      prev.map((header, headerIndex) =>
+        headerIndex === index ? { ...header, ...patch } : header,
+      ),
+    );
+  };
+
+  const addHeader = () => {
+    setHeaders((prev) => [...prev, newHeaderRow()]);
+  };
+
+  const removeHeader = (index: number) => {
+    setHeaders((prev) =>
+      prev.filter((_, headerIndex) => headerIndex !== index),
+    );
+  };
+
   const save = async () => {
-    if (!name.trim() || duplicateIDs.length > 0 || incompleteModel) {
+    if (
+      !name.trim() ||
+      duplicateIDs.length > 0 ||
+      incompleteModel ||
+      duplicateHeaderNames.length > 0 ||
+      incompleteHeader ||
+      invalidDynamicHeader
+    ) {
       return;
     }
     setSaving(true);
@@ -443,6 +533,11 @@ function ProviderEditorDialog({
           name: model.name.trim() || model.id.trim(),
         }))
         .filter((model) => model.id !== ""),
+      headers: activeHeaders.map((header) => ({
+        name: header.name.trim(),
+        value: header.value.trim(),
+        dynamic: header.dynamic,
+      })),
     };
     if (config) {
       if (clearAPIKey) {
@@ -489,7 +584,7 @@ function ProviderEditorDialog({
               </Dialog.Title>
               <Dialog.Description className="mt-1 text-[11px] leading-5 text-faint">
                 {config
-                  ? "Update the endpoint, credentials, or model list."
+                  ? "Update the endpoint, credentials, headers, or model list."
                   : "Choose the wire format this endpoint speaks, then add its models."}
               </Dialog.Description>
             </div>
@@ -594,6 +689,124 @@ function ProviderEditorDialog({
                     endpoint.
                   </span>
                 )}
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className={labelClass}>Headers</span>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-lg border border-line-strong bg-surface px-2 py-1 text-[10px] font-medium text-ink transition hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={disabled}
+                    onClick={addHeader}
+                  >
+                    <Plus className="size-3" />
+                    Add header
+                  </button>
+                </div>
+
+                {headers.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-line-strong px-3 py-3 text-center text-[10.5px] leading-4 text-faint">
+                    No custom headers. Add one when the endpoint needs a gateway
+                    or session header.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {headers.map((header, index) => {
+                      const templateError = header.dynamic
+                        ? dynamicHeaderError(header.value)
+                        : null;
+                      return (
+                        <div className="space-y-1" key={header.key}>
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+                            <input
+                              aria-label={`Header ${index + 1} name`}
+                              className={cn(fieldClass, "font-mono sm:w-48")}
+                              disabled={disabled}
+                              onChange={(event) =>
+                                updateHeader(index, {
+                                  name: event.target.value,
+                                })
+                              }
+                              placeholder="Header name"
+                              spellCheck={false}
+                              value={header.name}
+                            />
+                            <select
+                              aria-label={`Header ${index + 1} mode`}
+                              className={cn(fieldClass, "sm:w-28")}
+                              disabled={disabled}
+                              onChange={(event) =>
+                                updateHeader(index, {
+                                  dynamic: event.target.value === "dynamic",
+                                })
+                              }
+                              value={header.dynamic ? "dynamic" : "static"}
+                            >
+                              <option value="static">Static</option>
+                              <option value="dynamic">Dynamic</option>
+                            </select>
+                            <input
+                              aria-label={`Header ${index + 1} value`}
+                              className={cn(fieldClass, "font-mono sm:flex-1")}
+                              disabled={disabled}
+                              onChange={(event) =>
+                                updateHeader(index, {
+                                  value: event.target.value,
+                                })
+                              }
+                              placeholder={
+                                header.dynamic
+                                  ? "{{session.id}}"
+                                  : "Header value"
+                              }
+                              spellCheck={false}
+                              value={header.value}
+                            />
+                            <button
+                              type="button"
+                              aria-label={`Remove header ${index + 1}`}
+                              className="grid size-9 shrink-0 place-items-center rounded-lg border border-line text-muted transition hover:border-danger/30 hover:bg-danger-soft hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
+                              disabled={disabled}
+                              onClick={() => removeHeader(index)}
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          </div>
+                          {templateError ? (
+                            <p className="text-[10px] leading-4 text-danger">
+                              {templateError}
+                            </p>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {duplicateHeaderNames.length > 0 ? (
+                  <p className="mt-1.5 text-[10px] leading-4 text-danger">
+                    Duplicate header names:{" "}
+                    {Array.from(new Set(duplicateHeaderNames)).join(", ")}
+                  </p>
+                ) : incompleteHeader ? (
+                  <p className="mt-1.5 text-[10px] leading-4 text-danger">
+                    Every header needs a name.
+                  </p>
+                ) : (
+                  <p className="mt-1.5 text-[10px] leading-4 text-faint">
+                    Static values are sent as-is. Dynamic values are resolved
+                    for each run; use <code>{"{{session.id}}"}</code> for the
+                    current conversation ID.
+                  </p>
+                )}
+
+                {format === "google" ? (
+                  <p className="mt-1.5 text-[10px] leading-4 text-faint">
+                    Google sets <code>x-goog-api-key</code> itself, so it cannot
+                    be overridden here.
+                  </p>
+                ) : null}
               </div>
 
               <div>
@@ -728,7 +941,10 @@ function ProviderEditorDialog({
                   saving ||
                   !name.trim() ||
                   duplicateIDs.length > 0 ||
-                  incompleteModel
+                  incompleteModel ||
+                  duplicateHeaderNames.length > 0 ||
+                  incompleteHeader ||
+                  Boolean(invalidDynamicHeader)
                 }
                 onClick={() => void save()}
               >

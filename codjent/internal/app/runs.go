@@ -10,6 +10,7 @@ import (
 
 	"github.com/ijaidev/gojent/core/agent"
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/core/session"
 )
 
 // RunStatus is the lifecycle state of an agent run.
@@ -387,7 +388,8 @@ func (s *Service) execute(r *run) {
 	input = append(input, r.user.ToLLM())
 
 	execution, err := a.StreamMessagesWith(r.ctx, input, agent.RunOptions{
-		Budget: agent.Budget{MaxSteps: s.maxSteps},
+		Session: &session.Session{ID: r.thread.ID},
+		Budget:  agent.Budget{MaxSteps: s.maxSteps},
 	})
 	if err != nil {
 		s.failRun(r, fmt.Errorf("start run: %w", err))

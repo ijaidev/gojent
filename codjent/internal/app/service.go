@@ -361,7 +361,7 @@ func (s *Service) clearFinishedActiveLocked(threadID string) {
 // resolveSelection fills empty provider and model IDs from the service defaults
 // and the current catalog, then validates the result. Explicit non-empty IDs
 // are validated as given.
-func (s *Service) resolveSelection(providerID, modelID string) (string, string, error) {
+func (s *Service) resolveSelection(providerID, modelID string) (selectedProvider, selectedModel string, err error) {
 	infos := s.models.List()
 	if providerID == "" {
 		providerID = s.defaultProvider
