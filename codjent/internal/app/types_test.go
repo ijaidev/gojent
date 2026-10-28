@@ -190,3 +190,35 @@ func TestMessageViewsMapDeveloperToSystem(t *testing.T) {
 		t.Fatalf("developer views = %+v", views)
 	}
 }
+
+func TestPartialMessageToLLMDropsUnreplayableReasoning(t *testing.T) {
+	message := &Message{
+		ID:       "msg_partial",
+		ThreadID: "th_1",
+		Payload: llm.Message{
+			Role: llm.RoleAssistant,
+			Content: []llm.Part{
+				llm.NewReasoningPart("private chain"),
+				llm.NewTextPart("visible answer"),
+			},
+			Status: llm.MessageStatusIncomplete,
+		},
+	}
+
+	replay := message.ToLLM()
+	if len(replay.Content) != 1 {
+		t.Fatalf("replay content = %+v", replay.Content)
+	}
+	if text, ok := replay.Content[0].(*llm.TextPart); !ok || text.Text != "visible answer" {
+		t.Fatalf("replay part = %+v", replay.Content[0])
+	}
+	// The persisted message still carries reasoning for the UI.
+	if len(message.Payload.Content) != 2 {
+		t.Fatalf("original content = %+v", message.Payload.Content)
+	}
+
+	message.Payload.Status = llm.MessageStatusCompleted
+	if kept := message.ToLLM(); len(kept.Content) != 2 {
+		t.Fatalf("completed replay content = %+v", kept.Content)
+	}
+}

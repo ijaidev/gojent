@@ -37,6 +37,7 @@ export interface Message {
   role: Role;
   content: Part[];
   thinking?: string;
+  status?: string;
   name?: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;

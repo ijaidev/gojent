@@ -595,6 +595,123 @@ func TestCancelRun(t *testing.T) {
 	if err := svc.CancelRun(run.ID); !errors.Is(err, ErrRunFinished) {
 		t.Fatalf("second CancelRun = %v", err)
 	}
+
+	detail, err = svc.GetThread(context.Background(), thread.ID)
+	if err != nil {
+		t.Fatalf("GetThread after cancel: %v", err)
+	}
+	if len(detail.Messages) != 3 {
+		t.Fatalf("canceled transcript = %d messages: %+v", len(detail.Messages), detail.Messages)
+	}
+	caller := detail.Messages[1]
+	if caller.Role() != llm.RoleAssistant || len(caller.ToolCalls()) != 1 {
+		t.Fatalf("canceled assistant = %+v", caller)
+	}
+	result := detail.Messages[2]
+	results := result.ToolResults()
+	if len(results) != 1 || results[0].Status != llm.ToolStatusIncomplete ||
+		!strings.Contains(results[0].Text(), "canceled") {
+		t.Fatalf("canceled tool result = %+v", results)
+	}
+}
+
+func TestCancelRunPersistsStreamedText(t *testing.T) {
+	svc, _, _, _ := newTestService(t, AccessFull, scriptedStep{
+		stream: func(ctx context.Context) llm.Stream {
+			return &scriptedStream{ctx: ctx, events: []llm.StreamEvent{
+				llm.PartStart{Index: 0, Part: llm.NewTextPart("")},
+				llm.PartDelta{Index: 0, Kind: llm.PartTypeText, Text: "partial answer", Replace: true},
+				llm.PartDelta{Index: 0, Kind: llm.PartTypeText, Text: "partial answer with more", Replace: true},
+			}}
+		},
+	})
+
+	thread, err := svc.CreateThread(context.Background(), CreateThreadInput{})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	run, err := svc.StartMessage(context.Background(), thread.ID, "stream a long answer")
+	if err != nil {
+		t.Fatalf("StartMessage: %v", err)
+	}
+
+	reader := subscribe(t, svc, run.ID)
+	defer reader.cancel()
+	reader.until(t, func(event Event) bool {
+		if event.Type != EventTextDelta {
+			return false
+		}
+		return strings.Contains(event.Data.(TextDeltaEvent).Text, "with more")
+	})
+
+	if err := svc.CancelRun(run.ID); err != nil {
+		t.Fatalf("CancelRun: %v", err)
+	}
+	events := reader.drain(t)
+	assertEvent(t, events, EventRunCanceled)
+
+	// The persistence must complete before the terminal event is emitted, so
+	// a client refresh triggered by run_canceled sees the partial transcript.
+	detail, err := svc.GetThread(context.Background(), thread.ID)
+	if err != nil {
+		t.Fatalf("GetThread after cancel: %v", err)
+	}
+	if len(detail.Messages) != 2 {
+		t.Fatalf("canceled transcript = %d messages: %+v", len(detail.Messages), detail.Messages)
+	}
+	assistant := detail.Messages[1]
+	if assistant.Role() != llm.RoleAssistant {
+		t.Fatalf("assistant role = %q", assistant.Role())
+	}
+	if got := assistant.Text(); got != "partial answer with more" {
+		t.Fatalf("persisted partial text = %q", got)
+	}
+	if assistant.Payload.Status != llm.MessageStatusIncomplete {
+		t.Fatalf("persisted status = %q", assistant.Payload.Status)
+	}
+}
+
+func TestFailedRunPersistsPartialTranscript(t *testing.T) {
+	svc, _, _, _ := newTestService(t, AccessFull, scriptedStep{
+		stream: func(context.Context) llm.Stream {
+			return &scriptedStream{
+				events: []llm.StreamEvent{
+					llm.PartStart{Index: 0, Part: llm.NewTextPart("")},
+					llm.PartDelta{Index: 0, Kind: llm.PartTypeText, Text: "before the failure", Replace: true},
+				},
+				err: errors.New("stream exploded"),
+			}
+		},
+	})
+
+	thread, err := svc.CreateThread(context.Background(), CreateThreadInput{})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	run, err := svc.StartMessage(context.Background(), thread.ID, "fail midway")
+	if err != nil {
+		t.Fatalf("StartMessage: %v", err)
+	}
+
+	reader := subscribe(t, svc, run.ID)
+	defer reader.cancel()
+	events := reader.drain(t)
+	assertEvent(t, events, EventRunFailed)
+
+	detail, err := svc.GetThread(context.Background(), thread.ID)
+	if err != nil {
+		t.Fatalf("GetThread after failure: %v", err)
+	}
+	if len(detail.Messages) != 2 {
+		t.Fatalf("failed transcript = %d messages: %+v", len(detail.Messages), detail.Messages)
+	}
+	assistant := detail.Messages[1]
+	if got := assistant.Text(); got != "before the failure" {
+		t.Fatalf("persisted partial text = %q", got)
+	}
+	if assistant.Payload.Status != llm.MessageStatusFailed {
+		t.Fatalf("persisted status = %q", assistant.Payload.Status)
+	}
 }
 
 func TestRunFailure(t *testing.T) {
@@ -767,6 +884,7 @@ type scriptedStep struct {
 	toolCalls []llm.ToolCall
 	events    []llm.StreamEvent
 	err       error
+	stream    func(context.Context) llm.Stream
 }
 
 type scriptedModel struct {
@@ -794,6 +912,9 @@ func (m *scriptedModel) Stream(ctx context.Context, req *llm.Request) (llm.Strea
 
 	if step.err != nil {
 		return nil, step.err
+	}
+	if step.stream != nil {
+		return step.stream(ctx), nil
 	}
 	if step.events != nil {
 		return llm.NewSliceStream(ctx, step.events), nil
@@ -855,6 +976,36 @@ func (m *scriptedModel) snapshotRequests() []*llm.Request {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return slices.Clone(m.requests)
+}
+
+// scriptedStream yields the configured events, then either returns err or
+// blocks until the run context is canceled. It lets tests cancel a run at a
+// precise point in the stream.
+type scriptedStream struct {
+	ctx    context.Context
+	events []llm.StreamEvent
+	err    error
+	index  int
+}
+
+func (s *scriptedStream) Recv() (llm.StreamEvent, error) {
+	if s.index < len(s.events) {
+		event := s.events[s.index]
+		s.index++
+		return event, nil
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.ctx == nil {
+		return nil, errors.New("scripted stream exhausted")
+	}
+	<-s.ctx.Done()
+	return nil, s.ctx.Err()
+}
+
+func (s *scriptedStream) Close() error {
+	return nil
 }
 
 type fakeModels struct {

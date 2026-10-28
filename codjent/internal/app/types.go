@@ -114,13 +114,32 @@ func (m *Message) Thinking() string {
 
 // ToLLM returns a deep copy of the canonical payload with empty text parts
 // removed. Some providers reject empty text content.
+//
+// A partial (incomplete or failed) message also drops reasoning parts from the
+// replay copy: their provider replay metadata was never captured, and adapters
+// such as OpenAI Responses reject free-form reasoning text. The original
+// message keeps the reasoning for display.
 func (m *Message) ToLLM() llm.Message {
 	if m == nil {
 		return llm.Message{}
 	}
 	payload := m.Payload.Clone()
+	if payload.Status == llm.MessageStatusIncomplete || payload.Status == llm.MessageStatusFailed {
+		payload.Content = withoutReasoningParts(payload.Content)
+	}
 	payload.Content = llm.NonEmptyParts(payload.Content)
 	return payload
+}
+
+func withoutReasoningParts(parts []llm.Part) []llm.Part {
+	filtered := parts[:0]
+	for _, part := range parts {
+		if _, ok := part.(*llm.ReasoningPart); ok {
+			continue
+		}
+		filtered = append(filtered, part)
+	}
+	return filtered
 }
 
 // MarshalJSON encodes the message as one display view. A message that expands
@@ -161,6 +180,7 @@ type MessageView struct {
 	Role       string         `json:"role"`
 	Content    []PartView     `json:"content"`
 	Thinking   string         `json:"thinking,omitempty"`
+	Status     string         `json:"status,omitempty"`
 	Name       string         `json:"name,omitempty"`
 	ToolCalls  []ToolCallView `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
@@ -181,6 +201,7 @@ func (m *Message) Views() []MessageView {
 			Role:      string(llm.RoleAssistant),
 			Content:   partViews(m.Payload.Content),
 			Thinking:  reasoningText(m.Payload.Content),
+			Status:    string(m.Payload.Status),
 			Name:      m.Payload.Name,
 			ToolCalls: toolCallViews(m.Payload.Content),
 			CreatedAt: m.CreatedAt,
@@ -236,6 +257,7 @@ func (m *Message) userViews() []MessageView {
 				ThreadID:   m.ThreadID,
 				Role:       "tool",
 				Content:    partViews(result.Content),
+				Status:     string(result.Status),
 				Name:       result.Name,
 				ToolCallID: result.CallID,
 				CreatedAt:  m.CreatedAt,

@@ -23,6 +23,9 @@ frontend lives in [`frontend/`](frontend) and is designed to feel like
   `full` mode.
 - Per-thread provider, model, and access-mode settings.
 - Replayable run events and resumable SSE streams.
+- Canceled and failed runs persist the work produced before they stopped:
+  partial assistant text and tool results stay in the transcript, and
+  unfinished tool calls are closed with an interrupted result.
 
 Threads currently share one configured workspace. Per-thread worktrees are a
 future milestone.

@@ -228,16 +228,33 @@ export function useCodjent() {
           detailRef.current = refreshed;
           setDetail(refreshed);
         }
-        if (status === "completed") {
-          setLiveRuns((prev) => {
-            if (prev[threadID]?.runID !== runID) {
-              return prev;
-            }
+        // The canceled/failed transcript is now persisted, so drop the live
+        // copy of the text and tools to avoid rendering the same work twice.
+        // Keep the terminal status (and failure message) for the turn header.
+        setLiveRuns((prev) => {
+          const current = prev[threadID];
+          if (!current || current.runID !== runID) {
+            return prev;
+          }
+          if (status === "completed") {
             const next = { ...prev };
             delete next[threadID];
             return next;
-          });
-        }
+          }
+          return {
+            ...prev,
+            [threadID]: {
+              ...current,
+              status,
+              error: runError ?? current.error,
+              text: "",
+              thinking: "",
+              tools: [],
+              approval: null,
+              reconnecting: false,
+            },
+          };
+        });
       } catch (refreshError) {
         setError(
           `The run ended, but the transcript could not be refreshed: ${errorMessage(refreshError)}`,

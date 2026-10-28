@@ -45,7 +45,7 @@ interface TranscriptProps {
 
 interface ToolCardProps {
   call: ToolCall;
-  status: LiveTool["status"] | "done";
+  status: LiveTool["status"] | "done" | "incomplete" | "denied";
   output?: string;
   error?: string;
   skipped?: boolean;
@@ -98,12 +98,41 @@ function ToolStatus({ status }: { status: ToolCardProps["status"] }) {
       </span>
     );
   }
+  if (status === "incomplete") {
+    return (
+      <span className="inline-flex items-center gap-1 text-warning">
+        <CircleAlert className="size-3" />
+        Interrupted
+      </span>
+    );
+  }
+  if (status === "denied") {
+    return (
+      <span className="inline-flex items-center gap-1 text-muted">
+        <SkipForward className="size-3" />
+        Denied
+      </span>
+    );
+  }
   return (
     <span className="inline-flex items-center gap-1 text-success">
       <Check className="size-3" />
       Done
     </span>
   );
+}
+
+function toolCardStatus(status?: string): ToolCardProps["status"] {
+  switch (status) {
+    case "incomplete":
+      return "incomplete";
+    case "error":
+      return "error";
+    case "denied":
+      return "denied";
+    default:
+      return "done";
+  }
 }
 
 function ToolCard({
@@ -531,7 +560,7 @@ export function Transcript({
               call={call}
               key={message.id}
               output={messageText(message)}
-              status="done"
+              status={toolCardStatus(message.status)}
             />
           );
         }
@@ -548,6 +577,17 @@ export function Transcript({
 
         return (
           <div className="space-y-3" key={message.id}>
+            {message.status === "incomplete" ? (
+              <div className="inline-flex items-center gap-1.5 text-[11px] text-warning">
+                <CircleAlert className="size-3.5" />
+                Interrupted before completion
+              </div>
+            ) : message.status === "failed" ? (
+              <div className="inline-flex items-center gap-1.5 text-[11px] text-danger">
+                <CircleAlert className="size-3.5" />
+                The run failed before this response finished
+              </div>
+            ) : null}
             {message.thinking ? <Thinking text={message.thinking} /> : null}
             {text ? <Markdown>{text}</Markdown> : null}
             {files.length > 0 ? <FileGrid parts={files} /> : null}
@@ -560,7 +600,7 @@ export function Transcript({
                       call={call}
                       key={call.id}
                       output={result ? messageText(result) : undefined}
-                      status="done"
+                      status={toolCardStatus(result?.status)}
                     />
                   );
                 })}
