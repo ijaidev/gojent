@@ -17,7 +17,8 @@ frontend lives in [`frontend/`](frontend) and is designed to feel like
   or per-run dynamic HTTP headers.
 - File read/write/edit/list tools sandboxed to one workspace.
 - Image attachments in prompts: pick, drag/drop, or paste PNG, JPEG, and WebP
-  files, then replay them with the thread.
+  files, preview them in a keyboard-navigable lightbox, and replay them with
+  the thread.
 - `execute_command` requires approval in `ask` mode and runs without prompts in
   `full` mode.
 - Per-thread provider, model, and access-mode settings.

@@ -5,6 +5,7 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  CircleAlert,
   Folder,
   ImagePlus,
   LockKeyhole,
@@ -21,6 +22,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { ImageLightbox } from "@/components/image-lightbox";
 import { Spinner } from "@/components/spinner";
 import type { SendMessage, SendOptions } from "@/hooks/use-codjent";
 import {
@@ -94,6 +96,7 @@ export function Composer({
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const preparingRef = useRef(false);
@@ -189,7 +192,7 @@ export function Composer({
     if (files.length === 0) {
       return;
     }
-    event.preventDefault();
+    // Keep the browser's normal text paste when the clipboard also has text.
     void addFiles(files);
   };
 
@@ -293,13 +296,19 @@ export function Composer({
     }
   };
 
+  const attachmentImages = attachments.map((attachment) => ({
+    url: attachment.previewURL,
+    filename: attachment.filename,
+  }));
+  const attachmentBytes = totalAttachmentBytes(attachments);
+
   const placeholder = busy
     ? liveStatus === "waiting_approval"
       ? "Resolve the approval above to continue…"
       : `Codjent is ${statusCopy(liveStatus ?? "running").toLowerCase()}…`
     : large
       ? "Ask codjent to build, debug, or explain something…"
-      : "Ask for a follow-up, or describe the next change…";
+      : "Ask a follow-up, or paste a screenshot…";
 
   const stop = () => {
     if (busy) {
@@ -315,6 +324,7 @@ export function Composer({
       )}
     >
       <fieldset
+        aria-busy={preparing}
         aria-label="Message composer"
         className={cn(
           "composer-card relative m-0 min-w-0 rounded-[20px] border border-line bg-surface p-0 transition focus-within:border-line-strong",
@@ -342,62 +352,119 @@ export function Composer({
         />
 
         {dragging ? (
-          <div className="pointer-events-none absolute inset-2 z-20 grid place-items-center rounded-2xl border-2 border-dashed border-accent bg-accent-soft/95">
-            <span className="inline-flex items-center gap-2 text-[12px] font-medium text-accent">
-              <ImagePlus className="size-4" />
-              Drop images to attach
+          <div className="pointer-events-none absolute inset-2 z-20 grid place-items-center rounded-2xl border-2 border-dashed border-accent bg-surface/95">
+            <span className="flex flex-col items-center gap-1.5">
+              <span className="grid size-10 place-items-center rounded-xl bg-accent-soft text-accent">
+                <ImagePlus className="size-5" />
+              </span>
+              <span className="text-[12.5px] font-semibold text-ink">
+                Drop images to attach
+              </span>
+              <span className="text-[10px] text-muted">
+                PNG, JPEG, or WebP · up to {MAX_ATTACHMENTS}
+              </span>
             </span>
           </div>
         ) : null}
 
-        {attachments.length > 0 ? (
-          <div className="flex flex-wrap gap-2 px-3 pt-3">
-            {attachments.map((attachment) => (
-              <div
-                className="flex max-w-full items-center gap-2 rounded-xl border border-line bg-surface-muted/60 p-1.5 pr-1"
-                key={attachment.id}
-              >
-                {/* biome-ignore lint/performance/noImgElement: data URLs are local and cannot be optimized by next/image */}
-                <img
-                  alt={attachment.filename}
-                  className="size-10 shrink-0 rounded-lg object-cover"
-                  height={40}
-                  src={attachment.previewURL}
-                  width={40}
-                />
-                <span className="min-w-0">
-                  <span className="block max-w-[170px] truncate text-[10.5px] font-medium text-ink">
-                    {attachment.filename}
-                  </span>
-                  <span className="block text-[9.5px] text-faint">
-                    {formatBytes(attachment.size)}
-                  </span>
-                </span>
+        {attachments.length > 0 || preparing ? (
+          <div className="px-3 pt-3">
+            <div className="flex flex-wrap gap-2.5">
+              {attachments.map((attachment, index) => (
+                <div
+                  className="group/preview relative w-[84px] shrink-0"
+                  key={attachment.id}
+                >
+                  <button
+                    aria-label={`Preview image ${index + 1}: ${attachment.filename}`}
+                    className="relative block size-[84px] cursor-zoom-in overflow-hidden rounded-xl border border-line bg-surface-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+                    onClick={() => setPreviewIndex(index)}
+                    type="button"
+                  >
+                    {/* biome-ignore lint/performance/noImgElement: data URLs are local and cannot be optimized by next/image */}
+                    <img
+                      alt=""
+                      className="h-full w-full object-cover transition duration-150 group-hover/preview:brightness-95 motion-reduce:transition-none"
+                      height={84}
+                      src={attachment.previewURL}
+                      width={84}
+                    />
+                    <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/70 via-black/40 to-transparent px-1.5 pb-1 pt-4 text-[9px] font-medium text-white/95">
+                      {attachment.filename}
+                    </span>
+                    {attachments.length > 1 ? (
+                      <span className="absolute left-1.5 top-1.5 grid size-4 place-items-center rounded-full bg-black/65 text-[8px] font-semibold text-white">
+                        {index + 1}
+                      </span>
+                    ) : null}
+                  </button>
+                  <button
+                    aria-label={`Remove ${attachment.filename}`}
+                    className="absolute -right-1.5 -top-1.5 z-10 grid size-6 place-items-center rounded-full border border-line bg-surface text-muted shadow-sm transition hover:bg-danger-soft hover:text-danger disabled:opacity-40"
+                    disabled={preparing}
+                    onClick={() => removeAttachment(attachment.id)}
+                    type="button"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </div>
+              ))}
+
+              {preparing ? (
+                <div className="grid size-[84px] shrink-0 animate-pulse place-items-center rounded-xl border border-line bg-surface-muted motion-reduce:animate-none">
+                  <Spinner className="size-4 text-faint" />
+                </div>
+              ) : null}
+
+              {attachments.length < MAX_ATTACHMENTS && !preparing ? (
                 <button
-                  aria-label={`Remove ${attachment.filename}`}
-                  className="grid size-6 shrink-0 place-items-center rounded-md text-faint transition hover:bg-surface hover:text-ink disabled:opacity-40"
-                  disabled={preparing}
-                  onClick={() => removeAttachment(attachment.id)}
+                  aria-label="Add images"
+                  className="group/add grid size-[84px] shrink-0 place-items-center rounded-xl border border-dashed border-line-strong bg-surface-muted/40 text-muted transition hover:border-accent/40 hover:bg-accent-soft/60 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+                  onClick={() => fileInputRef.current?.click()}
                   type="button"
                 >
-                  <X className="size-3" />
+                  <span className="flex flex-col items-center gap-1">
+                    <ImagePlus className="size-4" />
+                    <span className="text-[9px] font-medium">Add</span>
+                  </span>
                 </button>
-              </div>
-            ))}
+              ) : null}
+            </div>
+
+            <output
+              aria-live="polite"
+              className="mt-1.5 flex items-center justify-between gap-3 text-[9.5px] text-faint"
+            >
+              <span>
+                {preparing
+                  ? "Preparing image…"
+                  : `${attachments.length} of ${MAX_ATTACHMENTS} images · ${formatBytes(attachmentBytes)}`}
+              </span>
+              <span className="hidden sm:inline">
+                Click an image to preview
+              </span>
+            </output>
           </div>
         ) : null}
 
         {attachmentError ? (
-          <p
-            className="px-4 pt-2 text-[10.5px] leading-4 text-danger"
+          <div
+            className="mx-3 mt-2 flex items-start gap-2 rounded-lg border border-danger/20 bg-danger-soft px-2.5 py-2 text-danger"
+            id="composer-attachment-error"
             role="alert"
           >
-            {attachmentError}
-          </p>
+            <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+            <p className="min-w-0 flex-1 text-[10.5px] leading-4">
+              {attachmentError}
+            </p>
+          </div>
         ) : null}
 
         <textarea
           ref={textareaRef}
+          aria-describedby={
+            attachmentError ? "composer-attachment-error" : undefined
+          }
           aria-label="Message codjent"
           className={cn(
             "block w-full resize-none bg-transparent px-4 pt-4 text-[14.5px] leading-6 text-ink outline-none placeholder:text-faint focus-visible:outline-none disabled:cursor-not-allowed",
@@ -423,7 +490,11 @@ export function Composer({
               attachments.length >= MAX_ATTACHMENTS
             }
             onClick={() => fileInputRef.current?.click()}
-            title={`Attach images (PNG, JPEG, WebP; up to ${MAX_ATTACHMENTS}, ${formatBytes(MAX_IMAGE_BYTES)} each)`}
+            title={
+              attachments.length >= MAX_ATTACHMENTS
+                ? `Up to ${MAX_ATTACHMENTS} images per message`
+                : `Attach images (PNG, JPEG, WebP; up to ${MAX_ATTACHMENTS}, ${formatBytes(MAX_IMAGE_BYTES)} each)`
+            }
           >
             {preparing ? (
               <Spinner className="size-3.5" />
@@ -603,6 +674,12 @@ export function Composer({
           )}
         </span>
       </div>
+
+      <ImageLightbox
+        images={attachmentImages}
+        index={previewIndex}
+        onIndexChange={setPreviewIndex}
+      />
     </div>
   );
 }

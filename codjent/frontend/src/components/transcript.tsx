@@ -8,6 +8,7 @@ import {
   FileCode2,
   FilePlus2,
   FolderOpen,
+  Maximize2,
   PencilLine,
   Search,
   ShieldAlert,
@@ -17,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { ImageLightbox } from "@/components/image-lightbox";
 import { Markdown } from "@/components/markdown";
 import { Spinner } from "@/components/spinner";
 import type { LiveRun, LiveTool } from "@/hooks/use-codjent";
@@ -214,23 +216,15 @@ function Thinking({ text }: { text: string }) {
 }
 
 function FileGrid({ parts }: { parts: Part[] }) {
-  const [preview, setPreview] = useState<string | null>(null);
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const files = parts
     .map((part) => ({ part, url: partFileURL(part) }))
     .filter((file): file is { part: Part; url: string } => file.url !== null);
-
-  useEffect(() => {
-    if (!preview) {
-      return;
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setPreview(null);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [preview]);
+  const images = files.map((file) => ({
+    url: file.url,
+    filename: file.part.filename,
+  }));
+  const multiple = files.length > 1;
 
   if (files.length === 0) {
     return null;
@@ -240,45 +234,49 @@ function FileGrid({ parts }: { parts: Part[] }) {
     <>
       <div
         className={cn(
-          "grid gap-2",
-          files.length > 1 ? "grid-cols-2" : "grid-cols-1",
+          "grid w-full gap-2",
+          multiple ? "max-w-[420px] grid-cols-2" : "max-w-[380px] grid-cols-1",
         )}
       >
         {files.map((file, index) => (
           <button
-            className="overflow-hidden rounded-xl border border-line bg-code"
+            aria-label={`Open ${file.part.filename ?? `image ${index + 1}`}`}
+            className={cn(
+              "group/image relative overflow-hidden rounded-xl border border-line/80 bg-code focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
+              multiple && files.length % 2 === 1 && index === files.length - 1
+                ? "col-span-2 aspect-[2/1]"
+                : "aspect-[4/3]",
+            )}
             key={`${file.part.filename ?? "image"}-${index}`}
-            onClick={() => setPreview(file.url)}
+            onClick={() => setPreviewIndex(index)}
             type="button"
           >
             {/* biome-ignore lint/performance/noImgElement: data URLs are local and cannot be optimized by next/image */}
             <img
               alt={file.part.filename ?? `Attachment ${index + 1}`}
-              className={cn(
-                "w-full object-contain",
-                files.length > 1 ? "max-h-[220px]" : "max-h-[360px]",
-              )}
+              className="h-full w-full object-cover object-top transition duration-150 group-hover/image:scale-[1.015] motion-reduce:transition-none"
+              height={480}
               loading="lazy"
               src={file.url}
+              width={640}
             />
+            <span className="pointer-events-none absolute inset-0 bg-black/0 transition group-hover/image:bg-black/10 motion-reduce:transition-none" />
+            {multiple ? (
+              <span className="absolute left-2 top-2 grid size-5 place-items-center rounded-full bg-black/60 text-[9px] font-semibold text-white backdrop-blur">
+                {index + 1}
+              </span>
+            ) : null}
+            <span className="absolute bottom-2 right-2 grid size-7 place-items-center rounded-md border border-white/15 bg-black/55 text-white/90 backdrop-blur transition group-hover/image:bg-black/70 motion-reduce:transition-none">
+              <Maximize2 className="size-3.5" />
+            </span>
           </button>
         ))}
       </div>
-      {preview ? (
-        <button
-          aria-label="Close image preview"
-          className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-6"
-          onClick={() => setPreview(null)}
-          type="button"
-        >
-          {/* biome-ignore lint/performance/noImgElement: data URLs are local and cannot be optimized by next/image */}
-          <img
-            alt=""
-            className="max-h-[90vh] max-w-[90vw] rounded-xl object-contain"
-            src={preview}
-          />
-        </button>
-      ) : null}
+      <ImageLightbox
+        images={images}
+        index={previewIndex}
+        onIndexChange={setPreviewIndex}
+      />
     </>
   );
 }
@@ -511,8 +509,9 @@ export function Transcript({
             This thread is ready
           </h2>
           <p className="mx-auto mt-1 max-w-sm text-[12px] leading-5 text-faint">
-            Send a prompt below. Codjent will inspect the workspace, make
-            changes, and ask before running commands.
+            Send a prompt, paste a screenshot, or drop in a design. Codjent will
+            inspect the workspace, make changes, and ask before running
+            commands.
           </p>
         </div>
       ) : null}
