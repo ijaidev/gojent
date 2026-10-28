@@ -309,13 +309,14 @@ If the request fails, keep the composer attachments so the user can retry.
 Add to `codjent/frontend/src/components/composer.tsx`:
 
 - hidden `<input type="file" accept="image/png,image/jpeg,image/webp" multiple>`;
-- an attach button (`Paperclip` or `ImagePlus`) next to the model/access
-  controls;
-- a pending-attachment list above the textarea with thumbnail, filename,
-  size, and remove button;
+- an attach button (`ImagePlus`) next to the model/access controls;
+- an 84 px thumbnail tray above the textarea with numbered images, filename
+  overlays, always-visible remove buttons, and an “Add” tile;
+- a live count and total-size line (`2 of 4 images · 1.2 MB`);
 - drag/drop over the composer card;
-- paste handling for clipboard image files;
-- inline validation error text;
+- paste handling that does not prevent normal text paste;
+- inline validation error text with `role="alert"`;
+- click any thumbnail to open the shared lightbox;
 - send enabled when text or attachments exist.
 
 Store each pending attachment as:
@@ -359,20 +360,46 @@ be hit.
 
 In `codjent/frontend/src/components/transcript.tsx`:
 
-- add a `messageFiles(message)` helper or filter inline;
+- add a `messageFiles(message)` helper;
 - change `UserMessage` to render when there is text or at least one file;
-- render images in a responsive grid inside the user bubble;
-- use `file.data` to build `data:${mime_type};base64,${data}`;
-- prefer `file.url` when present;
-- use `file.filename` as alt text, falling back to "Attached image";
-- use plain `<img>` or Next Image with `unoptimized`; data URLs are not
-  optimizable;
-- add an optional click-to-enlarge modal. A simple overlay is enough; do not
-  navigate to the data URL.
+- render compact 4:3 thumbnails instead of full-width images; an odd final image
+  spans both columns;
+- number multiple images so “image 2” is unambiguous;
+- show a persistent expand affordance and use `object-cover` for the concise
+  transcript view;
+- use `file.data` to build `data:${mime_type};base64,${data}`, preferring
+  `file.url` when present;
+- open a shared `ImageLightbox` with filename, counter, download, previous/next,
+  thumbnail strip, Escape/backdrop close, and focus restoration;
+- use plain `<img>` with `loading="lazy"` and fixed media boxes; data URLs are
+  not optimizable by Next Image.
 
 Assistant and tool messages already expose file parts in `PartView`. A small
 shared file-part renderer can be used there later; v1 only needs user
 attachments to be visible.
+
+### 5.6 Interaction patterns borrowed from comparable agents
+
+- **Claude Code / Codex / OpenCode**: paste or drag images, show numbered image
+  chips, and let the user refer to “image 1” positionally; submitted images
+  remain openable.
+- **Cursor**: file picker, drag/drop, and clipboard paste are the three expected
+  input paths; missing thumbnails after paste/upload are a known frustration.
+  The composer therefore shows the prepared thumbnail before the message is
+  sent.
+- **Warp / CopilotKit-style chat UIs**: click any pending or submitted image to
+  open a lightbox; compact thumbnails in the transcript instead of full-width
+  images; one shared lightbox implementation for composer and history.
+- **Codjent choices**: always-visible remove buttons (never hover-only),
+  numbered 84 px composer thumbnails, compact 4:3 transcript thumbnails, a
+  single shared lightbox with arrow-key navigation and focus restoration, and
+  no `preventDefault` on text paste.
+
+Sources checked: Cursor’s image-input documentation
+(<https://cursor.com/docs/agent/prompting>), Claude Code’s interactive-mode
+shortcuts, the cross-agent image-input comparison at
+<https://harnessnotes.com/image-input>, Warp’s attachment lightbox PR, and the
+CopilotKit compact-thumbnail/lightbox change.
 
 ## 6. Limits, formats, and provider behavior
 
@@ -528,7 +555,10 @@ Frontend:
 - [x] Add picker, drag/drop, paste, previews, removal, and validation.
 - [x] Build optimistic messages with file parts.
 - [x] Render user attachments in the transcript.
-- [x] Add client-side downscale/compression if included in the first cut.
+- [x] Add the numbered thumbnail tray, add tile, and live count/size status.
+- [x] Add the shared image lightbox with arrow-key navigation, download, and
+      focus restoration.
+- [x] Add client-side downscale/compression.
 - [x] Run lint, TypeScript, and the static build.
 
 Docs:

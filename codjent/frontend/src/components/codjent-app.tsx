@@ -271,8 +271,9 @@ function EmptyState({
           ?
         </h1>
         <p className="mx-auto mt-3 max-w-[470px] text-center text-[12px] leading-5 text-muted">
-          Describe a task. Codjent can read and edit this checkout, run
-          commands, and show every step while it works.
+          Describe a task, paste a screenshot, or drop in a design. Codjent can
+          read and edit this checkout, run commands, and show every step while
+          it works.
         </p>
 
         <div className="mt-7">
