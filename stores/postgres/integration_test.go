@@ -26,7 +26,7 @@ func TestIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	defer func() { _ = store.Close() }()
+	t.Cleanup(func() { _ = store.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

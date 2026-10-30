@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS session_messages (
     resource_id    TEXT NOT NULL,
     session_id     TEXT NOT NULL,
     format_version INTEGER NOT NULL DEFAULT 2,
-    message        JSONB NOT NULL,
+    message        JSON NOT NULL,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

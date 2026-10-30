@@ -1,6 +1,6 @@
 // Package postgres provides a durable session.Store backed by PostgreSQL.
 //
-// The store persists whole messages as JSONB and exposes only Load and atomic
+// The store persists whole messages as JSON and exposes only Load and atomic
 // Append. Conversation metadata, search, and orchestration state belong in
 // higher-level modules.
 package postgres
