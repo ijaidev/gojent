@@ -2,6 +2,14 @@
 test:
     go test -race ./...
 
+# Run go vet for this module
+vet:
+    go vet ./...
+
+# Build this module's packages
+build:
+    go build ./...
+
 # Run codjent's local backend with the embedded frontend
 run:
     go run ./cmd/codjent

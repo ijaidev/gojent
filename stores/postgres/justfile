@@ -2,6 +2,14 @@
 test:
     go test -race ./...
 
+# Run go vet for this module
+vet:
+    go vet ./...
+
+# Build this module's packages
+build:
+    go build ./...
+
 # Run the database integration tests (requires GOJENT_POSTGRES_DSN)
 test-integration:
     go test -race -v ./... -run 'TestIntegration|TestConformance'

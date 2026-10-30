@@ -20,6 +20,26 @@ test:
         just --justfile "$dir/justfile" test
     done
 
+# Run go vet for the root module and every other module
+vet:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    go vet ./...
+    for dir in {{modules}}; do
+        echo "== $dir =="
+        just --justfile "$dir/justfile" vet
+    done
+
+# Build the root module and every other module
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    go build ./...
+    for dir in {{modules}}; do
+        echo "== $dir =="
+        just --justfile "$dir/justfile" build
+    done
+
 # Run static analysis for the root module and every other module
 lint:
     #!/usr/bin/env bash
@@ -68,5 +88,5 @@ fmt-check:
     fi
     echo "Formatting check passed."
 
-# Run all checks (formatting check, tidy check, lint, and unit tests)
-check: fmt-check tidy-check lint test
+# Run all checks (formatting, tidy, vet, build, lint, and unit tests)
+check: fmt-check tidy-check vet build lint test

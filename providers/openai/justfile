@@ -2,6 +2,14 @@
 test:
     go test -race ./...
 
+# Run go vet for this module
+vet:
+    go vet ./...
+
+# Build this module's packages
+build:
+    go build ./...
+
 # Run static analysis for this module
 lint:
     golangci-lint run ./...

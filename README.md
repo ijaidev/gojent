@@ -319,9 +319,11 @@ Each module has its own `justfile`. The root recipes delegate to every module:
 
 ```bash
 just test    # unit tests
+just vet     # go vet
+just build   # go build
 just lint    # static analysis
 just tidy    # go mod tidy
-just check   # formatting, tidy check, lint, and tests
+just check   # formatting, tidy, vet, build, lint, and tests
 ```
 
 Run a single module's recipe with `just --justfile <dir>/justfile <recipe>`,
