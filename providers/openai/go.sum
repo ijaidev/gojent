@@ -1,3 +1,5 @@
+github.com/ijaidev/gojent v0.1.0 h1:YmRCr7bTsv8BcG8fiSNrkUxpKa8OfvL1m1JUr78V6bc=
+github.com/ijaidev/gojent v0.1.0/go.mod h1:lN8VQuutu3+5xwb77ZUa4hJ0MyZjIJ6U8GQ2Qe1EVxE=
 github.com/openai/openai-go v1.12.0 h1:NBQCnXzqOTv5wsgNC36PrFEiskGfO5wccfCWDo9S1U0=
 github.com/openai/openai-go v1.12.0/go.mod h1:g461MYGXEXBVdV5SaR/5tNzNbSfwTBBefwc+LlDCK0Y=
 github.com/tidwall/gjson v1.14.2/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=

@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.84.0
-	github.com/ijaidev/gojent v0.0.0-00010101000000-000000000000
+	github.com/ijaidev/gojent v0.1.0
 )
 
 require (
@@ -26,7 +26,3 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/sync v0.16.0 // indirect
 )
-
-// Local development: resolve the unpublished root module from this checkout.
-// Remove this replace when the modules are first tagged and published.
-replace github.com/ijaidev/gojent => ../..
