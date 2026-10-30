@@ -88,5 +88,9 @@ fmt-check:
     fi
     echo "Formatting check passed."
 
-# Run all checks (formatting, tidy, vet, build, lint, and unit tests)
-check: fmt-check tidy-check vet build lint test
+# Verify codjent's embedded frontend export is current
+frontend-check:
+    just --justfile codjent/justfile frontend-check
+
+# Run all checks (formatting, tidy, vet, build, lint, tests, and frontend)
+check: fmt-check tidy-check vet build lint test frontend-check

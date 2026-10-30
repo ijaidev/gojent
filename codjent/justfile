@@ -22,6 +22,20 @@ dev:
 frontend:
     cd frontend && pnpm build
 
+# Build the frontend and verify the committed export is current
+frontend-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd frontend
+    NEXT_TELEMETRY_DISABLED=1 pnpm build
+    cd ..
+    if [ -n "$(git status --porcelain -- frontend/out)" ]; then
+        echo "[ERROR] codjent/frontend/out is stale. Run 'just frontend' and commit the export."
+        git status --short -- frontend/out
+        exit 1
+    fi
+    echo "Embedded frontend export is current."
+
 # Build the frontend and run codjent with the embedded UI
 web: frontend
     go run ./cmd/codjent --workspace ..
