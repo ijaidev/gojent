@@ -3,8 +3,8 @@ module github.com/ijaidev/gojent/examples/google
 go 1.25.5
 
 require (
-	github.com/ijaidev/gojent v0.0.0-00010101000000-000000000000
-	github.com/ijaidev/gojent/providers/google v0.0.0-00010101000000-000000000000
+	github.com/ijaidev/gojent v0.1.0
+	github.com/ijaidev/gojent/providers/google v0.1.0
 )
 
 require (
@@ -25,12 +25,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240903143218-8af14fe29dc1 // indirect
 	google.golang.org/grpc v1.66.2 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
-)
-
-// Local development: resolve the unpublished sibling modules from this
-// checkout. Remove these replaces when the modules are first tagged and
-// published.
-replace (
-	github.com/ijaidev/gojent => ../..
-	github.com/ijaidev/gojent/providers/google => ../../providers/google
 )

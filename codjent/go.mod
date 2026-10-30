@@ -3,10 +3,10 @@ module github.com/ijaidev/gojent/codjent
 go 1.25.5
 
 require (
-	github.com/ijaidev/gojent v0.0.0-00010101000000-000000000000
-	github.com/ijaidev/gojent/providers/anthropic v0.0.0-00010101000000-000000000000
-	github.com/ijaidev/gojent/providers/google v0.0.0-00010101000000-000000000000
-	github.com/ijaidev/gojent/providers/openai v0.0.0-00010101000000-000000000000
+	github.com/ijaidev/gojent v0.1.0
+	github.com/ijaidev/gojent/providers/anthropic v0.1.0
+	github.com/ijaidev/gojent/providers/google v0.1.0
+	github.com/ijaidev/gojent/providers/openai v0.1.0
 	google.golang.org/genai v1.75.0
 	modernc.org/sqlite v1.55.0
 )
@@ -55,11 +55,4 @@ require (
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-)
-
-replace (
-	github.com/ijaidev/gojent => ..
-	github.com/ijaidev/gojent/providers/anthropic => ../providers/anthropic
-	github.com/ijaidev/gojent/providers/google => ../providers/google
-	github.com/ijaidev/gojent/providers/openai => ../providers/openai
 )
