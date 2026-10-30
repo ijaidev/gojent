@@ -34,6 +34,15 @@ future milestone.
 
 Go 1.25 or newer is required.
 
+Install the released binary:
+
+```sh
+go install github.com/ijaidev/gojent/codjent/cmd/codjent@latest
+codjent
+```
+
+Or run from the repository:
+
 ```sh
 go run ./codjent/cmd/codjent
 ```
@@ -43,6 +52,9 @@ Or from the repository root:
 ```sh
 just --justfile codjent/justfile run
 ```
+
+The frontend is embedded in the binary, so the installed command serves the UI
+at <http://127.0.0.1:8787> without any additional files.
 
 A fresh install starts with no providers. Open
 <http://127.0.0.1:8787/settings> to add an endpoint, an optional API key, and
@@ -64,19 +76,19 @@ go run ./codjent/cmd/codjent \
   --data-dir .local/codjent \
   --provider <provider-id> \
   --model <model-id> \
-  --access-mode ask \
-  --frontend-dir codjent/frontend/out
+  --access-mode ask
 ```
 
 ## Frontend
 
-The frontend is a static Next.js export. For development, run the backend and
-Next's dev server together; the UI calls `http://127.0.0.1:8787` when it is
-served from port 3000.
+The frontend is a static Next.js export embedded into the Go binary at build
+time. `codjent/frontend/out` is committed for that purpose.
+
+For development, run the backend in API-only mode and use Next's dev server:
 
 ```sh
 # terminal 1
-just --justfile codjent/justfile run
+just --justfile codjent/justfile dev
 
 # terminal 2
 cd codjent/frontend
@@ -84,28 +96,27 @@ pnpm install
 pnpm dev
 ```
 
-Then open <http://localhost:3000>.
+Then open <http://localhost:3000>. The UI calls `http://127.0.0.1:8787` when it
+is served from port 3000.
 
-For a single-process build, export the frontend and point the backend at it:
+After changing the frontend, rebuild the export and commit it:
 
 ```sh
-cd codjent/frontend
-pnpm build
-cd ../..
-go run ./codjent/cmd/codjent \
-  --workspace . \
-  --frontend-dir codjent/frontend/out
+just --justfile codjent/justfile frontend
+git add codjent/frontend/out
 ```
 
-Or from the repository root:
+For a single-process run with a freshly built embedded UI:
 
 ```sh
 just --justfile codjent/justfile web
 ```
 
-Open <http://127.0.0.1:8787>. The backend serves the static files and the API
-from the same origin. Set `NEXT_PUBLIC_CODJENT_API_URL` before `pnpm build` to
-point the UI at a different API origin.
+Open <http://127.0.0.1:8787>. The backend serves the embedded static files and
+the API from the same origin. Pass `--frontend-dir <dir>` to serve a different
+build from disk, or `--no-frontend` to run the API only. Set
+`NEXT_PUBLIC_CODJENT_API_URL` before `pnpm build` to point the UI at a
+different API origin.
 
 ## Configuration
 
@@ -120,7 +131,8 @@ point the UI at a different API origin.
 | `CODJENT_ACCESS_MODE` | `ask` | `ask` or `full` |
 | `CODJENT_MAX_STEPS` | `20` | ReAct step limit per run |
 | `CODJENT_ALLOWED_ORIGINS` | localhost:3000 origins | Browser CORS allowlist |
-| `CODJENT_FRONTEND_DIR` | unset | Built frontend directory to serve |
+| `CODJENT_FRONTEND_DIR` | unset | Serve a frontend directory instead of the embedded build |
+| `CODJENT_NO_FRONTEND` | `false` | Disable frontend serving (API only) |
 
 The default SQLite location follows OS conventions:
 

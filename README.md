@@ -28,6 +28,13 @@ go get github.com/ijaidev/gojent/stores/sqlite
 go get github.com/ijaidev/gojent/stores/postgres
 ```
 
+The local coding agent is installed separately and includes the embedded web
+UI:
+
+```bash
+go install github.com/ijaidev/gojent/codjent/cmd/codjent@latest
+```
+
 ## Quickstart
 
 ```go

@@ -1,18 +1,17 @@
 package httpapi
 
 import (
+	"io/fs"
 	"net/http"
-	"os"
 	"path"
-	"path/filepath"
 	"strings"
 )
 
-// frontendHandler serves a built static frontend. Unknown extensionless paths
-// fall back to index.html so client-side routes can be opened directly.
-func frontendHandler(dir string) http.Handler {
-	files := http.FileServer(http.Dir(dir))
-	index := filepath.Join(dir, "index.html")
+// frontendHandler serves a built static frontend from fsys. Unknown
+// extensionless paths fall back to index.html so client-side routes can be
+// opened directly.
+func frontendHandler(fsys fs.FS) http.Handler {
+	files := http.FileServerFS(fsys)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
@@ -22,16 +21,16 @@ func frontendHandler(dir string) http.Handler {
 
 		cleaned := path.Clean("/" + r.URL.Path)
 		if cleaned != "/" {
-			requested := filepath.Join(dir, filepath.FromSlash(strings.TrimPrefix(cleaned, "/")))
-			if info, err := os.Stat(requested); err == nil {
+			requested := strings.TrimPrefix(cleaned, "/")
+			if info, err := fs.Stat(fsys, requested); err == nil {
 				if !info.IsDir() {
 					files.ServeHTTP(w, r)
 					return
 				}
 				// Next.js writes each static route to <route>/index.html.
-				page := filepath.Join(requested, "index.html")
-				if pageInfo, pageErr := os.Stat(page); pageErr == nil && !pageInfo.IsDir() {
-					http.ServeFile(w, r, page)
+				page := path.Join(requested, "index.html")
+				if pageInfo, pageErr := fs.Stat(fsys, page); pageErr == nil && !pageInfo.IsDir() {
+					http.ServeFileFS(w, r, fsys, page)
 					return
 				}
 			}
@@ -41,6 +40,6 @@ func frontendHandler(dir string) http.Handler {
 			}
 		}
 
-		http.ServeFile(w, r, index)
+		http.ServeFileFS(w, r, fsys, "index.html")
 	})
 }

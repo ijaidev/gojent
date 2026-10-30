@@ -41,7 +41,7 @@ func newSettingsTestServer(t *testing.T) (*httptest.Server, *catalog.Catalog) {
 		t.Fatalf("app.New: %v", err)
 	}
 
-	server := httptest.NewServer(NewWithCatalog(svc, cat, nil, ""))
+	server := httptest.NewServer(NewWithCatalog(svc, cat, nil, nil))
 	t.Cleanup(func() {
 		server.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

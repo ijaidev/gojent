@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,19 +29,20 @@ type api struct {
 
 // New returns the codjent HTTP handler.
 func New(service *app.Service, allowedOrigins []string) http.Handler {
-	return NewWithStatic(service, allowedOrigins, "")
+	return NewWithStatic(service, allowedOrigins, nil)
 }
 
-// NewWithStatic returns the codjent HTTP handler. When frontendDir is not
-// empty, non-API GET requests are served from that directory, with an
-// index.html fallback for client-side routes.
-func NewWithStatic(service *app.Service, allowedOrigins []string, frontendDir string) http.Handler {
-	return NewWithCatalog(service, nil, allowedOrigins, frontendDir)
+// NewWithStatic returns the codjent HTTP handler. When frontend is not nil,
+// non-API GET requests are served from it, with an index.html fallback for
+// client-side routes.
+func NewWithStatic(service *app.Service, allowedOrigins []string, frontend fs.FS) http.Handler {
+	return NewWithCatalog(service, nil, allowedOrigins, frontend)
 }
 
 // NewWithCatalog returns the codjent HTTP handler with provider settings
-// routes. A nil catalog disables those routes.
-func NewWithCatalog(service *app.Service, providers *catalog.Catalog, allowedOrigins []string, frontendDir string) http.Handler {
+// routes. A nil catalog disables those routes. A nil frontend serves the API
+// only.
+func NewWithCatalog(service *app.Service, providers *catalog.Catalog, allowedOrigins []string, frontend fs.FS) http.Handler {
 	a := &api{
 		service: service,
 		catalog: providers,
@@ -69,8 +71,8 @@ func NewWithCatalog(service *app.Service, providers *catalog.Catalog, allowedOri
 	mux.HandleFunc("GET /api/runs/{runID}/events", a.streamRun)
 	mux.HandleFunc("POST /api/runs/{runID}/approvals/{approvalID}", a.resolveApproval)
 	mux.HandleFunc("POST /api/runs/{runID}/cancel", a.cancelRun)
-	if frontendDir != "" {
-		mux.Handle("GET /", frontendHandler(frontendDir))
+	if frontend != nil {
+		mux.Handle("GET /", frontendHandler(frontend))
 	}
 
 	return securityHeaders(a.cors(mux))

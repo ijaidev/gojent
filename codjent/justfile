@@ -2,14 +2,21 @@
 test:
     go test -race ./...
 
-# Run codjent's local backend
+# Run codjent's local backend with the embedded frontend
 run:
     go run ./cmd/codjent
 
-# Build the static frontend and serve it from codjent
-web:
+# Run the backend for frontend development (use pnpm dev for the UI)
+dev:
+    go run ./cmd/codjent --no-frontend
+
+# Build the static frontend that is embedded in the binary
+frontend:
     cd frontend && pnpm build
-    go run ./cmd/codjent --workspace .. --frontend-dir frontend/out
+
+# Build the frontend and run codjent with the embedded UI
+web: frontend
+    go run ./cmd/codjent --workspace ..
 
 # Run static analysis for this module
 lint:

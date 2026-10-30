@@ -2,33 +2,24 @@ package httpapi
 
 import (
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func TestFrontendHandler(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "assets"), 0o755); err != nil {
-		t.Fatalf("mkdir assets: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(dir, "settings"), 0o755); err != nil {
-		t.Fatalf("mkdir settings: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("codjent app"), 0o600); err != nil {
-		t.Fatalf("write index: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "settings", "index.html"), []byte("settings page"), 0o600); err != nil {
-		t.Fatalf("write settings index: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "assets", "app.js"), []byte("console.log(1)"), 0o600); err != nil {
-		t.Fatalf("write asset: %v", err)
+	fsys := fstest.MapFS{
+		"index.html":          {Data: []byte("codjent app")},
+		"settings":            {Mode: fs.ModeDir | 0o755},
+		"settings/index.html": {Data: []byte("settings page")},
+		"assets":              {Mode: fs.ModeDir | 0o755},
+		"assets/app.js":       {Data: []byte("console.log(1)")},
 	}
 
-	server := httptest.NewServer(frontendHandler(dir))
+	server := httptest.NewServer(frontendHandler(fsys))
 	t.Cleanup(server.Close)
 
 	tests := []struct {

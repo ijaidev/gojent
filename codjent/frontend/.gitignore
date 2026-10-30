@@ -15,7 +15,7 @@
 
 # next.js
 /.next/
-/out/
+# out/ is committed because it is embedded into the Go binary.
 
 # production
 /build

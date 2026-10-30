@@ -1,15 +1,16 @@
 # Codjent frontend
 
-The Next.js frontend for [Codjent](../README.md). It is a static export: the Go
-backend serves the built files and the API from the same origin in production.
+The Next.js frontend for [Codjent](../README.md). It is a static export that is
+committed to `out/` and embedded into the Go binary, so the installed backend
+serves the built files and the API from the same origin.
 
 ## Development
 
-Run the backend and the Next.js dev server side by side:
+Run the backend in API-only mode and the Next.js dev server side by side:
 
 ```sh
 # repository root
-just --justfile codjent/justfile run
+just --justfile codjent/justfile dev
 
 # codjent/frontend
 pnpm install
@@ -26,12 +27,23 @@ backend at `http://127.0.0.1:8787`. For any other origin, set
 pnpm build
 ```
 
-The export is written to `out/`. Run it with the backend from the repository
-root:
+The export is written to `out/`, which is committed because it is embedded by
+`go build` and `go install`. Rebuild and commit `out/` whenever the frontend
+changes:
 
 ```sh
-go run ./codjent/cmd/codjent --frontend-dir codjent/frontend/out
+just --justfile codjent/justfile frontend
+git add codjent/frontend/out
 ```
+
+Build and run the single-process app from the repository root:
+
+```sh
+just --justfile codjent/justfile web
+```
+
+`next.config.ts` pins `generateBuildId` so repeated builds are reproducible
+and CI can verify that the committed export matches the source.
 
 See the [main README](../README.md) for configuration, the HTTP API, and the
 full run instructions.

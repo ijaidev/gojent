@@ -37,6 +37,35 @@ jobs:
           version: v2.8.0
           args: ./... ./providers/anthropic/... ./providers/google/... ./providers/openai/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/... ./codjent/...
 
+  frontend:
+    name: Frontend build check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.8
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: codjent/frontend/pnpm-lock.yaml
+
+      - name: Install
+        working-directory: codjent/frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        working-directory: codjent/frontend
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: pnpm build
+
+      - name: Verify committed embedded assets are current
+        run: test -z "$(git status --porcelain -- codjent/frontend/out)"
+
   postgres-integration:
     name: PostgreSQL integration
     runs-on: ubuntu-latest

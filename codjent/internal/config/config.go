@@ -35,6 +35,7 @@ type Config struct {
 	AccessMode     app.AccessMode
 	AllowedOrigins []string
 	FrontendDir    string
+	NoFrontend     bool
 }
 
 // Load reads configuration from the environment and applies defaults.
@@ -64,6 +65,13 @@ func Load() (Config, error) {
 		}
 		cfg.MaxSteps = n
 	}
+	if raw := strings.TrimSpace(os.Getenv("CODJENT_NO_FRONTEND")); raw != "" {
+		noFrontend, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: CODJENT_NO_FRONTEND: %w", err)
+		}
+		cfg.NoFrontend = noFrontend
+	}
 	if len(cfg.GoogleModels) == 0 {
 		cfg.GoogleModels = nil
 	}
@@ -92,7 +100,8 @@ func Parse(args []string, output io.Writer) (Config, error) {
 	fs.IntVar(&cfg.MaxSteps, "max-steps", cfg.MaxSteps, "maximum ReAct steps per run")
 	fs.StringVar(&accessMode, "access-mode", accessMode, "default access mode: ask or full")
 	fs.StringVar(&origins, "allowed-origins", origins, "comma-separated browser origins allowed by CORS")
-	fs.StringVar(&cfg.FrontendDir, "frontend-dir", cfg.FrontendDir, "directory containing the built frontend (optional)")
+	fs.StringVar(&cfg.FrontendDir, "frontend-dir", cfg.FrontendDir, "serve the frontend from this directory instead of the embedded build")
+	fs.BoolVar(&cfg.NoFrontend, "no-frontend", cfg.NoFrontend, "disable serving the frontend (API only)")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -116,6 +125,9 @@ func (c Config) Validate() error {
 	}
 	if !c.AccessMode.Valid() {
 		return fmt.Errorf("config: access mode %q is invalid (want ask or full)", c.AccessMode)
+	}
+	if c.NoFrontend && strings.TrimSpace(c.FrontendDir) != "" {
+		return fmt.Errorf("config: no-frontend and frontend-dir are mutually exclusive")
 	}
 	return nil
 }

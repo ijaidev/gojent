@@ -23,6 +23,8 @@ func clearConfigEnv(t *testing.T) {
 		"CODJENT_MAX_STEPS",
 		"CODJENT_ACCESS_MODE",
 		"CODJENT_ALLOWED_ORIGINS",
+		"CODJENT_FRONTEND_DIR",
+		"CODJENT_NO_FRONTEND",
 		"XDG_DATA_HOME",
 	} {
 		t.Setenv(key, "")
@@ -66,6 +68,7 @@ func TestLoadEnvironment(t *testing.T) {
 	t.Setenv("CODJENT_MAX_STEPS", "7")
 	t.Setenv("CODJENT_ACCESS_MODE", "full")
 	t.Setenv("CODJENT_ALLOWED_ORIGINS", "http://localhost:3000,http://example.test")
+	t.Setenv("CODJENT_NO_FRONTEND", "true")
 
 	cfg, err := Load()
 	if err != nil {
@@ -73,6 +76,9 @@ func TestLoadEnvironment(t *testing.T) {
 	}
 	if cfg.Addr != "127.0.0.1:9999" || cfg.Workspace != "/tmp/workspace" || cfg.Model != "gemini-test" {
 		t.Fatalf("config = %+v", cfg)
+	}
+	if !cfg.NoFrontend {
+		t.Fatal("no frontend = false, want true")
 	}
 	if cfg.MaxSteps != 7 || cfg.AccessMode != app.AccessFull {
 		t.Fatalf("steps/access = %d/%q", cfg.MaxSteps, cfg.AccessMode)
@@ -131,6 +137,19 @@ func TestParseHelp(t *testing.T) {
 	}
 }
 
+func TestParseNoFrontend(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("CODJENT_DATA_DIR", t.TempDir())
+
+	cfg, err := Parse([]string{"--no-frontend"}, io.Discard)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !cfg.NoFrontend {
+		t.Fatal("no frontend = false, want true")
+	}
+}
+
 func TestValidation(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("CODJENT_DATA_DIR", t.TempDir())
@@ -143,6 +162,9 @@ func TestValidation(t *testing.T) {
 	}
 	if _, err := Parse([]string{"--addr", ""}, io.Discard); err == nil {
 		t.Fatal("expected empty addr error")
+	}
+	if _, err := Parse([]string{"--no-frontend", "--frontend-dir", "/tmp/frontend"}, io.Discard); err == nil {
+		t.Fatal("expected no-frontend/frontend-dir conflict error")
 	}
 }
 

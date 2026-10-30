@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ijaidev/gojent/codjent/frontend"
 	"github.com/ijaidev/gojent/codjent/internal/app"
 	"github.com/ijaidev/gojent/codjent/internal/config"
 	"github.com/ijaidev/gojent/codjent/internal/httpapi"
@@ -40,16 +42,9 @@ func run() error {
 		return err
 	}
 
-	frontendDir := strings.TrimSpace(cfg.FrontendDir)
-	if frontendDir != "" {
-		index := filepath.Join(frontendDir, "index.html")
-		info, statErr := os.Stat(index)
-		if statErr != nil {
-			return fmt.Errorf("frontend: %q does not contain index.html: %w", frontendDir, statErr)
-		}
-		if info.IsDir() {
-			return fmt.Errorf("frontend: %q is a directory", index)
-		}
+	frontendFS, frontendLabel, err := resolveFrontend(cfg)
+	if err != nil {
+		return err
 	}
 
 	store, err := sqlite.New(context.Background(), cfg.DatabasePath())
@@ -83,7 +78,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.NewWithCatalog(service, providerCatalog, cfg.AllowedOrigins, frontendDir),
+		Handler:           httpapi.NewWithCatalog(service, providerCatalog, cfg.AllowedOrigins, frontendFS),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
@@ -99,11 +94,7 @@ func run() error {
 	log.Printf("codjent listening on http://%s", cfg.Addr)
 	log.Printf("database: %s", cfg.DatabasePath())
 	log.Printf("workspace: %s", service.Workspace())
-	if frontendDir != "" {
-		log.Printf("frontend: %s", frontendDir)
-	} else {
-		log.Printf("frontend: API only (pass --frontend-dir to serve the built UI)")
-	}
+	log.Printf("frontend: %s", frontendLabel)
 	if len(providerCatalog.Configs()) == 0 {
 		log.Printf("providers: none configured; open /settings to add one")
 	}
@@ -129,6 +120,38 @@ func run() error {
 		return err
 	}
 	return nil
+}
+
+// resolveFrontend selects the UI source: an explicit directory, the embedded
+// production build, or no UI at all.
+func resolveFrontend(cfg config.Config) (fs.FS, string, error) {
+	if cfg.NoFrontend {
+		return nil, "API only (--no-frontend)", nil
+	}
+	if dir := strings.TrimSpace(cfg.FrontendDir); dir != "" {
+		index := filepath.Join(dir, "index.html")
+		info, err := os.Stat(index)
+		if err != nil {
+			return nil, "", fmt.Errorf("frontend: %q does not contain index.html: %w", dir, err)
+		}
+		if info.IsDir() {
+			return nil, "", fmt.Errorf("frontend: %q is a directory", index)
+		}
+		return os.DirFS(dir), dir, nil
+	}
+
+	assets, err := fs.Sub(frontend.Assets, "out")
+	if err != nil {
+		return nil, "", fmt.Errorf("frontend: embedded assets: %w", err)
+	}
+	info, err := fs.Stat(assets, "index.html")
+	if err != nil {
+		return nil, "", fmt.Errorf("frontend: embedded index.html: %w", err)
+	}
+	if info.IsDir() {
+		return nil, "", fmt.Errorf("frontend: embedded index.html is a directory")
+	}
+	return assets, "embedded (use --frontend-dir to override)", nil
 }
 
 // seedGoogleProvider preserves the former static Google provider on first run.
