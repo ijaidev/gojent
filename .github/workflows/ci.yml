@@ -17,6 +17,10 @@ jobs:
         with:
           go-version: "1.25.x"
 
+      - name: Create Go workspace
+        run: |
+          go work init . ./codjent ./providers/anthropic ./providers/google ./providers/openai ./examples/google ./stores/postgres ./stores/sqlite
+
       - name: Check formatting
         run: test -z "$(gofmt -l .)"
 
@@ -58,5 +62,6 @@ jobs:
 
       - name: Run the storage conformance suite against PostgreSQL
         env:
-          GOJENT_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/gojent_test?sslmode=disable
-        run: go test -race ./stores/postgres/...
+          GOJENT_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/gojent_test?sslmode=disable
+        working-directory: stores/postgres
+        run: go test -race ./...
