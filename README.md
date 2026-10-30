@@ -299,16 +299,29 @@ Implement `agent.Sink` or pass `agent.SinkFunc` to receive `RunStart`,
 `StepStart`, `TextDelta`, `ThinkingDelta`, `ToolStart`, `ToolEnd`, and
 `RunEnd` events. Policies observe and decide; sinks only observe.
 
-## Testing
+## Development
+
+The repository is a Go workspace with a root module and several optional
+modules. `go.work` is intentionally not tracked; create it once after cloning:
 
 ```bash
-go test ./...
-(cd providers/anthropic && go test ./...)
-(cd providers/google && go test ./...)
-(cd providers/openai && go test ./...)
-(cd stores/sqlite && go test ./...)
-(cd stores/postgres && go test ./...)
-(cd examples/google && go test ./...)
+just workspace
+```
+
+Each module has its own `justfile`. The root recipes delegate to every module:
+
+```bash
+just test    # unit tests
+just lint    # static analysis
+just tidy    # go mod tidy
+just check   # formatting, tidy check, lint, and tests
+```
+
+Run a single module's recipe with `just --justfile <dir>/justfile <recipe>`,
+for example:
+
+```bash
+just --justfile providers/google/justfile test
 ```
 
 Shared conformance suites catch adapter drift:
@@ -322,7 +335,7 @@ The PostgreSQL integration suite is opt-in:
 
 ```bash
 GOJENT_POSTGRES_DSN='postgres://postgres:postgres@localhost:5432/gojent_test?sslmode=disable' \
-  go test -race ./...
+  just --justfile stores/postgres/justfile test-integration
 ```
 
 ## Versioning

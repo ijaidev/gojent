@@ -41,7 +41,7 @@ go run ./codjent/cmd/codjent
 Or from the repository root:
 
 ```sh
-just codjent
+just -d codjent run
 ```
 
 A fresh install starts with no providers. Open
@@ -76,7 +76,7 @@ served from port 3000.
 
 ```sh
 # terminal 1
-just codjent
+just -d codjent run
 
 # terminal 2
 cd codjent/frontend

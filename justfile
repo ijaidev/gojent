@@ -1,23 +1,54 @@
-# Run all unit tests across the whole package
+# Non-root modules. Keep in sync with the go.work use directives.
+modules := "codjent examples/google providers/anthropic providers/google providers/openai stores/postgres stores/sqlite"
+
+# Create the local Go workspace (go.work is not tracked)
+workspace:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -f go.work ]; then
+        go work init
+    fi
+    go work use . {{modules}}
+
+# Run unit tests for the root module and every other module
 test:
-    go test -v ./... ./providers/anthropic/... ./providers/google/... ./providers/openai/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/... ./codjent/...
+    #!/usr/bin/env bash
+    set -euo pipefail
+    go test -race ./...
+    for dir in {{modules}}; do
+        echo "== $dir =="
+        just --justfile "$dir/justfile" test
+    done
 
-# Run the database integration tests (requires GOJENT_POSTGRES_DSN)
-test-integration:
-    go test -race -v ./stores/postgres/... -run 'TestIntegration|TestConformance'
-
-# Run static analysis and linting across all packages
+# Run static analysis for the root module and every other module
 lint:
-    golangci-lint run ./... ./providers/anthropic/... ./providers/google/... ./providers/openai/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/... ./codjent/...
+    #!/usr/bin/env bash
+    set -euo pipefail
+    golangci-lint run ./...
+    for dir in {{modules}}; do
+        echo "== $dir =="
+        just --justfile "$dir/justfile" lint
+    done
 
-# Run codjent's local backend
-codjent:
-    go run ./codjent/cmd/codjent
+# Tidy go.mod and go.sum in every module
+tidy:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    go mod tidy
+    for dir in {{modules}}; do
+        echo "== $dir =="
+        just --justfile "$dir/justfile" tidy
+    done
 
-# Build the static frontend and serve it from codjent
-codjent-web:
-    cd codjent/frontend && pnpm build
-    go run ./codjent/cmd/codjent --workspace . --frontend-dir codjent/frontend/out
+# Check that every module's go.mod and go.sum are tidy
+tidy-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    go mod tidy -diff
+    for dir in {{modules}}; do
+        echo "== $dir =="
+        just --justfile "$dir/justfile" tidy-check
+    done
 
 # Format all Go source files according to standard Go formatting
 fmt:
@@ -39,47 +70,3 @@ fmt-check:
 
 # Run all checks (formatting check, tidy check, lint, and unit tests)
 check: fmt-check tidy-check lint test
-
-
-# Tidy all go.mod and go.sum files across all modules
-tidy:
-    #!/usr/bin/env bash
-    set -e
-    for dir in . providers/anthropic providers/google providers/openai examples/google stores/sqlite stores/postgres codjent; do
-        echo "== $dir =="
-        (cd "$dir" && go mod tidy)
-    done
-    go work sync
-    echo "Workspace and modules tidied successfully."
-
-# Check that all go.mod files across all modules are tidy
-tidy-check:
-    #!/usr/bin/env bash
-    set -e
-    for dir in . providers/anthropic providers/google providers/openai examples/google stores/sqlite stores/postgres codjent; do
-        diff=$(cd "$dir" && go mod tidy -diff 2>&1 || true)
-        if [ -n "$diff" ]; then
-            echo "[ERROR] Module $dir is not tidy:"
-            echo "$diff"
-            exit 1
-        fi
-    done
-    go work sync
-    sync_diff=$(git diff --name-only "*go.mod" "*go.sum" "go.work.sum")
-    if [ -n "$sync_diff" ]; then
-        echo "[ERROR] Workspace modules are out of sync:"
-        echo "$sync_diff"
-        exit 1
-    fi
-    echo "All modules and workspace are tidy and in sync."
-
-# Alias check-tidy to tidy-check
-alias check-tidy := tidy-check
-
-# Alias pre-commit to check
-alias pre-commit := check
-
-# Configure git to use repository pre-commit hooks
-setup-hooks:
-    git config core.hooksPath .githooks
-    chmod +x .githooks/pre-commit

@@ -1,3 +1,7 @@
+# Go workspace (local development only)
+go.work
+go.work.sum
+
 # Binaries and build artifacts
 *.exe
 *.exe~

@@ -1,0 +1,24 @@
+# Run this module's unit tests
+test:
+    go test -race ./...
+
+# Run codjent's local backend
+run:
+    go run ./cmd/codjent
+
+# Build the static frontend and serve it from codjent
+web:
+    cd frontend && pnpm build
+    go run ./cmd/codjent --workspace .. --frontend-dir frontend/out
+
+# Run static analysis for this module
+lint:
+    golangci-lint run ./...
+
+# Tidy this module's go.mod and go.sum
+tidy:
+    go mod tidy
+
+# Check that this module's go.mod and go.sum are tidy
+tidy-check:
+    go mod tidy -diff

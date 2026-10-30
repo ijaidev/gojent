@@ -1,0 +1,19 @@
+# Run this module's unit tests
+test:
+    go test -race ./...
+
+# Run the database integration tests (requires GOJENT_POSTGRES_DSN)
+test-integration:
+    go test -race -v ./... -run 'TestIntegration|TestConformance'
+
+# Run static analysis for this module
+lint:
+    golangci-lint run ./...
+
+# Tidy this module's go.mod and go.sum
+tidy:
+    go mod tidy
+
+# Check that this module's go.mod and go.sum are tidy
+tidy-check:
+    go mod tidy -diff
