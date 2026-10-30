@@ -17,31 +17,29 @@ jobs:
         with:
           go-version: "1.25.x"
 
-      - name: Create Go workspace
-        run: |
-          go work init . ./codjent ./providers/anthropic ./providers/google ./providers/openai ./examples/google ./stores/postgres ./stores/sqlite
-
-      - name: Check formatting
-        run: test -z "$(gofmt -l .)"
-
-      - name: Vet, build, and test all modules
-        run: |
-          for dir in . providers/anthropic providers/google providers/openai examples/google stores/sqlite stores/postgres codjent; do
-            echo "== $dir =="
-            (cd "$dir" && go vet ./... && go build ./... && go test -race ./...)
-          done
-
-      - name: Lint
-        uses: golangci/golangci-lint-action@v8
+      - uses: extractions/setup-just@v4
         with:
-          version: v2.8.0
-          args: ./... ./providers/anthropic/... ./providers/google/... ./providers/openai/... ./examples/google/... ./stores/postgres/... ./stores/sqlite/... ./codjent/...
+          just-version: "1.58.0"
+
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.8.0/install.sh | sh -s -- -b "$(go env GOPATH)/bin" v2.8.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Run checks
+        run: |
+          just workspace
+          just check
 
   frontend:
     name: Frontend build check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: extractions/setup-just@v4
+        with:
+          just-version: "1.58.0"
 
       - uses: pnpm/action-setup@v4
         with:
@@ -58,10 +56,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        working-directory: codjent/frontend
         env:
           NEXT_TELEMETRY_DISABLED: "1"
-        run: pnpm build
+        run: just --justfile codjent/justfile frontend
 
       - name: Verify committed embedded assets are current
         run: test -z "$(git status --porcelain -- codjent/frontend/out)"
@@ -89,8 +86,11 @@ jobs:
         with:
           go-version: "1.25.x"
 
+      - uses: extractions/setup-just@v4
+        with:
+          just-version: "1.58.0"
+
       - name: Run the storage conformance suite against PostgreSQL
         env:
           GOJENT_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/gojent_test?sslmode=disable
-        working-directory: stores/postgres
-        run: go test -race ./...
+        run: just --justfile stores/postgres/justfile test-integration
