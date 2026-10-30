@@ -9,7 +9,7 @@ Run the backend and the Next.js dev server side by side:
 
 ```sh
 # repository root
-just -d codjent run
+just --justfile codjent/justfile run
 
 # codjent/frontend
 pnpm install

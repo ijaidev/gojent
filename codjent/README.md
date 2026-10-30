@@ -41,7 +41,7 @@ go run ./codjent/cmd/codjent
 Or from the repository root:
 
 ```sh
-just -d codjent run
+just --justfile codjent/justfile run
 ```
 
 A fresh install starts with no providers. Open
@@ -76,7 +76,7 @@ served from port 3000.
 
 ```sh
 # terminal 1
-just -d codjent run
+just --justfile codjent/justfile run
 
 # terminal 2
 cd codjent/frontend
@@ -95,6 +95,12 @@ cd ../..
 go run ./codjent/cmd/codjent \
   --workspace . \
   --frontend-dir codjent/frontend/out
+```
+
+Or from the repository root:
+
+```sh
+just --justfile codjent/justfile web
 ```
 
 Open <http://127.0.0.1:8787>. The backend serves the static files and the API
