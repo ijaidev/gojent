@@ -331,7 +331,6 @@ export function Composer({
         tabIndex={-1}
         className={cn(
           "composer-card relative m-0 min-w-0 rounded-panel border border-line-strong bg-surface p-0 transition-colors duration-fast",
-          large ? "min-h-[148px]" : "min-h-[104px]",
           dragging && "border-accent",
         )}
         onDragEnter={handleDragEnter}
@@ -469,7 +468,7 @@ export function Composer({
           aria-label="Message Codjent"
           className={cn(
             "block w-full resize-none bg-transparent px-4 pt-4 text-body leading-6 text-ink outline-none placeholder:text-faint focus-visible:outline-none disabled:cursor-not-allowed",
-            large ? "min-h-[82px]" : "min-h-[54px]",
+            large ? "min-h-[56px]" : "min-h-[48px]",
           )}
           disabled={busy || sending}
           onChange={(event) => setValue(event.target.value)}
@@ -481,7 +480,7 @@ export function Composer({
           value={value}
         />
 
-        <div className="flex items-center gap-1.5 px-2.5 pb-2.5">
+        <div className="flex items-center gap-1.5 px-2.5 pb-2">
           <button
             aria-label="Attach images"
             className="grid size-11 shrink-0 place-items-center rounded-field text-muted transition-colors duration-fast hover:bg-surface-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 sm:size-9"

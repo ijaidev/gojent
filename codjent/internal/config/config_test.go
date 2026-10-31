@@ -154,8 +154,15 @@ func TestValidation(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("CODJENT_DATA_DIR", t.TempDir())
 
-	if _, err := Parse([]string{"--max-steps", "0"}, io.Discard); err == nil {
-		t.Fatal("expected zero max steps error")
+	unlimited, err := Parse([]string{"--max-steps", "0"}, io.Discard)
+	if err != nil {
+		t.Fatalf("Parse unlimited steps: %v", err)
+	}
+	if unlimited.MaxSteps != 0 {
+		t.Fatalf("max steps = %d, want 0 (unlimited)", unlimited.MaxSteps)
+	}
+	if _, err := Parse([]string{"--max-steps", "-1"}, io.Discard); err == nil {
+		t.Fatal("expected negative max steps error")
 	}
 	if _, err := Parse([]string{"--access-mode", "root"}, io.Discard); err == nil {
 		t.Fatal("expected invalid access mode error")

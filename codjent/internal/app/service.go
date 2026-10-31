@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,8 +15,6 @@ import (
 	"github.com/ijaidev/gojent/tools/exec"
 	"github.com/ijaidev/gojent/tools/fs"
 )
-
-const defaultMaxSteps = 20
 
 const defaultInstructions = `You are codjent, a pragmatic coding agent working in the repository at %s.
 
@@ -117,7 +116,10 @@ func New(cfg Config) (*Service, error) {
 
 	maxSteps := cfg.MaxSteps
 	if maxSteps <= 0 {
-		maxSteps = defaultMaxSteps
+		// The core treats zero as its own small default, so pass an
+		// effectively unbounded budget when codjent is configured for
+		// unlimited steps.
+		maxSteps = math.MaxInt
 	}
 
 	tools, err := newTools(workspace)
