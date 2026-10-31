@@ -3,46 +3,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import {
+  createLiveRun,
+  createPendingRun,
+  finishLiveRun,
+  type LiveRun,
+  reduceRunEvent,
+} from "@/lib/run-state";
+import {
   type AccessMode,
   type AttachmentInput,
   isActiveStatus,
   type Message,
   type Part,
-  type PendingApproval,
   type ProviderInfo,
   type RunEvent,
-  type RunInfo,
   type RunStatus,
   type Thread,
   type ThreadDetail,
-  type ToolCall,
   type UpdateThreadInput,
 } from "@/lib/types";
 import { errorMessage, truncate, upsertThread } from "@/lib/utils";
 
-const SELECTED_THREAD_KEY = "codjent:selected-thread";
+const SELECTED_THREAD_KEY = "codjent:selected-thread:v2";
 
-export interface LiveTool {
-  call: ToolCall;
-  status: "pending" | "approval" | "running" | "done" | "error";
-  output?: string;
-  error?: string;
-  skipped?: boolean;
-  note?: string;
-}
-
-export interface LiveRun {
-  runID: string;
-  threadID: string;
-  status: RunStatus;
-  text: string;
-  thinking: string;
-  tools: LiveTool[];
-  approval: PendingApproval | null;
-  error?: string;
-  reconnecting: boolean;
-  startedAt: number;
-}
+export type { LiveRun, LiveTool } from "@/lib/run-state";
 
 export interface SendOptions {
   provider?: string;
@@ -85,22 +69,6 @@ const savedSelection: SavedSelection = {
     }
   },
 };
-
-function liveFromRun(run: RunInfo): LiveRun {
-  const startedAt = Date.parse(run.created_at);
-  return {
-    runID: run.id,
-    threadID: run.thread_id,
-    status: run.status,
-    text: "",
-    thinking: "",
-    tools: [],
-    approval: run.pending_approval ?? null,
-    error: run.error,
-    reconnecting: false,
-    startedAt: Number.isFinite(startedAt) ? startedAt : Date.now(),
-  };
-}
 
 function messageTitle(text: string, attachments: AttachmentInput[]): string {
   if (text) {
@@ -146,6 +114,7 @@ export function useCodjent() {
   const liveRunsRef = useRef<Record<string, LiveRun>>({});
   const sourcesRef = useRef(new Map<string, EventSource>());
   const terminalRef = useRef(new Set<string>());
+  const aliveRef = useRef(true);
 
   useEffect(() => {
     selectedRef.current = selectedID;
@@ -193,31 +162,9 @@ export function useCodjent() {
         if (!current || current.runID !== runID) {
           return prev;
         }
-        const interruption =
-          status === "canceled"
-            ? "The run was canceled before this tool finished."
-            : status === "failed"
-              ? "The run failed before this tool finished."
-              : "The run ended before this tool finished.";
         return {
           ...prev,
-          [threadID]: {
-            ...current,
-            status,
-            error: runError ?? current.error,
-            approval: null,
-            reconnecting: false,
-            tools: current.tools.map((tool) =>
-              tool.status === "done" || tool.status === "error"
-                ? tool
-                : {
-                    ...tool,
-                    status: "error" as const,
-                    skipped: true,
-                    note: interruption,
-                  },
-            ),
-          },
+          [threadID]: finishLiveRun(current, status, runError),
         };
       });
 
@@ -244,14 +191,10 @@ export function useCodjent() {
           return {
             ...prev,
             [threadID]: {
-              ...current,
-              status,
-              error: runError ?? current.error,
-              text: "",
-              thinking: "",
+              ...finishLiveRun(current, status, runError),
+              textChunks: [],
+              thinkingChunks: [],
               tools: [],
-              approval: null,
-              reconnecting: false,
             },
           };
         });
@@ -292,125 +235,8 @@ export function useCodjent() {
         if (existing && existing.runID !== event.run_id) {
           return prev;
         }
-        const current: LiveRun = existing ?? {
-          runID: event.run_id,
-          threadID,
-          status: "running",
-          text: "",
-          thinking: "",
-          tools: [],
-          approval: null,
-          reconnecting: false,
-          startedAt: Date.now(),
-        };
-
-        let next = current;
-        switch (event.type) {
-          case "run_started":
-            next = {
-              ...current,
-              status: "running",
-              reconnecting: false,
-            };
-            break;
-          case "text_delta":
-            next = { ...current, text: current.text + event.data.text };
-            break;
-          case "thinking_delta":
-            next = {
-              ...current,
-              thinking: current.thinking + event.data.text,
-            };
-            break;
-          case "tool_call": {
-            const call = event.data;
-            const exists = current.tools.some(
-              (tool) => tool.call.id === call.id,
-            );
-            next = {
-              ...current,
-              tools: exists
-                ? current.tools.map((tool) =>
-                    tool.call.id === call.id ? { ...tool, call } : tool,
-                  )
-                : [...current.tools, { call, status: "pending" as const }],
-            };
-            break;
-          }
-          case "approval_required": {
-            const approval = event.data.approval;
-            next = {
-              ...current,
-              status: "waiting_approval",
-              approval,
-              tools: current.tools.map((tool) =>
-                tool.call.id === approval.tool_call_id
-                  ? { ...tool, status: "approval" }
-                  : tool,
-              ),
-            };
-            break;
-          }
-          case "approval_resolved": {
-            const resolved = event.data;
-            const toolID =
-              current.approval?.id === resolved.approval_id
-                ? current.approval.tool_call_id
-                : null;
-            next = {
-              ...current,
-              status: "running",
-              approval:
-                current.approval?.id === resolved.approval_id
-                  ? null
-                  : current.approval,
-              tools: current.tools.map((tool) =>
-                tool.call.id === toolID
-                  ? {
-                      ...tool,
-                      status: resolved.allow ? "running" : "error",
-                      note: resolved.note,
-                    }
-                  : tool,
-              ),
-            };
-            break;
-          }
-          case "tool_result": {
-            const result = event.data;
-            const status = result.error
-              ? "error"
-              : result.skipped
-                ? "done"
-                : "done";
-            const existingTool = current.tools.find(
-              (tool) => tool.call.id === result.id,
-            );
-            const updated: LiveTool = {
-              call: existingTool?.call ?? {
-                id: result.id,
-                name: result.name,
-                arguments: "",
-              },
-              status,
-              output: result.output,
-              error: result.error,
-              skipped: result.skipped,
-            };
-            next = {
-              ...current,
-              tools: existingTool
-                ? current.tools.map((tool) =>
-                    tool.call.id === result.id ? updated : tool,
-                  )
-                : [...current.tools, updated],
-            };
-            break;
-          }
-          default:
-            break;
-        }
-        return { ...prev, [threadID]: next };
+        const current = existing ?? createPendingRun(event.run_id, threadID);
+        return { ...prev, [threadID]: reduceRunEvent(current, event) };
       });
     },
     [finalizeRun],
@@ -606,7 +432,7 @@ export function useCodjent() {
         });
 
         const run = await api.startMessage(threadIDValue, text, attachments);
-        const live = liveFromRun(run);
+        const live = createLiveRun(run);
         terminalRef.current.delete(run.id);
         setLiveRuns((prev) => ({ ...prev, [threadIDValue]: live }));
         openStream(run.id, threadIDValue);
@@ -724,6 +550,12 @@ export function useCodjent() {
       setError(null);
       try {
         await api.resolveApproval(runID, approvalID, allow, note);
+        const resolved: RunEvent = {
+          id: 0,
+          run_id: runID,
+          type: "approval_resolved",
+          data: { approval_id: approvalID, allow, note },
+        };
         setLiveRuns((prev) => {
           const entry = Object.entries(prev).find(
             ([, live]) => live.runID === runID,
@@ -732,24 +564,7 @@ export function useCodjent() {
             return prev;
           }
           const [threadID, live] = entry;
-          const toolID =
-            live.approval?.id === approvalID
-              ? live.approval.tool_call_id
-              : null;
-          return {
-            ...prev,
-            [threadID]: {
-              ...live,
-              status:
-                live.status === "waiting_approval" ? "running" : live.status,
-              approval: live.approval?.id === approvalID ? null : live.approval,
-              tools: live.tools.map((tool) =>
-                tool.call.id === toolID
-                  ? { ...tool, status: allow ? "running" : "error" }
-                  : tool,
-              ),
-            },
-          };
+          return { ...prev, [threadID]: reduceRunEvent(live, resolved) };
         });
         return true;
       } catch (approvalError) {
@@ -771,52 +586,66 @@ export function useCodjent() {
     }
   }, []);
 
-  useEffect(() => {
-    let alive = true;
-
-    const boot = async () => {
+  const boot = useCallback(
+    async (preserveSelection = false) => {
+      setBooting(true);
+      setError(null);
       try {
         const [providerList, threadList, health] = await Promise.all([
           api.providers(),
           api.listThreads(),
           api.health(),
         ]);
-        if (!alive) {
+        if (!aliveRef.current) {
           return;
         }
         setProviders(providerList);
         setThreads(threadList);
         setWorkspace(health.workspace);
 
+        if (preserveSelection && selectedRef.current) {
+          return;
+        }
+
         const saved = savedSelection.read();
         const initial =
-          threadList.find((thread) => thread.id === saved) ??
-          threadList[0] ??
-          null;
+          threadList.find((thread) => thread.id === saved) ?? null;
         if (initial) {
           await loadThread(initial.id);
+        } else {
+          commitSelection(null);
+          detailRef.current = null;
+          setDetail(null);
         }
       } catch (bootError) {
-        if (alive) {
+        if (aliveRef.current) {
           setError(errorMessage(bootError));
         }
       } finally {
-        if (alive) {
+        if (aliveRef.current) {
           setBooting(false);
         }
       }
-    };
+    },
+    [commitSelection, loadThread],
+  );
 
+  useEffect(() => {
+    aliveRef.current = true;
     void boot();
 
     return () => {
-      alive = false;
+      aliveRef.current = false;
       for (const source of sourcesRef.current.values()) {
         source.close();
       }
       sourcesRef.current.clear();
     };
-  }, [loadThread]);
+  }, [boot]);
+
+  const retry = useCallback(() => {
+    void boot(true);
+  }, [boot]);
 
   useEffect(() => {
     const active = detail?.active_run;
@@ -835,7 +664,7 @@ export function useCodjent() {
       if (current && isActiveStatus(current.status)) {
         return prev;
       }
-      return { ...prev, [active.thread_id]: liveFromRun(active) };
+      return { ...prev, [active.thread_id]: createLiveRun(active) };
     });
     openStream(active.id, active.thread_id);
   }, [detail, openStream]);
@@ -851,6 +680,7 @@ export function useCodjent() {
     loadingThread,
     sending,
     error,
+    retry,
     clearError: () => setError(null),
     selectThread,
     startNewThread,

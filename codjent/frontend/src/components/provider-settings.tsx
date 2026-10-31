@@ -5,7 +5,6 @@ import {
   ArrowLeft,
   CircleAlert,
   KeyRound,
-  Loader2,
   Pencil,
   Plus,
   Server,
@@ -16,6 +15,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { CodjentMark, CodjentWordmark } from "@/components/brand";
 import { Spinner } from "@/components/spinner";
+import { Button } from "@/components/ui/button";
+import { fieldClass, labelClass } from "@/components/ui/form";
+import { IconButton } from "@/components/ui/icon-button";
 import { api } from "@/lib/api";
 import { providerFormatInfo, providerFormats } from "@/lib/providers";
 import type {
@@ -25,12 +27,6 @@ import type {
   ProviderHeader,
 } from "@/lib/types";
 import { cn, errorMessage } from "@/lib/utils";
-
-const fieldClass =
-  "h-9 w-full rounded-lg border border-line bg-surface px-2.5 text-[12px] text-ink outline-none transition placeholder:text-faint focus:border-line-strong focus:ring-2 focus:ring-accent/10 disabled:cursor-not-allowed disabled:opacity-60";
-
-const labelClass =
-  "mb-1.5 block text-[10px] font-medium uppercase tracking-[0.12em] text-faint";
 
 interface ModelRow {
   key: string;
@@ -111,19 +107,19 @@ export function ProviderSettings() {
 
   return (
     <div className="min-h-dvh overflow-y-auto bg-app text-ink">
-      <header className="sticky top-0 z-20 border-b border-line bg-app/90 backdrop-blur">
-        <div className="mx-auto flex h-[60px] w-full max-w-4xl items-center gap-3 px-4 sm:px-6">
+      <header className="sticky top-0 z-20 border-b border-line bg-app">
+        <div className="mx-auto flex h-[52px] w-full max-w-4xl items-center gap-3 px-4 sm:px-6">
           <Link
-            aria-label="Back to codjent"
-            className="grid size-8 place-items-center rounded-lg text-muted transition hover:bg-surface-muted hover:text-ink"
+            aria-label="Back to Codjent"
+            className="grid size-11 shrink-0 place-items-center rounded-field text-muted sm:size-8 transition-colors duration-fast hover:bg-surface-muted hover:text-ink"
             href="/"
           >
             <ArrowLeft className="size-4" />
           </Link>
-          <CodjentMark className="size-7 text-ink" />
+          <CodjentMark className="size-6" />
           <CodjentWordmark />
           <span className="text-line-strong">/</span>
-          <span className="min-w-0 truncate text-[12px] font-medium">
+          <span className="min-w-0 truncate text-body-sm font-medium">
             Provider settings
           </span>
         </div>
@@ -132,35 +128,37 @@ export function ProviderSettings() {
       <main className="mx-auto w-full max-w-4xl px-4 pb-20 pt-8 sm:px-6">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-[24px] font-semibold tracking-[-0.035em]">
+            <h1 className="text-page font-semibold tracking-[-0.02em]">
               Providers
             </h1>
-            <p className="mt-1.5 max-w-xl text-[12px] leading-5 text-muted">
-              Connect the model endpoints codjent can use. Credentials, headers,
-              and model lists are stored locally in SQLite and never leave this
-              machine except in requests to the endpoint you configure.
+            <p className="mt-1.5 max-w-xl text-body-sm leading-5 text-muted">
+              Connect the model endpoints Codjent can use. Credentials stay on
+              this machine and are only sent to the endpoint you configure.
             </p>
           </div>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-2 text-[11px] font-medium text-app transition hover:opacity-85"
+          <Button
+            className="h-11 sm:h-9"
+            icon={Plus}
             onClick={() => setEditor("new")}
+            variant="primary"
           >
-            <Plus className="size-3.5" />
             Add provider
-          </button>
+          </Button>
         </div>
 
         {error ? (
-          <div className="mt-5 flex items-start gap-2 rounded-xl border border-danger/20 bg-danger-soft px-3 py-2.5 text-danger">
+          <div
+            className="mt-5 flex items-start gap-2 rounded-panel border border-danger/20 bg-danger-soft px-3 py-2.5 text-danger"
+            role="alert"
+          >
             <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
-            <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[11px] leading-5">
+            <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-body-sm leading-5">
               {error}
             </p>
             <button
-              type="button"
-              className="rounded px-1 text-[10.5px] font-medium opacity-70 transition hover:opacity-100"
+              className="rounded px-1 text-meta font-medium opacity-70 transition hover:opacity-100"
               onClick={() => void refresh()}
+              type="button"
             >
               Retry
             </button>
@@ -169,7 +167,7 @@ export function ProviderSettings() {
 
         {configs === null ? (
           error ? null : (
-            <div className="mt-16 flex items-center justify-center gap-2 text-[11px] text-muted">
+            <div className="mt-16 flex items-center justify-center gap-2 text-body-sm text-muted">
               <Spinner className="size-3.5" />
               Loading providers
             </div>
@@ -189,7 +187,7 @@ export function ProviderSettings() {
           </div>
         )}
 
-        <div className="mt-8 rounded-xl border border-line bg-surface-muted/50 px-4 py-3 text-[10.5px] leading-5 text-faint">
+        <div className="mt-8 rounded-panel border border-line bg-surface-muted/50 px-4 py-3 text-meta leading-5 text-faint">
           <span className="font-medium text-muted">Tip:</span> local endpoints
           such as Ollama, LM Studio, and llama.cpp usually work with the OpenAI
           Chat Completions format and may not need an API key. Hosted providers
@@ -242,34 +240,34 @@ function ProviderCard({
     config.default_model;
 
   return (
-    <article className="rounded-2xl border border-line bg-surface p-4 sm:p-5">
+    <article className="rounded-panel border border-line bg-surface p-4">
       <div className="flex flex-wrap items-start gap-3">
-        <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-surface-muted text-muted">
+        <div className="grid size-9 shrink-0 place-items-center rounded-field bg-surface-muted text-muted">
           <Server className="size-4" />
         </div>
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <h2 className="min-w-0 truncate text-[14px] font-semibold">
+            <h2 className="min-w-0 truncate text-body font-semibold">
               {config.name}
             </h2>
-            <span className="rounded-full border border-line bg-surface-muted px-2 py-0.5 text-[9px] font-medium uppercase tracking-[0.1em] text-muted">
+            <span className="rounded-chip border border-line bg-surface-muted px-2 py-0.5 text-meta text-muted">
               {format.shortLabel}
             </span>
             <span
               className={cn(
-                "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-medium",
+                "inline-flex items-center gap-1 rounded-chip border px-2 py-0.5 text-meta",
                 config.api_key_set
                   ? "border-success/20 bg-success-soft text-success"
                   : "border-line bg-surface-muted text-faint",
               )}
             >
-              <KeyRound className="size-2.5" />
+              <KeyRound className="size-3" />
               {config.api_key_set ? "Key stored" : "No key"}
             </span>
           </div>
 
-          <dl className="mt-2 grid gap-1 text-[10.5px] text-faint sm:grid-cols-2">
+          <dl className="mt-2 grid gap-1 text-meta text-faint sm:grid-cols-2">
             <div className="flex min-w-0 gap-1">
               <dt>Endpoint</dt>
               <dd className="min-w-0 truncate font-mono text-muted">
@@ -282,48 +280,49 @@ function ProviderCard({
                 {defaultModel || "none"}
               </dd>
             </div>
-            <div className="flex min-w-0 gap-1">
-              <dt>Headers</dt>
-              <dd className="min-w-0 truncate font-mono text-muted">
-                {config.headers?.length
-                  ? config.headers.map((header) => header.name).join(", ")
-                  : "none"}
-              </dd>
-            </div>
+            {config.headers?.length ? (
+              <div className="flex min-w-0 gap-1">
+                <dt>Headers</dt>
+                <dd className="min-w-0 truncate font-mono text-muted">
+                  {config.headers.map((header) => header.name).join(", ")}
+                </dd>
+              </div>
+            ) : null}
           </dl>
         </div>
 
         <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 text-[10.5px] font-medium text-ink transition hover:bg-surface-muted"
+          <Button
+            className="h-11 sm:h-8"
+            icon={Pencil}
             onClick={onEdit}
+            size="sm"
+            variant="secondary"
           >
-            <Pencil className="size-3" />
             Edit
-          </button>
-          <button
-            type="button"
-            aria-label={`Delete ${config.name}`}
-            className="grid size-7 place-items-center rounded-lg text-muted transition hover:bg-danger-soft hover:text-danger"
+          </Button>
+          <IconButton
+            className="size-11 sm:size-8"
+            icon={Trash2}
+            label={`Delete ${config.name}`}
             onClick={onDelete}
-          >
-            <Trash2 className="size-3.5" />
-          </button>
+            size="sm"
+            tone="danger"
+          />
         </div>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1.5 border-t border-line pt-3">
         {config.models.length === 0 ? (
-          <span className="text-[10.5px] leading-5 text-faint">
-            No models yet. Add one so codjent can start threads with this
+          <span className="text-meta leading-5 text-faint">
+            No models yet. Add one so Codjent can start threads with this
             provider.
           </span>
         ) : (
           config.models.map((model) => (
             <span
               className={cn(
-                "inline-flex min-w-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-[10px]",
+                "inline-flex min-w-0 items-center gap-1.5 rounded-chip border px-2 py-1 text-meta",
                 model.id === config.default_model
                   ? "border-accent/20 bg-accent-soft text-accent"
                   : "border-line bg-surface-muted text-muted",
@@ -333,7 +332,7 @@ function ProviderCard({
               <span className="max-w-[160px] truncate font-medium">
                 {model.name}
               </span>
-              <span className="max-w-[200px] truncate font-mono text-[9px] opacity-70">
+              <span className="max-w-[200px] truncate font-mono text-meta opacity-70">
                 {model.id}
               </span>
             </span>
@@ -346,29 +345,20 @@ function ProviderCard({
 
 function EmptyProviders({ onAdd }: { onAdd: () => void }) {
   return (
-    <div className="mt-6 rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-      <div className="mx-auto grid size-11 place-items-center rounded-2xl bg-accent-soft text-accent">
-        <Server className="size-5" />
-      </div>
-      <h2 className="mt-3 text-[15px] font-semibold">
-        Add your first provider
-      </h2>
-      <p className="mx-auto mt-1.5 max-w-md text-[11.5px] leading-5 text-muted">
-        Give codjent an endpoint, an optional API key, and the models it may
-        use. Everything is stored in the local codjent database.
+    <div className="mt-6 rounded-panel border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+      <Server className="mx-auto size-5 text-accent" />
+      <h2 className="mt-3 text-title font-semibold">Add your first provider</h2>
+      <p className="mx-auto mt-1.5 max-w-md text-body-sm leading-5 text-muted">
+        Give Codjent an endpoint, an optional API key, and the models it may
+        use. Everything stays on this machine.
       </p>
-      <button
-        type="button"
-        className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-2 text-[11px] font-medium text-app transition hover:opacity-85"
-        onClick={onAdd}
-      >
-        <Plus className="size-3.5" />
+      <Button className="mt-4" icon={Plus} onClick={onAdd} variant="primary">
         Add provider
-      </button>
+      </Button>
       <div className="mt-6 flex flex-wrap justify-center gap-1.5">
         {providerFormats.map((format) => (
           <span
-            className="rounded-full border border-line bg-surface-muted px-2.5 py-1 text-[10px] text-muted"
+            className="rounded-full border border-line bg-surface-muted px-2.5 py-1 text-meta text-muted"
             key={format.value}
           >
             {format.label}
@@ -575,14 +565,14 @@ function ProviderEditorDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px] transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0" />
-        <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(760px,calc(100dvh-2rem))] w-[min(640px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-line bg-surface text-ink shadow-[0_24px_80px_-24px_rgba(28,25,23,0.45)] outline-none transition duration-150 data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0">
+        <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/30 transition-opacity duration-base data-ending-style:opacity-0 data-starting-style:opacity-0" />
+        <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(760px,calc(100dvh-2rem))] w-[min(640px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden overscroll-contain rounded-dialog border border-line bg-surface text-ink shadow-overlay outline-none transition duration-base data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0">
           <div className="flex items-start justify-between border-b border-line px-5 py-4">
             <div>
-              <Dialog.Title className="text-[14px] font-semibold">
+              <Dialog.Title className="text-title font-semibold">
                 {config ? "Edit provider" : "Add provider"}
               </Dialog.Title>
-              <Dialog.Description className="mt-1 text-[11px] leading-5 text-faint">
+              <Dialog.Description className="mt-1 text-meta leading-5 text-faint">
                 {config
                   ? "Update the endpoint, credentials, headers, or model list."
                   : "Choose the wire format this endpoint speaks, then add its models."}
@@ -590,7 +580,7 @@ function ProviderEditorDialog({
             </div>
             <Dialog.Close
               aria-label="Close provider editor"
-              className="grid size-7 place-items-center rounded-lg text-muted transition hover:bg-surface-muted hover:text-ink"
+              className="grid size-11 shrink-0 place-items-center rounded-field text-muted sm:size-8 transition hover:bg-surface-muted hover:text-ink"
               disabled={disabled}
             >
               <X className="size-4" />
@@ -599,7 +589,7 @@ function ProviderEditorDialog({
 
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
             <div className="space-y-4">
-              <div className="grid gap-3 sm:grid-cols-[1fr_220px]">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_260px]">
                 <label className="block">
                   <span className={labelClass}>Name</span>
                   <input
@@ -629,7 +619,7 @@ function ProviderEditorDialog({
                 </label>
               </div>
 
-              <p className="rounded-lg border border-line bg-surface-muted/60 px-3 py-2 text-[10.5px] leading-4 text-muted">
+              <p className="rounded-field border border-line bg-surface-muted/60 px-3 py-2 text-meta leading-4 text-muted">
                 {formatInfo.description}
               </p>
 
@@ -643,7 +633,7 @@ function ProviderEditorDialog({
                   spellCheck={false}
                   value={baseURL}
                 />
-                <span className="mt-1 block text-[10px] leading-4 text-faint">
+                <span className="mt-1 block text-meta leading-4 text-faint">
                   Leave blank to use the provider default. HTTP and HTTPS are
                   supported.
                 </span>
@@ -668,7 +658,7 @@ function ProviderEditorDialog({
                   />
                 </label>
                 {config?.api_key_set ? (
-                  <label className="mt-2 flex items-center gap-2 text-[10.5px] text-muted">
+                  <label className="mt-2 flex items-center gap-2 text-meta text-muted">
                     <input
                       checked={clearAPIKey}
                       className="size-3.5 accent-[var(--danger)]"
@@ -684,7 +674,7 @@ function ProviderEditorDialog({
                     Remove the stored key when saving
                   </label>
                 ) : (
-                  <span className="mt-1 block text-[10px] leading-4 text-faint">
+                  <span className="mt-1 block text-meta leading-4 text-faint">
                     Keys are stored in the local database and only sent to this
                     endpoint.
                   </span>
@@ -694,19 +684,20 @@ function ProviderEditorDialog({
               <div>
                 <div className="flex items-center justify-between gap-2">
                   <span className={labelClass}>Headers</span>
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1 rounded-lg border border-line-strong bg-surface px-2 py-1 text-[10px] font-medium text-ink transition hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  <Button
+                    className="h-11 sm:h-8"
                     disabled={disabled}
+                    icon={Plus}
                     onClick={addHeader}
+                    size="sm"
+                    variant="secondary"
                   >
-                    <Plus className="size-3" />
                     Add header
-                  </button>
+                  </Button>
                 </div>
 
                 {headers.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-line-strong px-3 py-3 text-center text-[10.5px] leading-4 text-faint">
+                  <p className="rounded-field border border-dashed border-line-strong px-3 py-3 text-center text-meta leading-4 text-faint">
                     No custom headers. Add one when the endpoint needs a gateway
                     or session header.
                   </p>
@@ -766,7 +757,7 @@ function ProviderEditorDialog({
                             <button
                               type="button"
                               aria-label={`Remove header ${index + 1}`}
-                              className="grid size-9 shrink-0 place-items-center rounded-lg border border-line text-muted transition hover:border-danger/30 hover:bg-danger-soft hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
+                              className="grid size-9 shrink-0 place-items-center rounded-field border border-line text-muted transition hover:border-danger/30 hover:bg-danger-soft hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
                               disabled={disabled}
                               onClick={() => removeHeader(index)}
                             >
@@ -774,7 +765,7 @@ function ProviderEditorDialog({
                             </button>
                           </div>
                           {templateError ? (
-                            <p className="text-[10px] leading-4 text-danger">
+                            <p className="text-meta leading-4 text-danger">
                               {templateError}
                             </p>
                           ) : null}
@@ -785,16 +776,16 @@ function ProviderEditorDialog({
                 )}
 
                 {duplicateHeaderNames.length > 0 ? (
-                  <p className="mt-1.5 text-[10px] leading-4 text-danger">
+                  <p className="mt-1.5 text-meta leading-4 text-danger">
                     Duplicate header names:{" "}
                     {Array.from(new Set(duplicateHeaderNames)).join(", ")}
                   </p>
                 ) : incompleteHeader ? (
-                  <p className="mt-1.5 text-[10px] leading-4 text-danger">
+                  <p className="mt-1.5 text-meta leading-4 text-danger">
                     Every header needs a name.
                   </p>
                 ) : (
-                  <p className="mt-1.5 text-[10px] leading-4 text-faint">
+                  <p className="mt-1.5 text-meta leading-4 text-faint">
                     Static values are sent as-is. Dynamic values are resolved
                     for each run; use <code>{"{{session.id}}"}</code> for the
                     current conversation ID.
@@ -802,7 +793,7 @@ function ProviderEditorDialog({
                 )}
 
                 {format === "google" ? (
-                  <p className="mt-1.5 text-[10px] leading-4 text-faint">
+                  <p className="mt-1.5 text-meta leading-4 text-faint">
                     Google sets <code>x-goog-api-key</code> itself, so it cannot
                     be overridden here.
                   </p>
@@ -812,19 +803,20 @@ function ProviderEditorDialog({
               <div>
                 <div className="flex items-center justify-between gap-2">
                   <span className={labelClass}>Models</span>
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1 rounded-lg border border-line-strong bg-surface px-2 py-1 text-[10px] font-medium text-ink transition hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  <Button
+                    className="h-11 sm:h-8"
                     disabled={disabled}
+                    icon={Plus}
                     onClick={addModel}
+                    size="sm"
+                    variant="secondary"
                   >
-                    <Plus className="size-3" />
                     Add model
-                  </button>
+                  </Button>
                 </div>
 
                 {models.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-line-strong px-3 py-3 text-center text-[10.5px] leading-4 text-faint">
+                  <p className="rounded-field border border-dashed border-line-strong px-3 py-3 text-center text-meta leading-4 text-faint">
                     No models configured. Add at least one to run threads.
                   </p>
                 ) : (
@@ -858,7 +850,7 @@ function ProviderEditorDialog({
                         <button
                           type="button"
                           aria-label={`Remove model ${index + 1}`}
-                          className="grid size-9 shrink-0 place-items-center rounded-lg border border-line text-muted transition hover:border-danger/30 hover:bg-danger-soft hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
+                          className="grid size-9 shrink-0 place-items-center rounded-field border border-line text-muted transition hover:border-danger/30 hover:bg-danger-soft hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
                           disabled={disabled}
                           onClick={() => removeModel(index)}
                         >
@@ -870,16 +862,16 @@ function ProviderEditorDialog({
                 )}
 
                 {duplicateIDs.length > 0 ? (
-                  <p className="mt-1.5 text-[10px] leading-4 text-danger">
+                  <p className="mt-1.5 text-meta leading-4 text-danger">
                     Duplicate model IDs:{" "}
                     {Array.from(new Set(duplicateIDs)).join(", ")}
                   </p>
                 ) : incompleteModel ? (
-                  <p className="mt-1.5 text-[10px] leading-4 text-danger">
+                  <p className="mt-1.5 text-meta leading-4 text-danger">
                     Every model needs an ID.
                   </p>
                 ) : (
-                  <p className="mt-1.5 text-[10px] leading-4 text-faint">
+                  <p className="mt-1.5 text-meta leading-4 text-faint">
                     The ID is the exact name the endpoint expects. The display
                     name is only shown in codjent.
                   </p>
@@ -905,7 +897,7 @@ function ProviderEditorDialog({
                     ))
                   )}
                 </select>
-                <span className="mt-1 block text-[10px] leading-4 text-faint">
+                <span className="mt-1 block text-meta leading-4 text-faint">
                   New threads start with this model. You can switch models per
                   thread later.
                 </span>
@@ -914,29 +906,29 @@ function ProviderEditorDialog({
           </div>
 
           {error ? (
-            <div className="border-t border-danger/20 bg-danger-soft px-5 py-2.5 text-[11px] leading-5 text-danger">
+            <div className="border-t border-danger/20 bg-danger-soft px-5 py-2.5 text-meta leading-5 text-danger">
               {error}
             </div>
           ) : null}
 
           <div className="flex items-center justify-between gap-2 border-t border-line bg-surface-muted/40 px-5 py-3">
-            <span className="hidden text-[10px] text-faint sm:block">
+            <span className="hidden text-meta text-faint sm:block">
               {config
                 ? "Changes apply to new runs."
                 : "You can add models later."}
             </span>
             <div className="ml-auto flex items-center gap-2">
-              <button
-                type="button"
-                className="rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-[11px] font-medium text-ink transition hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50"
+              <Button
+                className="h-11 sm:h-8"
                 disabled={saving}
                 onClick={() => onOpenChange(false)}
+                size="sm"
+                variant="secondary"
               >
                 Cancel
-              </button>
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-1.5 text-[11px] font-medium text-app transition hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50"
+              </Button>
+              <Button
+                className="h-11 sm:h-8"
                 disabled={
                   saving ||
                   !name.trim() ||
@@ -946,11 +938,13 @@ function ProviderEditorDialog({
                   incompleteHeader ||
                   Boolean(invalidDynamicHeader)
                 }
+                loading={saving}
                 onClick={() => void save()}
+                size="sm"
+                variant="primary"
               >
-                {saving ? <Loader2 className="size-3.5 animate-spin" /> : null}
                 {config ? "Save changes" : "Add provider"}
-              </button>
+              </Button>
             </div>
           </div>
         </Dialog.Popup>
@@ -1003,60 +997,58 @@ function DeleteProviderDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px] transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0" />
-        <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-line bg-surface text-ink shadow-[0_24px_80px_-24px_rgba(28,25,23,0.45)] outline-none transition duration-150 data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0">
+        <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/30 transition-opacity duration-base data-ending-style:opacity-0 data-starting-style:opacity-0" />
+        <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-hidden overscroll-contain rounded-dialog border border-line bg-surface text-ink shadow-overlay outline-none transition duration-base data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0">
           <div className="flex items-start justify-between border-b border-line px-5 py-4">
             <div>
-              <Dialog.Title className="text-[14px] font-semibold">
+              <Dialog.Title className="text-title font-semibold">
                 Delete {config?.name ?? "provider"}?
               </Dialog.Title>
-              <Dialog.Description className="mt-1 text-[11px] leading-5 text-faint">
+              <Dialog.Description className="mt-1 text-meta leading-5 text-faint">
                 The provider and its stored key will be removed. This cannot be
                 undone.
               </Dialog.Description>
             </div>
             <Dialog.Close
               aria-label="Close delete dialog"
-              className="grid size-7 place-items-center rounded-lg text-muted transition hover:bg-surface-muted hover:text-ink"
+              className="grid size-11 shrink-0 place-items-center rounded-field text-muted sm:size-8 transition hover:bg-surface-muted hover:text-ink"
               disabled={deleting}
             >
               <X className="size-4" />
             </Dialog.Close>
           </div>
 
-          <div className="px-5 py-4 text-[11px] leading-5 text-muted">
+          <div className="px-5 py-4 text-meta leading-5 text-muted">
             A provider cannot be deleted while any thread still references it.
             Delete or move those threads first.
           </div>
 
           {error ? (
-            <div className="border-t border-danger/20 bg-danger-soft px-5 py-2.5 text-[11px] leading-5 text-danger">
+            <div className="border-t border-danger/20 bg-danger-soft px-5 py-2.5 text-meta leading-5 text-danger">
               {error}
             </div>
           ) : null}
 
           <div className="flex items-center justify-end gap-2 border-t border-line bg-surface-muted/40 px-5 py-3">
-            <button
-              type="button"
-              className="rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-[11px] font-medium text-ink transition hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50"
+            <Button
+              className="h-11 sm:h-8"
               disabled={deleting}
               onClick={() => onOpenChange(false)}
+              size="sm"
+              variant="secondary"
             >
               Keep provider
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-danger px-3 py-1.5 text-[11px] font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={deleting}
+            </Button>
+            <Button
+              className="h-11 sm:h-8"
+              icon={Trash2}
+              loading={deleting}
               onClick={() => void remove()}
+              size="sm"
+              variant="danger"
             >
-              {deleting ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <Trash2 className="size-3.5" />
-              )}
               Delete provider
-            </button>
+            </Button>
           </div>
         </Dialog.Popup>
       </Dialog.Portal>

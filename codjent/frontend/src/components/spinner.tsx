@@ -9,9 +9,15 @@ export function Spinner({
   label?: string;
 }) {
   return (
-    <Loader2
-      aria-label={label}
-      className={cn("size-3.5 animate-spin", className)}
-    />
+    <output
+      aria-live="polite"
+      className={cn(
+        "inline-flex size-3.5 shrink-0 items-center justify-center",
+        className,
+      )}
+    >
+      <Loader2 aria-hidden="true" className="size-full animate-spin" />
+      <span className="sr-only">{label}</span>
+    </output>
   );
 }

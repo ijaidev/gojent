@@ -44,9 +44,9 @@ export function ImageLightbox({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-[3px] transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-none" />
+        <Dialog.Backdrop className="fixed inset-0 z-[60] bg-black/80 transition-opacity duration-base data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-none" />
         <Dialog.Popup
-          className="fixed left-1/2 top-1/2 z-[60] flex h-[min(92dvh,900px)] w-[min(94vw,1240px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden overscroll-contain rounded-2xl border border-white/10 bg-[#111110] text-white shadow-[0_32px_100px_-20px_rgba(0,0,0,0.7)] outline-none transition duration-150 data-ending-style:scale-[0.985] data-ending-style:opacity-0 data-starting-style:scale-[0.985] data-starting-style:opacity-0 motion-reduce:transition-none"
+          className="fixed left-1/2 top-1/2 z-[60] flex h-[min(92dvh,900px)] w-[min(94vw,1240px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden overscroll-contain rounded-dialog border border-white/10 bg-[#111110] text-white shadow-overlay outline-none transition duration-base data-ending-style:scale-[0.985] data-ending-style:opacity-0 data-starting-style:scale-[0.985] data-starting-style:opacity-0 motion-reduce:transition-none"
           initialFocus={closeButtonRef}
           onKeyDown={(event) => {
             if (event.key === "ArrowLeft") {
@@ -61,10 +61,10 @@ export function ImageLightbox({
         >
           <div className="flex shrink-0 items-center gap-3 border-b border-white/10 px-4 py-3">
             <div className="min-w-0">
-              <Dialog.Title className="truncate text-[12.5px] font-medium text-white">
+              <Dialog.Title className="truncate text-body-sm font-medium text-white">
                 {current?.filename || "Image"}
               </Dialog.Title>
-              <Dialog.Description className="text-[10px] text-white/55">
+              <Dialog.Description className="text-meta text-white/60">
                 {multiple
                   ? `${currentIndex + 1} of ${images.length}`
                   : "Image preview"}
@@ -74,7 +74,7 @@ export function ImageLightbox({
               {current ? (
                 <a
                   aria-label={`Download ${current.filename || "image"}`}
-                  className="grid size-8 place-items-center rounded-lg text-white/65 transition hover:bg-white/10 hover:text-white"
+                  className="grid size-10 shrink-0 place-items-center rounded-field text-white/65 sm:size-8 transition hover:bg-white/10 hover:text-white"
                   download={current.filename || "image"}
                   href={current.url}
                 >
@@ -83,7 +83,7 @@ export function ImageLightbox({
               ) : null}
               <Dialog.Close
                 aria-label="Close image preview"
-                className="grid size-8 place-items-center rounded-lg text-white/65 transition hover:bg-white/10 hover:text-white"
+                className="grid size-10 shrink-0 place-items-center rounded-field text-white/65 sm:size-8 transition hover:bg-white/10 hover:text-white"
                 ref={closeButtonRef}
               >
                 <X className="size-4" />
@@ -95,7 +95,7 @@ export function ImageLightbox({
             {multiple ? (
               <button
                 aria-label="Previous image"
-                className="absolute left-2 top-1/2 z-10 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-white/10 bg-black/45 text-white/80 backdrop-blur transition hover:bg-black/70 hover:text-white sm:left-4"
+                className="absolute left-2 top-1/2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full sm:size-10 border border-white/10 bg-black/45 text-white/80 backdrop-blur transition hover:bg-black/70 hover:text-white sm:left-4"
                 onClick={() => go(-1)}
                 type="button"
               >
@@ -107,7 +107,7 @@ export function ImageLightbox({
               // biome-ignore lint/performance/noImgElement: the full-resolution preview uses data and provider URLs directly
               <img
                 alt={current.filename || "Image preview"}
-                className="max-h-full max-w-full rounded-lg object-contain"
+                className="max-h-full max-w-full rounded-field object-contain"
                 height={900}
                 src={current.url}
                 width={1400}
@@ -117,7 +117,7 @@ export function ImageLightbox({
             {multiple ? (
               <button
                 aria-label="Next image"
-                className="absolute right-2 top-1/2 z-10 grid size-10 -translate-y-1/2 place-items-center rounded-full border border-white/10 bg-black/45 text-white/80 backdrop-blur transition hover:bg-black/70 hover:text-white sm:right-4"
+                className="absolute right-2 top-1/2 z-10 grid size-11 -translate-y-1/2 place-items-center rounded-full sm:size-10 border border-white/10 bg-black/45 text-white/80 backdrop-blur transition hover:bg-black/70 hover:text-white sm:right-4"
                 onClick={() => go(1)}
                 type="button"
               >
@@ -133,7 +133,7 @@ export function ImageLightbox({
                   aria-current={imageIndex === currentIndex}
                   aria-label={`Show image ${imageIndex + 1}${image.filename ? `: ${image.filename}` : ""}`}
                   className={cn(
-                    "size-11 shrink-0 overflow-hidden rounded-md border transition",
+                    "size-11 shrink-0 overflow-hidden rounded-field border transition",
                     imageIndex === currentIndex
                       ? "border-white/80 opacity-100"
                       : "border-white/10 opacity-55 hover:opacity-90",
