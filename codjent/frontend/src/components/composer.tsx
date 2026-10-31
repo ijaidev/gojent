@@ -60,6 +60,7 @@ interface ComposerProps {
   liveStatus?: RunStatus;
   large?: boolean;
   autoFocus?: boolean;
+  initialValue?: string;
   onSend: SendMessage;
   onStop: () => void;
   onUpdateThread: (input: UpdateThreadInput) => Promise<Thread | null>;
@@ -77,11 +78,12 @@ export function Composer({
   liveStatus,
   large = false,
   autoFocus = false,
+  initialValue = "",
   onSend,
   onStop,
   onUpdateThread,
 }: ComposerProps) {
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initialValue);
   const [updating, setUpdating] = useState(false);
   const [draftProvider, setDraftProvider] = useState(providers[0]?.id ?? "");
   const [draftModel, setDraftModel] = useState(

@@ -39,6 +39,16 @@ interface HeaderRow {
   name: string;
   value: string;
   dynamic: boolean;
+  custom?: boolean;
+}
+
+const dynamicHeaderPresets = [
+  { value: "{{session.id}}", label: "Conversation ID" },
+  { value: "{{session.resource_id}}", label: "Resource ID" },
+] as const;
+
+function isDynamicPreset(value: string): boolean {
+  return dynamicHeaderPresets.some((preset) => preset.value === value);
 }
 
 let modelRowKey = 0;
@@ -51,11 +61,14 @@ function newModelRow(id = "", name = ""): ModelRow {
 
 function newHeaderRow(header?: ProviderHeader): HeaderRow {
   headerRowKey += 1;
+  const dynamic = header?.dynamic ?? false;
+  const value = header?.value ?? "";
   return {
     key: `header-${headerRowKey}`,
     name: header?.name ?? "",
-    value: header?.value ?? "",
-    dynamic: header?.dynamic ?? false,
+    value,
+    dynamic,
+    custom: dynamic && !isDynamicPreset(value),
   };
 }
 
@@ -566,124 +579,144 @@ function ProviderEditorDialog({
     >
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/30 transition-opacity duration-base data-ending-style:opacity-0 data-starting-style:opacity-0" />
-        <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(760px,calc(100dvh-2rem))] w-[min(640px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden overscroll-contain rounded-dialog border border-line bg-surface text-ink shadow-overlay outline-none transition duration-base data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0">
-          <div className="flex items-start justify-between border-b border-line px-5 py-4">
-            <div>
+        <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(900px,calc(100dvh-2rem))] w-[min(760px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden overscroll-contain rounded-dialog border border-line bg-surface text-ink shadow-overlay outline-none transition duration-base data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0">
+          <div className="flex items-start justify-between gap-4 border-b border-line px-6 py-4">
+            <div className="min-w-0">
               <Dialog.Title className="text-title font-semibold">
                 {config ? "Edit provider" : "Add provider"}
               </Dialog.Title>
-              <Dialog.Description className="mt-1 text-meta leading-5 text-faint">
+              <Dialog.Description className="mt-1 text-body-sm leading-5 text-muted">
                 {config
-                  ? "Update the endpoint, credentials, headers, or model list."
-                  : "Choose the wire format this endpoint speaks, then add its models."}
+                  ? "Update the connection, headers, and models for this provider."
+                  : "Connect an endpoint and choose the models Codjent can use."}
               </Dialog.Description>
             </div>
             <Dialog.Close
               aria-label="Close provider editor"
-              className="grid size-11 shrink-0 place-items-center rounded-field text-muted sm:size-8 transition hover:bg-surface-muted hover:text-ink"
+              className="grid size-11 shrink-0 place-items-center rounded-field text-muted transition-colors duration-fast hover:bg-surface-muted hover:text-ink sm:size-8"
               disabled={disabled}
             >
               <X className="size-4" />
             </Dialog.Close>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-            <div className="space-y-4">
-              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_260px]">
-                <label className="block">
-                  <span className={labelClass}>Name</span>
-                  <input
-                    className={fieldClass}
-                    disabled={disabled}
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder="Local models"
-                    value={name}
-                  />
-                </label>
-                <label className="block">
-                  <span className={labelClass}>Format</span>
-                  <select
-                    className={fieldClass}
-                    disabled={disabled}
-                    onChange={(event) =>
-                      setFormat(event.target.value as ProviderFormat)
-                    }
-                    value={format}
-                  >
-                    {providerFormats.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5">
+            <div className="space-y-7">
+              <section className="space-y-4">
+                <div>
+                  <h3 className="text-body font-semibold text-ink">
+                    Connection
+                  </h3>
+                  <p className="mt-0.5 text-meta leading-4 text-muted">
+                    The endpoint and credentials Codjent uses to reach this
+                    provider.
+                  </p>
+                </div>
 
-              <p className="rounded-field border border-line bg-surface-muted/60 px-3 py-2 text-meta leading-4 text-muted">
-                {formatInfo.description}
-              </p>
-
-              <label className="block">
-                <span className={labelClass}>Base URL</span>
-                <input
-                  className={cn(fieldClass, "font-mono")}
-                  disabled={disabled}
-                  onChange={(event) => setBaseURL(event.target.value)}
-                  placeholder={formatInfo.baseURLPlaceholder}
-                  spellCheck={false}
-                  value={baseURL}
-                />
-                <span className="mt-1 block text-meta leading-4 text-faint">
-                  Leave blank to use the provider default. HTTP and HTTPS are
-                  supported.
-                </span>
-              </label>
-
-              <div>
-                <label className="block">
-                  <span className={labelClass}>API key</span>
-                  <input
-                    autoComplete="off"
-                    className={cn(fieldClass, "font-mono")}
-                    disabled={disabled || clearAPIKey}
-                    onChange={(event) => setAPIKey(event.target.value)}
-                    placeholder={
-                      config?.api_key_set
-                        ? "Leave blank to keep the stored key"
-                        : "Optional for local or unauthenticated endpoints"
-                    }
-                    spellCheck={false}
-                    type="password"
-                    value={apiKey}
-                  />
-                </label>
-                {config?.api_key_set ? (
-                  <label className="mt-2 flex items-center gap-2 text-meta text-muted">
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_280px]">
+                  <label className="block">
+                    <span className={labelClass}>Name</span>
                     <input
-                      checked={clearAPIKey}
-                      className="size-3.5 accent-[var(--danger)]"
+                      className={fieldClass}
                       disabled={disabled}
-                      onChange={(event) => {
-                        setClearAPIKey(event.target.checked);
-                        if (event.target.checked) {
-                          setAPIKey("");
-                        }
-                      }}
-                      type="checkbox"
+                      onChange={(event) => setName(event.target.value)}
+                      placeholder="Local models"
+                      value={name}
                     />
-                    Remove the stored key when saving
                   </label>
-                ) : (
-                  <span className="mt-1 block text-meta leading-4 text-faint">
-                    Keys are stored in the local database and only sent to this
-                    endpoint.
-                  </span>
-                )}
-              </div>
+                  <label className="block">
+                    <span className={labelClass}>Format</span>
+                    <select
+                      className={fieldClass}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        setFormat(event.target.value as ProviderFormat)
+                      }
+                      value={format}
+                    >
+                      {providerFormats.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
 
-              <div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className={labelClass}>Headers</span>
+                <p className="rounded-field border border-line bg-surface-muted/60 px-3 py-2 text-meta leading-4 text-muted">
+                  {formatInfo.description}
+                </p>
+
+                <label className="block">
+                  <span className={labelClass}>Base URL</span>
+                  <input
+                    className={cn(fieldClass, "font-mono")}
+                    disabled={disabled}
+                    onChange={(event) => setBaseURL(event.target.value)}
+                    placeholder={formatInfo.baseURLPlaceholder}
+                    spellCheck={false}
+                    value={baseURL}
+                  />
+                  <span className="mt-1 block text-meta leading-4 text-faint">
+                    Leave blank to use the provider default. HTTP and HTTPS are
+                    supported.
+                  </span>
+                </label>
+
+                <div>
+                  <label className="block">
+                    <span className={labelClass}>API key</span>
+                    <input
+                      autoComplete="off"
+                      className={cn(fieldClass, "font-mono")}
+                      disabled={disabled || clearAPIKey}
+                      onChange={(event) => setAPIKey(event.target.value)}
+                      placeholder={
+                        config?.api_key_set
+                          ? "Leave blank to keep the stored key"
+                          : "Optional for local or unauthenticated endpoints"
+                      }
+                      spellCheck={false}
+                      type="password"
+                      value={apiKey}
+                    />
+                  </label>
+                  {config?.api_key_set ? (
+                    <label className="mt-2 flex items-center gap-2 text-meta text-muted">
+                      <input
+                        checked={clearAPIKey}
+                        className="size-3.5 accent-[var(--danger)]"
+                        disabled={disabled}
+                        onChange={(event) => {
+                          setClearAPIKey(event.target.checked);
+                          if (event.target.checked) {
+                            setAPIKey("");
+                          }
+                        }}
+                        type="checkbox"
+                      />
+                      Remove the stored key when saving
+                    </label>
+                  ) : (
+                    <span className="mt-1 block text-meta leading-4 text-faint">
+                      Keys stay on this machine and are only sent to this
+                      endpoint.
+                    </span>
+                  )}
+                </div>
+              </section>
+
+              <section className="space-y-3 border-t border-line pt-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-body font-semibold text-ink">
+                      Headers
+                    </h3>
+                    <p className="mt-0.5 text-meta leading-4 text-muted">
+                      Optional request headers for gateways, sessions, or
+                      routing.
+                    </p>
+                  </div>
                   <Button
                     className="h-11 sm:h-8"
                     disabled={disabled}
@@ -697,22 +730,29 @@ function ProviderEditorDialog({
                 </div>
 
                 {headers.length === 0 ? (
-                  <p className="rounded-field border border-dashed border-line-strong px-3 py-3 text-center text-meta leading-4 text-faint">
+                  <div className="flex items-center gap-2 rounded-field border border-line bg-surface-muted/40 px-3 py-2.5 text-meta text-muted">
+                    <span className="size-1.5 rounded-full bg-line-strong" />
                     No custom headers. Add one when the endpoint needs a gateway
                     or session header.
-                  </p>
+                  </div>
                 ) : (
                   <div className="space-y-2">
+                    <div className="hidden gap-2 px-1 text-meta text-faint sm:grid sm:grid-cols-[minmax(0,1fr)_120px_minmax(0,1.5fr)_36px]">
+                      <span>Name</span>
+                      <span>Mode</span>
+                      <span>Value</span>
+                      <span />
+                    </div>
                     {headers.map((header, index) => {
                       const templateError = header.dynamic
                         ? dynamicHeaderError(header.value)
                         : null;
                       return (
                         <div className="space-y-1" key={header.key}>
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+                          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_120px_minmax(0,1.5fr)_36px] sm:items-start">
                             <input
                               aria-label={`Header ${index + 1} name`}
-                              className={cn(fieldClass, "font-mono sm:w-48")}
+                              className={cn(fieldClass, "font-mono")}
                               disabled={disabled}
                               onChange={(event) =>
                                 updateHeader(index, {
@@ -725,44 +765,104 @@ function ProviderEditorDialog({
                             />
                             <select
                               aria-label={`Header ${index + 1} mode`}
-                              className={cn(fieldClass, "sm:w-28")}
+                              className={fieldClass}
                               disabled={disabled}
-                              onChange={(event) =>
+                              onChange={(event) => {
+                                const dynamic =
+                                  event.target.value === "dynamic";
+                                const keepCustom =
+                                  dynamic &&
+                                  !isDynamicPreset(header.value) &&
+                                  header.value !== "";
                                 updateHeader(index, {
-                                  dynamic: event.target.value === "dynamic",
-                                })
-                              }
+                                  dynamic,
+                                  custom: keepCustom,
+                                  value:
+                                    dynamic && header.value === ""
+                                      ? "{{session.id}}"
+                                      : header.value,
+                                });
+                              }}
                               value={header.dynamic ? "dynamic" : "static"}
                             >
                               <option value="static">Static</option>
                               <option value="dynamic">Dynamic</option>
                             </select>
-                            <input
-                              aria-label={`Header ${index + 1} value`}
-                              className={cn(fieldClass, "font-mono sm:flex-1")}
+                            <div className="space-y-1">
+                              {header.dynamic ? (
+                                <>
+                                  <select
+                                    aria-label={`Header ${index + 1} dynamic value`}
+                                    className={cn(fieldClass, "font-mono")}
+                                    disabled={disabled}
+                                    onChange={(event) => {
+                                      const value = event.target.value;
+                                      if (value === "custom") {
+                                        updateHeader(index, { custom: true });
+                                        return;
+                                      }
+                                      updateHeader(index, {
+                                        custom: false,
+                                        value,
+                                      });
+                                    }}
+                                    value={
+                                      header.custom ? "custom" : header.value
+                                    }
+                                  >
+                                    {dynamicHeaderPresets.map((preset) => (
+                                      <option
+                                        key={preset.value}
+                                        value={preset.value}
+                                      >
+                                        {preset.label} — {preset.value}
+                                      </option>
+                                    ))}
+                                    <option value="custom">
+                                      Custom template…
+                                    </option>
+                                  </select>
+                                  {header.custom ? (
+                                    <input
+                                      aria-label={`Header ${index + 1} custom value`}
+                                      className={cn(fieldClass, "font-mono")}
+                                      disabled={disabled}
+                                      onChange={(event) =>
+                                        updateHeader(index, {
+                                          value: event.target.value,
+                                        })
+                                      }
+                                      placeholder="{{session.id}}"
+                                      spellCheck={false}
+                                      value={header.value}
+                                    />
+                                  ) : null}
+                                </>
+                              ) : (
+                                <input
+                                  aria-label={`Header ${index + 1} value`}
+                                  className={cn(fieldClass, "font-mono")}
+                                  disabled={disabled}
+                                  onChange={(event) =>
+                                    updateHeader(index, {
+                                      value: event.target.value,
+                                    })
+                                  }
+                                  placeholder="Header value"
+                                  spellCheck={false}
+                                  value={header.value}
+                                />
+                              )}
+                            </div>
+                            <IconButton
+                              className="size-11 sm:size-9"
                               disabled={disabled}
-                              onChange={(event) =>
-                                updateHeader(index, {
-                                  value: event.target.value,
-                                })
-                              }
-                              placeholder={
-                                header.dynamic
-                                  ? "{{session.id}}"
-                                  : "Header value"
-                              }
-                              spellCheck={false}
-                              value={header.value}
-                            />
-                            <button
-                              type="button"
-                              aria-label={`Remove header ${index + 1}`}
-                              className="grid size-9 shrink-0 place-items-center rounded-field border border-line text-muted transition hover:border-danger/30 hover:bg-danger-soft hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
-                              disabled={disabled}
+                              icon={Trash2}
+                              label={`Remove header ${index + 1}`}
                               onClick={() => removeHeader(index)}
-                            >
-                              <Trash2 className="size-3.5" />
-                            </button>
+                              size="md"
+                              tone="danger"
+                            />
                           </div>
                           {templateError ? (
                             <p className="text-meta leading-4 text-danger">
@@ -776,33 +876,39 @@ function ProviderEditorDialog({
                 )}
 
                 {duplicateHeaderNames.length > 0 ? (
-                  <p className="mt-1.5 text-meta leading-4 text-danger">
+                  <p className="text-meta leading-4 text-danger">
                     Duplicate header names:{" "}
                     {Array.from(new Set(duplicateHeaderNames)).join(", ")}
                   </p>
                 ) : incompleteHeader ? (
-                  <p className="mt-1.5 text-meta leading-4 text-danger">
+                  <p className="text-meta leading-4 text-danger">
                     Every header needs a name.
                   </p>
                 ) : (
-                  <p className="mt-1.5 text-meta leading-4 text-faint">
+                  <p className="text-meta leading-4 text-faint">
                     Static values are sent as-is. Dynamic values are resolved
-                    for each run; use <code>{"{{session.id}}"}</code> for the
-                    current conversation ID.
+                    for each run; choose a session value or use a custom
+                    template.
                   </p>
                 )}
 
                 {format === "google" ? (
-                  <p className="mt-1.5 text-meta leading-4 text-faint">
+                  <p className="text-meta leading-4 text-faint">
                     Google sets <code>x-goog-api-key</code> itself, so it cannot
                     be overridden here.
                   </p>
                 ) : null}
-              </div>
+              </section>
 
-              <div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className={labelClass}>Models</span>
+              <section className="space-y-3 border-t border-line pt-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-body font-semibold text-ink">Models</h3>
+                    <p className="mt-0.5 text-meta leading-4 text-muted">
+                      The models Codjent can start threads with on this
+                      provider.
+                    </p>
+                  </div>
                   <Button
                     className="h-11 sm:h-8"
                     disabled={disabled}
@@ -816,19 +922,25 @@ function ProviderEditorDialog({
                 </div>
 
                 {models.length === 0 ? (
-                  <p className="rounded-field border border-dashed border-line-strong px-3 py-3 text-center text-meta leading-4 text-faint">
+                  <div className="flex items-center gap-2 rounded-field border border-line bg-surface-muted/40 px-3 py-2.5 text-meta text-muted">
+                    <span className="size-1.5 rounded-full bg-line-strong" />
                     No models configured. Add at least one to run threads.
-                  </p>
+                  </div>
                 ) : (
                   <div className="space-y-2">
+                    <div className="hidden gap-2 px-1 text-meta text-faint sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_36px]">
+                      <span>Model ID</span>
+                      <span>Display name</span>
+                      <span />
+                    </div>
                     {models.map((model, index) => (
                       <div
-                        className="flex flex-col gap-2 sm:flex-row sm:items-start"
+                        className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_36px] sm:items-start"
                         key={model.key}
                       >
                         <input
                           aria-label={`Model ${index + 1} ID`}
-                          className={cn(fieldClass, "font-mono sm:flex-1")}
+                          className={cn(fieldClass, "font-mono")}
                           disabled={disabled}
                           onChange={(event) =>
                             updateModel(index, { id: event.target.value })
@@ -839,7 +951,7 @@ function ProviderEditorDialog({
                         />
                         <input
                           aria-label={`Model ${index + 1} display name`}
-                          className={cn(fieldClass, "sm:flex-1")}
+                          className={fieldClass}
                           disabled={disabled}
                           onChange={(event) =>
                             updateModel(index, { name: event.target.value })
@@ -847,71 +959,74 @@ function ProviderEditorDialog({
                           placeholder="Display name (optional)"
                           value={model.name}
                         />
-                        <button
-                          type="button"
-                          aria-label={`Remove model ${index + 1}`}
-                          className="grid size-9 shrink-0 place-items-center rounded-field border border-line text-muted transition hover:border-danger/30 hover:bg-danger-soft hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
+                        <IconButton
+                          className="size-11 sm:size-9"
                           disabled={disabled}
+                          icon={Trash2}
+                          label={`Remove model ${index + 1}`}
                           onClick={() => removeModel(index)}
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
+                          size="md"
+                          tone="danger"
+                        />
                       </div>
                     ))}
                   </div>
                 )}
 
                 {duplicateIDs.length > 0 ? (
-                  <p className="mt-1.5 text-meta leading-4 text-danger">
+                  <p className="text-meta leading-4 text-danger">
                     Duplicate model IDs:{" "}
                     {Array.from(new Set(duplicateIDs)).join(", ")}
                   </p>
                 ) : incompleteModel ? (
-                  <p className="mt-1.5 text-meta leading-4 text-danger">
+                  <p className="text-meta leading-4 text-danger">
                     Every model needs an ID.
                   </p>
                 ) : (
-                  <p className="mt-1.5 text-meta leading-4 text-faint">
+                  <p className="text-meta leading-4 text-faint">
                     The ID is the exact name the endpoint expects. The display
-                    name is only shown in codjent.
+                    name is only shown in Codjent.
                   </p>
                 )}
-              </div>
 
-              <label className="block">
-                <span className={labelClass}>Default model</span>
-                <select
-                  className={fieldClass}
-                  disabled={disabled || modelIDs.length === 0}
-                  onChange={(event) => setDefaultModel(event.target.value)}
-                  value={effectiveDefault}
-                >
-                  {modelIDs.length === 0 ? (
-                    <option value="">Add a model first</option>
-                  ) : (
-                    modelIDs.map((id) => (
-                      <option key={id} value={id}>
-                        {models.find((model) => model.id.trim() === id)?.name ||
-                          id}
-                      </option>
-                    ))
-                  )}
-                </select>
-                <span className="mt-1 block text-meta leading-4 text-faint">
-                  New threads start with this model. You can switch models per
-                  thread later.
-                </span>
-              </label>
+                <label className="block">
+                  <span className={labelClass}>Default model</span>
+                  <select
+                    className={fieldClass}
+                    disabled={disabled || modelIDs.length === 0}
+                    onChange={(event) => setDefaultModel(event.target.value)}
+                    value={effectiveDefault}
+                  >
+                    {modelIDs.length === 0 ? (
+                      <option value="">Add a model first</option>
+                    ) : (
+                      modelIDs.map((id) => (
+                        <option key={id} value={id}>
+                          {models.find((model) => model.id.trim() === id)
+                            ?.name || id}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  <span className="mt-1 block text-meta leading-4 text-faint">
+                    New threads start with this model. You can switch models per
+                    thread later.
+                  </span>
+                </label>
+              </section>
             </div>
           </div>
 
           {error ? (
-            <div className="border-t border-danger/20 bg-danger-soft px-5 py-2.5 text-meta leading-5 text-danger">
+            <div
+              className="border-t border-danger/20 bg-danger-soft px-6 py-2.5 text-meta leading-5 text-danger"
+              role="alert"
+            >
               {error}
             </div>
           ) : null}
 
-          <div className="flex items-center justify-between gap-2 border-t border-line bg-surface-muted/40 px-5 py-3">
+          <div className="flex items-center justify-between gap-3 border-t border-line bg-surface-muted/40 px-6 py-3">
             <span className="hidden text-meta text-faint sm:block">
               {config
                 ? "Changes apply to new runs."

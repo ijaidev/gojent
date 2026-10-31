@@ -1,6 +1,17 @@
 "use client";
 
-import { CircleAlert, Folder, Menu, Server, Settings2 } from "lucide-react";
+import {
+  CircleAlert,
+  FlaskConical,
+  Folder,
+  GitPullRequest,
+  Menu,
+  Plus,
+  Search,
+  Server,
+  Settings2,
+  ShieldCheck,
+} from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { CodjentMark } from "@/components/brand";
@@ -17,7 +28,7 @@ import { useCodjent } from "@/hooks/use-codjent";
 import { connectionStatus, runStatus } from "@/lib/status";
 import type { Thread } from "@/lib/types";
 import { isActiveStatus } from "@/lib/types";
-import { basename } from "@/lib/utils";
+import { basename, modelName } from "@/lib/utils";
 
 function LiveStatusPill({
   live,
@@ -216,48 +227,167 @@ function ProviderSetup() {
 
 function EmptyState({
   providers,
+  threads,
   workspaceName,
   sending,
   onSend,
 }: {
   providers: ReturnType<typeof useCodjent>["providers"];
+  threads: Thread[];
   workspaceName: string;
   sending: boolean;
   onSend: ReturnType<typeof useCodjent>["sendMessage"];
 }) {
-  return (
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-5 py-10 sm:px-8">
-      <div className="w-full max-w-[720px]">
-        <div className="mb-5 flex items-center justify-center gap-1.5 text-meta text-muted">
-          <Folder className="size-3.5" />
-          <span className="max-w-[240px] truncate">
-            {workspaceName || "Local workspace"}
-          </span>
-          <span className="text-line-strong">·</span>
-          <span>local</span>
-        </div>
-        <h1 className="text-center text-hero font-semibold tracking-[-0.02em] text-ink">
-          What are we building?
-        </h1>
-        <p className="mx-auto mt-2 max-w-[470px] text-center text-body-sm leading-5 text-muted">
-          Describe a task or paste a screenshot. Codjent can read and edit this
-          checkout, run commands, and show its work.
-        </p>
+  const [draft, setDraft] = useState<{ id: number; text: string } | null>(null);
+  const defaultProvider = providers[0];
+  const defaultModel = defaultProvider
+    ? modelName(providers, defaultProvider.id, defaultProvider.default_model)
+    : "No model";
+  const threadCount = threads.length === 0 ? "None" : `${threads.length}`;
 
-        <div className="mt-6">
-          <Composer
-            autoFocus
-            busy={false}
-            large
-            onSend={onSend}
-            onStop={() => {}}
-            onUpdateThread={async () => null}
-            providers={providers}
-            sending={sending}
-            thread={null}
-            workspaceName={workspaceName}
-          />
+  const suggestions = [
+    {
+      icon: Search,
+      title: "Explain this codebase",
+      description: "Map the entry points and main packages.",
+      prompt:
+        "Explain the architecture of this codebase, starting from the entry points and the main packages.",
+    },
+    {
+      icon: FlaskConical,
+      title: "Fix a failing test",
+      description: "Run the suite and fix the first failure.",
+      prompt: "Run the test suite, find the first failing test, and fix it.",
+    },
+    {
+      icon: Plus,
+      title: "Add a feature",
+      description: "Plan and implement a small change.",
+      prompt:
+        "Add a small feature to this project. Start by proposing the plan and the files you'll touch.",
+    },
+    {
+      icon: GitPullRequest,
+      title: "Review my changes",
+      description: "Check the diff for bugs and gaps.",
+      prompt:
+        "Review the uncommitted changes in this checkout and point out bugs, risks, and missing tests.",
+    },
+  ];
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto grid w-full max-w-[760px] grid-cols-1 gap-8 px-5 py-8 sm:px-8 xl:max-w-[1080px] xl:grid-cols-[minmax(0,760px)_280px] xl:justify-center xl:gap-10">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-meta text-muted">
+            <Folder className="size-3.5" />
+            <span className="max-w-[240px] truncate">
+              {workspaceName || "Local workspace"}
+            </span>
+            <span className="text-line-strong">·</span>
+            <span>local</span>
+          </div>
+
+          <h1 className="mt-4 text-hero font-semibold tracking-[-0.02em] text-ink">
+            What are we building?
+          </h1>
+          <p className="mt-2 max-w-[540px] text-body-sm leading-5 text-muted">
+            Describe a task or paste a screenshot. Codjent can read and edit
+            this checkout, run commands, and show its work.
+          </p>
+
+          <div className="mt-6">
+            <Composer
+              autoFocus
+              busy={false}
+              initialValue={draft?.text ?? ""}
+              key={draft?.id ?? "new"}
+              large
+              onSend={onSend}
+              onStop={() => {}}
+              onUpdateThread={async () => null}
+              providers={providers}
+              sending={sending}
+              thread={null}
+              workspaceName={workspaceName}
+            />
+          </div>
+
+          <div className="mt-7">
+            <div className="text-meta font-medium text-muted">Start with</div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              {suggestions.map((suggestion) => {
+                const Icon = suggestion.icon;
+                return (
+                  <button
+                    className="group flex items-start gap-3 rounded-panel border border-line bg-surface p-3 text-left transition-colors duration-fast hover:border-line-strong hover:bg-surface-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                    key={suggestion.title}
+                    onClick={() =>
+                      setDraft({ id: Date.now(), text: suggestion.prompt })
+                    }
+                    type="button"
+                  >
+                    <Icon className="mt-0.5 size-4 shrink-0 text-muted transition-colors group-hover:text-accent" />
+                    <span className="min-w-0">
+                      <span className="block text-body-sm font-medium text-ink">
+                        {suggestion.title}
+                      </span>
+                      <span className="mt-0.5 block text-meta leading-4 text-faint">
+                        {suggestion.description}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
+
+        <aside className="hidden self-start xl:block">
+          <div className="rounded-panel border border-line bg-surface p-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-meta font-medium text-muted">
+                Workspace
+              </span>
+              <span className="rounded-chip border border-line px-1.5 py-0.5 text-meta text-faint">
+                local
+              </span>
+            </div>
+            <div className="mt-2 flex items-center gap-1.5 text-body font-medium text-ink">
+              <Folder className="size-4 text-muted" />
+              <span className="min-w-0 truncate">{workspaceName}</span>
+            </div>
+            <dl className="mt-4 space-y-3 border-t border-line pt-3 text-meta">
+              <div className="flex items-start justify-between gap-3">
+                <dt className="text-muted">Model</dt>
+                <dd
+                  className="min-w-0 truncate text-right font-medium text-ink"
+                  title={defaultModel}
+                >
+                  {defaultModel}
+                </dd>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <dt className="text-muted">Access</dt>
+                <dd className="font-medium text-ink">Ask before commands</dd>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <dt className="text-muted">Threads</dt>
+                <dd className="font-medium text-ink">{threadCount}</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div className="mt-3 rounded-panel border border-line bg-surface-muted/50 p-3 text-meta leading-5 text-muted">
+            <div className="flex items-center gap-1.5 font-medium text-ink">
+              <ShieldCheck className="size-3.5 text-success" />
+              Commands ask first
+            </div>
+            <p className="mt-1">
+              Codjent pauses before running a shell command in this workspace.
+            </p>
+          </div>
+        </aside>
       </div>
     </div>
   );
@@ -398,6 +528,7 @@ export function CodjentApp() {
         onSend={codjent.sendMessage}
         providers={codjent.providers}
         sending={codjent.sending}
+        threads={codjent.threads}
         workspaceName={workspaceName}
       />
     );
