@@ -146,6 +146,14 @@ jobs:
         working-directory: codjent/frontend
         run: pnpm install --frozen-lockfile
 
+      - name: Lint frontend
+        working-directory: codjent/frontend
+        run: pnpm lint
+
+      - name: Test frontend
+        working-directory: codjent/frontend
+        run: pnpm test
+
       - name: Build and verify committed export
         run: just --justfile codjent/justfile frontend-check
 

@@ -2,37 +2,39 @@
 
 import {
   Brain,
-  Check,
   ChevronDown,
   CircleAlert,
-  FileCode2,
-  FilePlus2,
-  FolderOpen,
+  Loader2,
   Maximize2,
-  PencilLine,
-  Search,
   ShieldAlert,
-  ShieldCheck,
-  SkipForward,
   Terminal,
-  X,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { Markdown } from "@/components/markdown";
-import { Spinner } from "@/components/spinner";
-import type { LiveRun, LiveTool } from "@/hooks/use-codjent";
+import { Button } from "@/components/ui/button";
+import { type LiveRun, liveText, liveThinking } from "@/lib/run-state";
+import {
+  connectionStatus,
+  runStatus,
+  type StatusMeta,
+  statusTextClass,
+  type ToolStatus,
+  toolStatus,
+} from "@/lib/status";
+import {
+  formatToolArguments,
+  parseCommand,
+  presentTool,
+} from "@/lib/tool-presentation";
 import type { Message, Part, PendingApproval, ToolCall } from "@/lib/types";
 import { isActiveStatus } from "@/lib/types";
 import {
   cn,
   formatElapsed,
-  formatToolArguments,
   messageFiles,
   messageText,
-  parseCommand,
   partFileURL,
-  toolLabel,
   toolResultMap,
 } from "@/lib/utils";
 
@@ -43,86 +45,32 @@ interface TranscriptProps {
   onResolveApproval: (approvalID: string, allow: boolean) => Promise<boolean>;
 }
 
-interface ToolCardProps {
+interface ToolRowProps {
   call: ToolCall;
-  status: LiveTool["status"] | "done" | "incomplete" | "denied";
+  status: ToolStatus;
   output?: string;
   error?: string;
   skipped?: boolean;
   note?: string;
+  startedAt?: number;
+  endedAt?: number;
 }
 
-function toolIcon(name: string): ReactNode {
-  switch (name) {
-    case "execute_command":
-      return <Terminal className="size-3.5" />;
-    case "read_file":
-      return <FileCode2 className="size-3.5" />;
-    case "write_file":
-      return <FilePlus2 className="size-3.5" />;
-    case "edit_file":
-      return <PencilLine className="size-3.5" />;
-    case "search_files":
-    case "grep":
-      return <Search className="size-3.5" />;
-    case "list_files":
-    case "list_directory":
-      return <FolderOpen className="size-3.5" />;
-    default:
-      return <Terminal className="size-3.5" />;
+function durationLabel(tool: ToolRowProps): string | null {
+  if (!tool.startedAt || !tool.endedAt) {
+    return null;
   }
+  const ms = Math.max(0, tool.endedAt - tool.startedAt);
+  if (ms < 100) {
+    return "<0.1s";
+  }
+  if (ms < 1000) {
+    return `${(ms / 1000).toFixed(1)}s`;
+  }
+  return formatElapsed(ms);
 }
 
-function ToolStatus({ status }: { status: ToolCardProps["status"] }) {
-  if (status === "approval") {
-    return (
-      <span className="inline-flex items-center gap-1 text-warning">
-        <ShieldAlert className="size-3" />
-        Awaiting approval
-      </span>
-    );
-  }
-  if (status === "pending" || status === "running") {
-    return (
-      <span className="inline-flex items-center gap-1 text-muted">
-        <Spinner className="size-3" />
-        {status === "pending" ? "Queued" : "Running"}
-      </span>
-    );
-  }
-  if (status === "error") {
-    return (
-      <span className="inline-flex items-center gap-1 text-danger">
-        <X className="size-3" />
-        Failed
-      </span>
-    );
-  }
-  if (status === "incomplete") {
-    return (
-      <span className="inline-flex items-center gap-1 text-warning">
-        <CircleAlert className="size-3" />
-        Interrupted
-      </span>
-    );
-  }
-  if (status === "denied") {
-    return (
-      <span className="inline-flex items-center gap-1 text-muted">
-        <SkipForward className="size-3" />
-        Denied
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1 text-success">
-      <Check className="size-3" />
-      Done
-    </span>
-  );
-}
-
-function toolCardStatus(status?: string): ToolCardProps["status"] {
+function persistedToolStatus(status?: string): ToolStatus {
   switch (status) {
     case "incomplete":
       return "incomplete";
@@ -130,98 +78,170 @@ function toolCardStatus(status?: string): ToolCardProps["status"] {
       return "error";
     case "denied":
       return "denied";
+    case "skipped":
+      return "skipped";
     default:
       return "done";
   }
 }
 
-function ToolCard({
+function ToolState({ status }: { status: StatusMeta }) {
+  const Icon = status.icon;
+  const spinning = Icon === Loader2;
+  const hideLabel = status.label === "Done";
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 text-meta",
+        statusTextClass(status.tone),
+      )}
+      title={status.label}
+    >
+      <Icon
+        aria-hidden="true"
+        className={cn("size-3.5 shrink-0", spinning && "animate-spin")}
+      />
+      <span className={hideLabel ? "sr-only" : ""}>{status.label}</span>
+    </span>
+  );
+}
+
+function ToolRow({
   call,
   status,
   output,
   error,
   skipped,
   note,
-}: ToolCardProps) {
-  const command =
-    call.name === "execute_command" ? parseCommand(call.arguments) : null;
-  const detail = command ?? formatToolArguments(call);
-  const hasBody = Boolean(output || error || note || skipped);
-  const [open, setOpen] = useState(status === "error" || Boolean(skipped));
+  startedAt,
+  endedAt,
+}: ToolRowProps) {
+  const presentation = presentTool(call);
+  const meta = toolStatus[status];
+  const Icon = presentation.icon;
+  const [open, setOpen] = useState(
+    status === "error" || status === "denied" || Boolean(skipped),
+  );
 
   useEffect(() => {
-    if (status === "error" && !skipped) {
+    if (status === "error" || status === "denied") {
       setOpen(true);
     }
-  }, [skipped, status]);
+  }, [status]);
+
+  const duration = durationLabel({ call, status, startedAt, endedAt });
+  const bodyText = presentation.command ?? formatToolArguments(call);
+  const hasBody = Boolean(bodyText || output || error || note || skipped);
 
   return (
     <details
-      className="group/tool overflow-hidden rounded-xl border border-line bg-surface"
+      className="group/tool"
       onToggle={(event) => setOpen(event.currentTarget.open)}
       open={open}
     >
-      <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3 py-2.5 [&::-webkit-details-marker]:hidden">
-        <span className="grid size-6 shrink-0 place-items-center rounded-md bg-surface-muted text-muted">
-          {toolIcon(call.name)}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-baseline gap-2">
-            <span className="shrink-0 text-[11.5px] font-semibold text-ink">
-              {toolLabel(call.name)}
-            </span>
-            <span className="min-w-0 truncate font-mono text-[10.5px] text-faint">
-              {detail}
-            </span>
+      <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2.5 px-1 py-2 [&::-webkit-details-marker]:hidden">
+        <Icon aria-hidden="true" className="size-4 shrink-0 text-muted" />
+        <span className="flex min-w-0 flex-1 items-baseline gap-2">
+          <span className="shrink-0 text-body-sm font-medium text-ink">
+            {presentation.label}
+          </span>
+          <span className="min-w-0 truncate font-mono text-meta text-faint">
+            {presentation.target || "—"}
           </span>
         </span>
-        <span className="shrink-0 text-[10px]">
-          {skipped ? (
-            <span className="inline-flex items-center gap-1 text-muted">
-              <SkipForward className="size-3" />
-              Skipped
+        <span className="flex shrink-0 items-center gap-2">
+          {duration ? (
+            <span className="text-meta tabular-nums text-faint">
+              {duration}
             </span>
-          ) : (
-            <ToolStatus status={status} />
-          )}
+          ) : null}
+          <ToolState status={meta} />
         </span>
-        <ChevronDown className="size-3 shrink-0 text-faint transition group-open/tool:rotate-180" />
+        <ChevronDown className="size-3.5 shrink-0 text-faint transition group-open/tool:rotate-180" />
       </summary>
 
-      <div className="border-t border-line bg-code px-3 py-2.5">
-        {command ? (
-          <pre className="mb-2 overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-code-ink">
-            <span className="select-none text-faint">$ </span>
-            {command}
-          </pre>
-        ) : call.name !== "execute_command" ? (
-          <pre className="mb-2 overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-code-ink">
-            {detail}
+      <div className="border-t border-line px-1 py-2.5">
+        {bodyText ? (
+          <pre className="mb-2 overflow-x-auto whitespace-pre-wrap break-words rounded-field bg-code px-2.5 py-2 font-mono text-meta leading-5 text-code-ink">
+            {presentation.command ? (
+              <span className="select-none text-faint">$ </span>
+            ) : null}
+            {bodyText}
           </pre>
         ) : null}
 
-        {note ? (
-          <p className="mb-2 text-[10.5px] text-warning">{note}</p>
-        ) : null}
+        {note ? <p className="mb-2 text-meta text-warning">{note}</p> : null}
 
         {error ? (
-          <pre className="max-h-[280px] overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-danger">
+          <pre className="max-h-[280px] overflow-auto whitespace-pre-wrap break-words font-mono text-meta leading-5 text-danger">
             {error}
           </pre>
         ) : output ? (
           <>
-            <div className="mb-1 text-[9px] font-medium uppercase tracking-[0.14em] text-faint">
-              Output
-            </div>
-            <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-code-ink">
+            <div className="mb-1 text-meta text-faint">Output</div>
+            <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-words font-mono text-meta leading-5 text-code-ink">
               {output}
             </pre>
           </>
         ) : hasBody ? (
-          <p className="text-[11px] text-faint">No output.</p>
+          <p className="text-meta text-faint">No output.</p>
         ) : (
-          <p className="text-[11px] text-faint">No result recorded.</p>
+          <p className="text-meta text-faint">No result recorded.</p>
         )}
+      </div>
+    </details>
+  );
+}
+
+function ToolLedger({
+  tools,
+  elapsed,
+  defaultOpen = false,
+}: {
+  tools: ToolRowProps[];
+  elapsed?: string;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const running = tools.some(
+    (tool) =>
+      tool.status === "running" ||
+      tool.status === "approval" ||
+      tool.status === "pending",
+  );
+
+  useEffect(() => {
+    if (running) {
+      setOpen(true);
+    }
+  }, [running]);
+
+  if (tools.length === 1) {
+    return (
+      <div className="my-2 border-y border-line">
+        <ToolRow {...tools[0]} />
+      </div>
+    );
+  }
+
+  return (
+    <details
+      className="group/ledger my-2 border-y border-line"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      open={open}
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-2 py-2 text-meta text-muted [&::-webkit-details-marker]:hidden">
+        <span className="font-medium text-ink">
+          {elapsed ? `Worked ${elapsed}` : `${tools.length} steps`}
+        </span>
+        {elapsed ? <span>· {tools.length} steps</span> : null}
+        <ChevronDown className="ml-auto size-3.5 transition group-open/ledger:rotate-180" />
+      </summary>
+      <div className="divide-y divide-line">
+        {tools.map((tool) => (
+          <ToolRow key={tool.call.id} {...tool} />
+        ))}
       </div>
     </details>
   );
@@ -229,17 +249,15 @@ function ToolCard({
 
 function Thinking({ text }: { text: string }) {
   return (
-    <details className="group/thinking rounded-xl border border-line bg-surface-muted/60">
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[11px] font-medium text-muted [&::-webkit-details-marker]:hidden">
+    <details className="group/thinking my-2">
+      <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-meta text-muted [&::-webkit-details-marker]:hidden">
         <Brain className="size-3.5" />
         Thinking
         <ChevronDown className="ml-auto size-3 transition group-open/thinking:rotate-180" />
       </summary>
-      <div className="border-t border-line px-4 py-3">
-        <pre className="max-h-[280px] overflow-auto whitespace-pre-wrap break-words font-sans text-[11.5px] leading-5 text-muted">
-          {text}
-        </pre>
-      </div>
+      <pre className="mt-1 max-h-[280px] overflow-auto whitespace-pre-wrap break-words font-sans text-body-sm leading-5 text-muted">
+        {text}
+      </pre>
     </details>
   );
 }
@@ -271,7 +289,7 @@ function FileGrid({ parts }: { parts: Part[] }) {
           <button
             aria-label={`Open ${file.part.filename ?? `image ${index + 1}`}`}
             className={cn(
-              "group/image relative overflow-hidden rounded-xl border border-line/80 bg-code focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
+              "group/image relative overflow-hidden rounded-panel border border-line/80 bg-code focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
               multiple && files.length % 2 === 1 && index === files.length - 1
                 ? "col-span-2 aspect-[2/1]"
                 : "aspect-[4/3]",
@@ -283,7 +301,7 @@ function FileGrid({ parts }: { parts: Part[] }) {
             {/* biome-ignore lint/performance/noImgElement: data URLs are local and cannot be optimized by next/image */}
             <img
               alt={file.part.filename ?? `Attachment ${index + 1}`}
-              className="h-full w-full object-cover object-top transition duration-150 group-hover/image:scale-[1.015] motion-reduce:transition-none"
+              className="h-full w-full object-cover object-top transition duration-fast group-hover/image:scale-[1.015] motion-reduce:transition-none"
               height={480}
               loading="lazy"
               src={file.url}
@@ -291,11 +309,11 @@ function FileGrid({ parts }: { parts: Part[] }) {
             />
             <span className="pointer-events-none absolute inset-0 bg-black/0 transition group-hover/image:bg-black/10 motion-reduce:transition-none" />
             {multiple ? (
-              <span className="absolute left-2 top-2 grid size-5 place-items-center rounded-full bg-black/60 text-[9px] font-semibold text-white backdrop-blur">
+              <span className="absolute left-2 top-2 grid size-5 place-items-center rounded-full bg-black/60 text-meta font-semibold text-white backdrop-blur">
                 {index + 1}
               </span>
             ) : null}
-            <span className="absolute bottom-2 right-2 grid size-7 place-items-center rounded-md border border-white/15 bg-black/55 text-white/90 backdrop-blur transition group-hover/image:bg-black/70 motion-reduce:transition-none">
+            <span className="absolute bottom-2 right-2 grid size-7 place-items-center rounded-field border border-white/15 bg-black/55 text-white/90 backdrop-blur transition group-hover/image:bg-black/70 motion-reduce:transition-none">
               <Maximize2 className="size-3.5" />
             </span>
           </button>
@@ -321,6 +339,12 @@ function ApprovalCard({
 }) {
   const [pending, setPending] = useState<"allow" | "deny" | null>(null);
   const command = parseCommand(approval.arguments);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: focus the block when a new approval arrives
+  useEffect(() => {
+    ref.current?.focus();
+  }, [approval.id]);
 
   const decide = async (allow: boolean) => {
     setPending(allow ? "allow" : "deny");
@@ -331,44 +355,65 @@ function ApprovalCard({
   };
 
   return (
-    <div className="mt-3 overflow-hidden rounded-xl border border-warning/30 bg-warning-soft">
-      <div className="flex items-start gap-3 px-4 py-3">
-        <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg bg-warning/10 text-warning">
-          <ShieldAlert className="size-4" />
-        </span>
+    <div
+      className="mt-3 scroll-mt-20 rounded-panel border border-warning/25 border-l-[3px] border-l-warning bg-warning-soft px-3.5 py-3 outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+      data-approval
+      ref={ref}
+      tabIndex={-1}
+    >
+      <div className="flex items-start gap-2.5">
+        <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" />
         <div className="min-w-0 flex-1">
-          <div className="text-[12px] font-semibold text-ink">
-            Command approval required
+          <div className="text-body font-semibold text-ink">
+            Run this command?
           </div>
-          <p className="mt-0.5 text-[11px] leading-5 text-muted">
+          <p className="mt-0.5 text-body-sm leading-5 text-muted">
             Codjent wants to run this command in{" "}
             <span className="font-medium text-ink">{workspaceName}</span>.
           </p>
         </div>
       </div>
-      <pre className="mx-4 mb-3 overflow-x-auto whitespace-pre-wrap break-words rounded-lg border border-warning/20 bg-surface/70 px-3 py-2.5 font-mono text-[11.5px] leading-5 text-code-ink">
+      <pre className="mt-2.5 overflow-x-auto whitespace-pre-wrap break-words rounded-field border border-warning/20 bg-surface/80 px-3 py-2 font-mono text-meta leading-5 text-code-ink">
         <span className="select-none text-faint">$ </span>
         {command}
       </pre>
-      <div className="flex items-center justify-end gap-2 border-t border-warning/20 px-4 py-2.5">
-        <button
-          type="button"
-          className="rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-[11px] font-medium text-ink transition hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50"
+      <div className="mt-3 flex items-center justify-end gap-2">
+        <Button
+          className="h-11 px-3 sm:h-8"
           disabled={pending !== null}
+          loading={pending === "deny"}
           onClick={() => void decide(false)}
+          size="sm"
+          variant="secondary"
         >
-          {pending === "deny" ? "Denying…" : "Deny"}
-        </button>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-1.5 text-[11px] font-medium text-app transition hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50"
+          Deny
+        </Button>
+        <Button
+          className="h-11 px-3 sm:h-8"
           disabled={pending !== null}
+          loading={pending === "allow"}
           onClick={() => void decide(true)}
+          size="sm"
+          variant="primary"
         >
-          {pending === "allow" ? <Spinner className="size-3" /> : null}
           Allow once
-        </button>
+        </Button>
       </div>
+    </div>
+  );
+}
+
+function ErrorBlock({ error }: { error: string }) {
+  return (
+    <div className="mt-3 rounded-panel border border-danger/20 border-l-[3px] border-l-danger bg-danger-soft px-3.5 py-3">
+      <div className="flex items-center gap-2 text-body-sm font-semibold text-danger">
+        <CircleAlert className="size-4" />
+        The run could not finish
+      </div>
+      <pre className="mt-2 max-h-[220px] overflow-auto whitespace-pre-wrap break-words font-mono text-meta leading-5 text-danger">
+        {error}
+      </pre>
+      <p className="mt-2 text-meta text-muted">Send a new message to retry.</p>
     </div>
   );
 }
@@ -394,63 +439,59 @@ function LiveTurn({
   }, [active]);
 
   const elapsed = formatElapsed(now - live.startedAt);
+  const text = liveText(live);
+  const thinking = liveThinking(live);
+  const status = live.reconnecting
+    ? connectionStatus.reconnecting
+    : runStatus[live.status];
+  const stepCount = live.tools.length;
+  const approvalToolID = live.approval?.tool_call_id;
+  const tools: ToolRowProps[] = live.tools
+    .filter((tool) => tool.call.id !== approvalToolID)
+    .map((tool) => ({
+      call: tool.call,
+      status:
+        tool.skipped && (tool.status === "done" || tool.status === "error")
+          ? "skipped"
+          : tool.status,
+      output: tool.output,
+      error: tool.error,
+      skipped: tool.skipped,
+      note: tool.note,
+      startedAt: tool.startedAt,
+      endedAt: tool.endedAt,
+    }));
 
   return (
-    <div className="animate-in">
-      <div className="mb-3 flex items-center gap-2 text-[11px]">
-        {live.reconnecting ? (
-          <span className="inline-flex items-center gap-2 text-warning">
-            <CircleAlert className="size-3.5" />
-            Reconnecting to the run…
-          </span>
-        ) : live.status === "waiting_approval" ? (
-          <span className="inline-flex items-center gap-2 text-warning">
-            <ShieldAlert className="size-3.5" />
-            Waiting for your approval · {elapsed}
-          </span>
-        ) : active ? (
-          <span className="inline-flex items-center gap-2 text-accent">
-            <Spinner className="size-3.5" label="Working" />
-            Working for {elapsed}
-          </span>
-        ) : live.status === "failed" ? (
-          <span className="inline-flex items-center gap-2 text-danger">
-            <CircleAlert className="size-3.5" />
-            Run failed
-          </span>
-        ) : live.status === "canceled" ? (
-          <span className="text-muted">Run canceled</span>
-        ) : (
-          <span className="inline-flex items-center gap-2 text-success">
-            <ShieldCheck className="size-3.5" />
-            Done
-          </span>
-        )}
+    <div>
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-meta">
+        <span className="font-medium text-ink">codjent</span>
+        <span className="text-faint">·</span>
+        <span className={statusTextClass(status.tone)}>
+          {status.label}
+          {active ? ` · ${elapsed}` : ""}
+        </span>
+        {stepCount > 0 ? (
+          <>
+            <span className="text-faint">·</span>
+            <span className="text-faint">
+              {stepCount} {stepCount === 1 ? "step" : "steps"}
+            </span>
+          </>
+        ) : null}
       </div>
 
-      {live.thinking ? (
-        <div className="mb-3">
-          <Thinking text={live.thinking} />
-        </div>
+      {thinking ? <Thinking text={thinking} /> : null}
+
+      {tools.length > 0 ? (
+        <ToolLedger
+          defaultOpen={active}
+          elapsed={active ? elapsed : undefined}
+          tools={tools}
+        />
       ) : null}
 
-      {live.text ? <Markdown>{live.text}</Markdown> : null}
-
-      {live.tools.length > 0 ? (
-        <div className="mt-3 space-y-2">
-          {live.tools.map((tool) => (
-            <ToolCard
-              call={tool.call}
-              error={tool.error}
-              key={tool.call.id}
-              note={tool.note}
-              output={tool.output}
-              skipped={tool.skipped}
-              status={tool.status}
-            />
-          ))}
-        </div>
-      ) : null}
+      {text ? <Markdown>{text}</Markdown> : null}
 
       {live.approval ? (
         <ApprovalCard
@@ -461,19 +502,17 @@ function LiveTurn({
       ) : null}
 
       {live.status === "failed" && live.error ? (
-        <div className="mt-3 rounded-xl border border-danger/20 bg-danger-soft px-4 py-3">
-          <div className="flex items-center gap-2 text-[11.5px] font-semibold text-danger">
-            <CircleAlert className="size-3.5" />
-            The run could not finish
-          </div>
-          <pre className="mt-2 max-h-[220px] overflow-auto whitespace-pre-wrap break-words font-mono text-[10.5px] leading-5 text-danger/90">
-            {live.error}
-          </pre>
-        </div>
+        <ErrorBlock error={live.error} />
       ) : null}
 
-      {active && !live.text && live.tools.length === 0 && !live.thinking ? (
-        <div className="mt-4 space-y-2" aria-hidden="true">
+      {live.status === "canceled" ? (
+        <p className="mt-3 text-body-sm text-muted">
+          Run canceled. Send a new message to continue.
+        </p>
+      ) : null}
+
+      {active && !text && tools.length === 0 && !thinking && !live.approval ? (
+        <div aria-hidden="true" className="mt-3 space-y-2">
           <div className="h-2.5 w-[58%] animate-pulse rounded-full bg-surface-muted" />
           <div className="h-2.5 w-[42%] animate-pulse rounded-full bg-surface-muted" />
         </div>
@@ -490,12 +529,27 @@ function UserMessage({ message }: { message: Message }) {
   }
   return (
     <div className="flex justify-end">
-      <div className="max-w-[88%] rounded-[20px] bg-surface-muted px-3 py-3 text-[13.5px] leading-6 text-ink">
+      <div className="max-w-[80%] rounded-panel border border-line bg-surface-muted px-3.5 py-2.5 text-body leading-6 text-ink">
         <FileGrid parts={files} />
         {text ? (
-          <div className="whitespace-pre-wrap px-2 py-1.5">{text}</div>
+          <div className="whitespace-pre-wrap px-0.5 py-0.5">{text}</div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function EmptyThread() {
+  return (
+    <div className="py-16 text-center">
+      <Terminal className="mx-auto size-5 text-faint" />
+      <h2 className="mt-3 text-title font-semibold text-ink">
+        Start with a task
+      </h2>
+      <p className="mx-auto mt-1 max-w-sm text-body-sm leading-5 text-muted">
+        Describe what to change, or paste a screenshot. Codjent will inspect the
+        workspace and ask before running commands.
+      </p>
     </div>
   );
 }
@@ -528,27 +582,17 @@ export function Transcript({
   );
 
   return (
-    <div className="mx-auto w-full max-w-[848px] space-y-8 px-4 pb-10 pt-8 sm:px-6">
-      {visibleMessages.length === 0 && !live ? (
-        <div className="py-16 text-center">
-          <div className="mx-auto grid size-10 place-items-center rounded-xl border border-line bg-surface text-muted">
-            <Terminal className="size-4" />
-          </div>
-          <h2 className="mt-3 text-[14px] font-semibold text-ink">
-            This thread is ready
-          </h2>
-          <p className="mx-auto mt-1 max-w-sm text-[12px] leading-5 text-faint">
-            Send a prompt, paste a screenshot, or drop in a design. Codjent will
-            inspect the workspace, make changes, and ask before running
-            commands.
-          </p>
-        </div>
-      ) : null}
+    <div
+      aria-busy={live ? isActiveStatus(live.status) : undefined}
+      className="mx-auto w-full max-w-[760px] space-y-6 px-4 pb-10 pt-6 sm:px-6"
+    >
+      {visibleMessages.length === 0 && !live ? <EmptyThread /> : null}
 
-      {visibleMessages.map((message) => {
+      {visibleMessages.map((message, index) => {
         if (message.role === "user") {
           return <UserMessage key={message.id} message={message} />;
         }
+
         if (message.role === "tool") {
           const call: ToolCall = {
             id: message.tool_call_id ?? message.id,
@@ -556,56 +600,70 @@ export function Transcript({
             arguments: "",
           };
           return (
-            <ToolCard
-              call={call}
-              key={message.id}
-              output={messageText(message)}
-              status={toolCardStatus(message.status)}
-            />
+            <div className="my-2 border-y border-line" key={message.id}>
+              <ToolRow
+                call={call}
+                output={messageText(message)}
+                status={persistedToolStatus(message.status)}
+              />
+            </div>
           );
         }
+
         if (message.role !== "assistant") {
           return null;
         }
 
         const text = messageText(message);
         const files = messageFiles(message);
-        const hasTools = (message.tool_calls?.length ?? 0) > 0;
-        if (!text && !message.thinking && !hasTools && files.length === 0) {
+        const calls = message.tool_calls ?? [];
+        const tools: ToolRowProps[] = calls.map((call) => {
+          const result = results.get(call.id);
+          return {
+            call,
+            status: persistedToolStatus(result?.status),
+            output: result ? messageText(result) : undefined,
+          };
+        });
+        if (
+          !text &&
+          !message.thinking &&
+          tools.length === 0 &&
+          files.length === 0
+        ) {
           return null;
         }
 
+        const showIdentity =
+          index === 0 || visibleMessages[index - 1]?.role !== "assistant";
+
         return (
-          <div className="space-y-3" key={message.id}>
+          <div className="space-y-2" key={message.id}>
+            {showIdentity ? (
+              <div className="flex flex-wrap items-center gap-2 text-meta">
+                <span className="font-medium text-ink">codjent</span>
+              </div>
+            ) : null}
+
             {message.status === "incomplete" ? (
-              <div className="inline-flex items-center gap-1.5 text-[11px] text-warning">
+              <div className="inline-flex items-center gap-1.5 text-meta text-warning">
                 <CircleAlert className="size-3.5" />
                 Interrupted before completion
               </div>
             ) : message.status === "failed" ? (
-              <div className="inline-flex items-center gap-1.5 text-[11px] text-danger">
+              <div className="inline-flex items-center gap-1.5 text-meta text-danger">
                 <CircleAlert className="size-3.5" />
                 The run failed before this response finished
               </div>
             ) : null}
+
             {message.thinking ? <Thinking text={message.thinking} /> : null}
+
+            {tools.length > 0 ? <ToolLedger tools={tools} /> : null}
+
             {text ? <Markdown>{text}</Markdown> : null}
+
             {files.length > 0 ? <FileGrid parts={files} /> : null}
-            {hasTools ? (
-              <div className="space-y-2">
-                {message.tool_calls?.map((call) => {
-                  const result = results.get(call.id);
-                  return (
-                    <ToolCard
-                      call={call}
-                      key={call.id}
-                      output={result ? messageText(result) : undefined}
-                      status={toolCardStatus(result?.status)}
-                    />
-                  );
-                })}
-              </div>
-            ) : null}
           </div>
         );
       })}

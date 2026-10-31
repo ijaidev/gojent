@@ -1,50 +1,59 @@
+/* biome-ignore-all lint/complexity/noImportantStyles: reduced-motion overrides must beat utility classes */
 @import "tailwindcss";
 
 :root {
-  --app: #fbfaf8;
-  --sidebar: #f4f1ed;
+  color-scheme: light dark;
+
+  --app: #f7f6f3;
+  --sidebar: #f1efeb;
   --surface: #ffffff;
-  --surface-muted: #f4f1ed;
-  --surface-hover: #ece7e1;
-  --ink: #1b1a18;
-  --muted: #746d65;
-  --faint: #a49b92;
-  --line: #e7e1d9;
-  --line-strong: #d6cdc3;
-  --accent: #2f6bdf;
-  --accent-soft: #eaf1ff;
-  --success: #1f7a4d;
-  --success-soft: #e9f7ef;
-  --warning: #9a5b00;
-  --warning-soft: #fff6e5;
-  --danger: #c7362c;
-  --danger-soft: #fff0ee;
-  --code: #f6f2ed;
-  --code-ink: #27231f;
+  --surface-muted: #f2f0ec;
+  --surface-hover: #eae7e1;
+  --ink: #191817;
+  --muted: #5f5a53;
+  --faint: #6f6961;
+  --line: #e4e0d9;
+  --line-strong: #cfc8bf;
+  --accent: #2f5fd0;
+  --accent-soft: #e9efff;
+  --success: #1d6b4a;
+  --success-soft: #e8f5ee;
+  --warning: #8a5200;
+  --warning-soft: #fdf6e9;
+  --danger: #b8322a;
+  --danger-soft: #fdf0ee;
+  --code: #f4f1ec;
+  --code-ink: #252220;
+  --brand-mark-bg: #191817;
+  --brand-mark-fg: #f7f6f3;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --app: #141312;
-    --sidebar: #191816;
-    --surface: #1e1c1a;
-    --surface-muted: #24211e;
-    --surface-hover: #2b2723;
-    --ink: #f2ede7;
-    --muted: #a79e94;
-    --faint: #756d64;
-    --line: #302c28;
-    --line-strong: #443e38;
-    --accent: #7aa2ff;
-    --accent-soft: #1d2a46;
-    --success: #6bc99a;
+    color-scheme: dark;
+
+    --app: #101010;
+    --sidebar: #141414;
+    --surface: #1a1a19;
+    --surface-muted: #222221;
+    --surface-hover: #2a2a28;
+    --ink: #f2efea;
+    --muted: #b3aca2;
+    --faint: #918a81;
+    --line: #2b2a28;
+    --line-strong: #403e3a;
+    --accent: #8fb0ff;
+    --accent-soft: #1b2740;
+    --success: #6fcca0;
     --success-soft: #14291f;
     --warning: #e0a44b;
-    --warning-soft: #2b2112;
+    --warning-soft: #241d12;
     --danger: #ff8c82;
     --danger-soft: #2d1715;
-    --code: #181614;
-    --code-ink: #e8e1d9;
+    --code: #161615;
+    --code-ink: #e8e2da;
+    --brand-mark-bg: #f2efea;
+    --brand-mark-fg: #191817;
   }
 }
 
@@ -69,8 +78,33 @@
   --color-danger-soft: var(--danger-soft);
   --color-code: var(--code);
   --color-code-ink: var(--code-ink);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  --text-meta: 0.75rem;
+  --text-meta--line-height: 1rem;
+  --text-body-sm: 0.8125rem;
+  --text-body-sm--line-height: 1.25rem;
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.375rem;
+  --text-title: 1rem;
+  --text-title--line-height: 1.5rem;
+  --text-page: 1.25rem;
+  --text-page--line-height: 1.75rem;
+  --text-hero: 1.5rem;
+  --text-hero--line-height: 2rem;
+
+  --radius-chip: 0.375rem;
+  --radius-field: 0.5rem;
+  --radius-panel: 0.625rem;
+  --radius-dialog: 0.875rem;
+
+  --shadow-overlay: 0 16px 48px -12px rgb(0 0 0 / 0.28);
+
+  --duration-fast: 120ms;
+  --duration-base: 160ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
 }
 
 * {
@@ -87,7 +121,10 @@ body {
   background: var(--app);
   color: var(--ink);
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
 .root {
@@ -105,8 +142,8 @@ body {
 }
 
 *::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 *::-webkit-scrollbar-thumb {
@@ -128,44 +165,39 @@ button,
 summary,
 select {
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 button:focus-visible,
 a:focus-visible,
-summary:focus-visible {
+summary:focus-visible,
+[role="radio"]:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
 .composer-card {
-  box-shadow:
-    0 1px 2px rgb(28 25 23 / 0.04),
-    0 18px 42px -24px rgb(28 25 23 / 0.32);
+  box-shadow: none;
 }
 
 .composer-card:focus-within {
-  border-color: color-mix(in oklab, var(--accent) 38%, var(--line));
-  box-shadow:
-    0 1px 2px rgb(28 25 23 / 0.04),
-    0 0 0 3px color-mix(in oklab, var(--accent) 10%, transparent),
-    0 18px 42px -24px rgb(28 25 23 / 0.32);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 16%, transparent);
 }
 
 .menu-popup {
   z-index: 50;
   min-width: 230px;
   border: 1px solid var(--line);
-  border-radius: 13px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
   padding: 4px;
-  box-shadow:
-    0 1px 2px rgb(28 25 23 / 0.05),
-    0 18px 46px -12px rgb(28 25 23 / 0.28);
+  box-shadow: var(--shadow-overlay);
   outline: none;
   transform-origin: var(--transform-origin);
   transition:
-    opacity 120ms ease-out,
-    transform 120ms ease-out;
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
 }
 
 .menu-popup[data-starting-style],
@@ -192,14 +224,14 @@ summary:focus-visible {
 }
 
 .animate-in {
-  animation: fade-in-up 180ms ease-out both;
+  animation: fade-in-up var(--duration-base) var(--ease-out) both;
 }
 
 .markdown {
   min-width: 0;
   color: var(--ink);
-  font-size: 13.5px;
-  line-height: 1.75;
+  font-size: 14px;
+  line-height: 1.65;
   overflow-wrap: anywhere;
 }
 
@@ -226,7 +258,7 @@ summary:focus-visible {
 .markdown h4 {
   margin: 1.35em 0 0.55em;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.015em;
   line-height: 1.3;
 }
 
@@ -300,13 +332,13 @@ summary:focus-visible {
   padding: 0.08em 0.34em;
   color: var(--code-ink);
   font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 0.86em;
+  font-size: 0.88em;
 }
 
 .markdown pre {
   overflow-x: auto;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-panel);
   background: var(--code);
   padding: 12px 14px;
 }
@@ -315,8 +347,8 @@ summary:focus-visible {
   border: 0;
   background: transparent;
   padding: 0;
-  font-size: 11.5px;
-  line-height: 1.7;
+  font-size: 12.5px;
+  line-height: 1.6;
 }
 
 .markdown table {
@@ -342,7 +374,7 @@ summary:focus-visible {
 
 .markdown img {
   max-width: 100%;
-  border-radius: 10px;
+  border-radius: var(--radius-panel);
 }
 
 .markdown input[type="checkbox"] {
@@ -351,4 +383,20 @@ summary:focus-visible {
 
 .markdown del {
   color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .animate-spin {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
 }

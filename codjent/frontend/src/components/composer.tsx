@@ -17,6 +17,7 @@ import {
 import {
   type ClipboardEvent,
   type DragEvent,
+  type FormEvent,
   type KeyboardEvent,
   useEffect,
   useRef,
@@ -42,7 +43,13 @@ import type {
   Thread,
   UpdateThreadInput,
 } from "@/lib/types";
-import { cn, errorMessage, statusCopy } from "@/lib/utils";
+import {
+  accessLabel,
+  cn,
+  errorMessage,
+  modelName,
+  statusCopy,
+} from "@/lib/utils";
 
 interface ComposerProps {
   thread: Thread | null;
@@ -59,18 +66,7 @@ interface ComposerProps {
 }
 
 const menuItemClass =
-  "flex cursor-default select-none items-start gap-2.5 rounded-lg px-2.5 py-2 text-left outline-none data-highlighted:bg-surface-muted";
-
-function modelName(
-  providers: ProviderInfo[],
-  providerID: string,
-  modelID: string,
-) {
-  const provider = providers.find((item) => item.id === providerID);
-  return (
-    provider?.models.find((model) => model.id === modelID)?.name ?? modelID
-  );
-}
+  "flex cursor-default select-none items-start gap-2.5 rounded-field px-2.5 py-2 text-left outline-none data-highlighted:bg-surface-muted";
 
 export function Composer({
   thread,
@@ -124,6 +120,9 @@ export function Composer({
 
   useEffect(() => {
     if (!autoFocus || busy) {
+      return;
+    }
+    if (window.matchMedia("(pointer: coarse)").matches) {
       return;
     }
     textareaRef.current?.focus();
@@ -285,6 +284,11 @@ export function Composer({
     }
   };
 
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void submit();
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (
       event.key === "Enter" &&
@@ -304,10 +308,10 @@ export function Composer({
 
   const placeholder = busy
     ? liveStatus === "waiting_approval"
-      ? "Resolve the approval above to continue…"
+      ? "Approve or deny the command to continue…"
       : `Codjent is ${statusCopy(liveStatus ?? "running").toLowerCase()}…`
     : large
-      ? "Ask codjent to build, debug, or explain something…"
+      ? "Ask Codjent to build, debug, or explain…"
       : "Ask a follow-up, or paste a screenshot…";
 
   const stop = () => {
@@ -317,17 +321,14 @@ export function Composer({
   };
 
   return (
-    <div
-      className={cn(
-        "mx-auto w-full",
-        large ? "max-w-[780px]" : "max-w-[800px]",
-      )}
-    >
-      <fieldset
+    <div className="mx-auto w-full max-w-[760px]">
+      <form
         aria-busy={preparing}
         aria-label="Message composer"
+        id="composer"
+        tabIndex={-1}
         className={cn(
-          "composer-card relative m-0 min-w-0 rounded-[20px] border border-line bg-surface p-0 transition focus-within:border-line-strong",
+          "composer-card relative m-0 min-w-0 rounded-panel border border-line-strong bg-surface p-0 transition-colors duration-fast",
           large ? "min-h-[148px]" : "min-h-[104px]",
           dragging && "border-accent",
         )}
@@ -335,9 +336,9 @@ export function Composer({
         onDragLeave={handleDragLeave}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
+        onSubmit={handleSubmit}
       >
         <input
-          ref={fileInputRef}
           accept="image/png,image/jpeg,image/webp"
           className="hidden"
           multiple
@@ -348,19 +349,18 @@ export function Composer({
               void addFiles(files);
             }
           }}
+          ref={fileInputRef}
           type="file"
         />
 
         {dragging ? (
-          <div className="pointer-events-none absolute inset-2 z-20 grid place-items-center rounded-2xl border-2 border-dashed border-accent bg-surface/95">
+          <div className="pointer-events-none absolute inset-2 z-20 grid place-items-center rounded-field border border-dashed border-accent bg-surface/95">
             <span className="flex flex-col items-center gap-1.5">
-              <span className="grid size-10 place-items-center rounded-xl bg-accent-soft text-accent">
-                <ImagePlus className="size-5" />
-              </span>
-              <span className="text-[12.5px] font-semibold text-ink">
+              <ImagePlus className="size-5 text-accent" />
+              <span className="text-body-sm font-semibold text-ink">
                 Drop images to attach
               </span>
-              <span className="text-[10px] text-muted">
+              <span className="text-meta text-muted">
                 PNG, JPEG, or WebP · up to {MAX_ATTACHMENTS}
               </span>
             </span>
@@ -377,41 +377,41 @@ export function Composer({
                 >
                   <button
                     aria-label={`Preview image ${index + 1}: ${attachment.filename}`}
-                    className="relative block size-[84px] cursor-zoom-in overflow-hidden rounded-xl border border-line bg-surface-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+                    className="relative block size-[84px] cursor-zoom-in overflow-hidden rounded-field border border-line bg-surface-muted transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
                     onClick={() => setPreviewIndex(index)}
                     type="button"
                   >
                     {/* biome-ignore lint/performance/noImgElement: data URLs are local and cannot be optimized by next/image */}
                     <img
                       alt=""
-                      className="h-full w-full object-cover transition duration-150 group-hover/preview:brightness-95 motion-reduce:transition-none"
+                      className="h-full w-full object-cover transition duration-fast group-hover/preview:brightness-95 motion-reduce:transition-none"
                       height={84}
                       src={attachment.previewURL}
                       width={84}
                     />
-                    <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/70 via-black/40 to-transparent px-1.5 pb-1 pt-4 text-[9px] font-medium text-white/95">
-                      {attachment.filename}
-                    </span>
                     {attachments.length > 1 ? (
-                      <span className="absolute left-1.5 top-1.5 grid size-4 place-items-center rounded-full bg-black/65 text-[8px] font-semibold text-white">
+                      <span className="absolute left-1.5 top-1.5 grid size-4 place-items-center rounded-full bg-black/65 text-meta font-semibold text-white">
                         {index + 1}
                       </span>
                     ) : null}
                   </button>
                   <button
                     aria-label={`Remove ${attachment.filename}`}
-                    className="absolute -right-1.5 -top-1.5 z-10 grid size-6 place-items-center rounded-full border border-line bg-surface text-muted shadow-sm transition hover:bg-danger-soft hover:text-danger disabled:opacity-40"
+                    className="absolute -right-1.5 -top-1.5 z-10 grid size-6 place-items-center rounded-full border border-line bg-surface text-muted transition-colors duration-fast hover:bg-danger-soft hover:text-danger disabled:opacity-40"
                     disabled={preparing}
                     onClick={() => removeAttachment(attachment.id)}
                     type="button"
                   >
                     <X className="size-3" />
                   </button>
+                  <span className="mt-1 block truncate text-meta text-faint">
+                    {attachment.filename}
+                  </span>
                 </div>
               ))}
 
               {preparing ? (
-                <div className="grid size-[84px] shrink-0 animate-pulse place-items-center rounded-xl border border-line bg-surface-muted motion-reduce:animate-none">
+                <div className="grid size-[84px] shrink-0 animate-pulse place-items-center rounded-field border border-line bg-surface-muted motion-reduce:animate-none">
                   <Spinner className="size-4 text-faint" />
                 </div>
               ) : null}
@@ -419,13 +419,13 @@ export function Composer({
               {attachments.length < MAX_ATTACHMENTS && !preparing ? (
                 <button
                   aria-label="Add images"
-                  className="group/add grid size-[84px] shrink-0 place-items-center rounded-xl border border-dashed border-line-strong bg-surface-muted/40 text-muted transition hover:border-accent/40 hover:bg-accent-soft/60 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+                  className="group/add grid size-[84px] shrink-0 place-items-center rounded-field border border-dashed border-line-strong bg-surface-muted/40 text-muted transition-colors duration-fast hover:border-accent/40 hover:bg-accent-soft/60 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
                   onClick={() => fileInputRef.current?.click()}
                   type="button"
                 >
                   <span className="flex flex-col items-center gap-1">
                     <ImagePlus className="size-4" />
-                    <span className="text-[9px] font-medium">Add</span>
+                    <span className="text-meta font-medium">Add</span>
                   </span>
                 </button>
               ) : null}
@@ -433,7 +433,7 @@ export function Composer({
 
             <output
               aria-live="polite"
-              className="mt-1.5 flex items-center justify-between gap-3 text-[9.5px] text-faint"
+              className="mt-1.5 flex items-center justify-between gap-3 text-meta text-faint"
             >
               <span>
                 {preparing
@@ -449,25 +449,24 @@ export function Composer({
 
         {attachmentError ? (
           <div
-            className="mx-3 mt-2 flex items-start gap-2 rounded-lg border border-danger/20 bg-danger-soft px-2.5 py-2 text-danger"
+            className="mx-3 mt-2 flex items-start gap-2 rounded-field border border-danger/20 bg-danger-soft px-2.5 py-2 text-danger"
             id="composer-attachment-error"
             role="alert"
           >
             <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
-            <p className="min-w-0 flex-1 text-[10.5px] leading-4">
+            <p className="min-w-0 flex-1 text-meta leading-4">
               {attachmentError}
             </p>
           </div>
         ) : null}
 
         <textarea
-          ref={textareaRef}
           aria-describedby={
             attachmentError ? "composer-attachment-error" : undefined
           }
-          aria-label="Message codjent"
+          aria-label="Message Codjent"
           className={cn(
-            "block w-full resize-none bg-transparent px-4 pt-4 text-[14.5px] leading-6 text-ink outline-none placeholder:text-faint focus-visible:outline-none disabled:cursor-not-allowed",
+            "block w-full resize-none bg-transparent px-4 pt-4 text-body leading-6 text-ink outline-none placeholder:text-faint focus-visible:outline-none disabled:cursor-not-allowed",
             large ? "min-h-[82px]" : "min-h-[54px]",
           )}
           disabled={busy || sending}
@@ -475,15 +474,15 @@ export function Composer({
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           placeholder={placeholder}
+          ref={textareaRef}
           rows={1}
           value={value}
         />
 
         <div className="flex items-center gap-1.5 px-2.5 pb-2.5">
           <button
-            type="button"
             aria-label="Attach images"
-            className="grid size-8 shrink-0 place-items-center rounded-lg text-muted transition hover:bg-surface-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
+            className="grid size-11 shrink-0 place-items-center rounded-field text-muted transition-colors duration-fast hover:bg-surface-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 sm:size-9"
             disabled={
               controlsDisabled ||
               preparing ||
@@ -495,9 +494,10 @@ export function Composer({
                 ? `Up to ${MAX_ATTACHMENTS} images per message`
                 : `Attach images (PNG, JPEG, WebP; up to ${MAX_ATTACHMENTS}, ${formatBytes(MAX_IMAGE_BYTES)} each)`
             }
+            type="button"
           >
             {preparing ? (
-              <Spinner className="size-3.5" />
+              <Spinner className="size-4" />
             ) : (
               <ImagePlus className="size-4" />
             )}
@@ -505,8 +505,9 @@ export function Composer({
 
           <Menu.Root>
             <Menu.Trigger
-              className="inline-flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11.5px] font-medium text-muted outline-none transition hover:bg-surface-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-11 min-w-0 items-center gap-1.5 rounded-field px-2 py-1.5 text-meta font-medium text-muted outline-none transition-colors duration-fast hover:bg-surface-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-50 sm:h-8"
               disabled={controlsDisabled || !activeProvider}
+              title={modelName(providers, providerID, modelID)}
             >
               <Sparkles className="size-3.5 shrink-0 text-accent" />
               <span className="max-w-[150px] truncate">
@@ -524,7 +525,7 @@ export function Composer({
                   {providers.map((provider, providerIndex) => (
                     <div key={provider.id}>
                       {providerIndex > 0 ? <Menu.Separator /> : null}
-                      <div className="px-2.5 pb-1 pt-2 text-[9.5px] font-medium uppercase tracking-[0.14em] text-faint">
+                      <div className="px-2.5 pb-1 pt-2 text-meta font-medium text-faint">
                         {provider.name}
                       </div>
                       {provider.models.map((model) => {
@@ -544,10 +545,10 @@ export function Composer({
                               ) : null}
                             </span>
                             <span className="min-w-0">
-                              <span className="block truncate text-[12px] font-medium text-ink">
+                              <span className="block truncate text-body-sm font-medium text-ink">
                                 {model.name}
                               </span>
-                              <span className="block truncate font-mono text-[10px] text-faint">
+                              <span className="block truncate font-mono text-meta text-faint">
                                 {model.id}
                               </span>
                             </span>
@@ -566,7 +567,7 @@ export function Composer({
           <Menu.Root>
             <Menu.Trigger
               className={cn(
-                "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-1.5 text-[11.5px] font-medium outline-none transition hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50",
+                "inline-flex h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-field px-2 py-1.5 text-meta font-medium outline-none transition-colors duration-fast hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50 sm:h-8",
                 access === "full" ? "text-danger" : "text-muted hover:text-ink",
               )}
               disabled={controlsDisabled}
@@ -576,7 +577,7 @@ export function Composer({
               ) : (
                 <LockKeyhole className="size-3.5" />
               )}
-              {access === "full" ? "Full access" : "Ask"}
+              {accessLabel(access)}
               <ChevronDown className="size-3" />
             </Menu.Trigger>
             <Menu.Portal>
@@ -586,17 +587,17 @@ export function Composer({
                     className={menuItemClass}
                     onClick={() => void chooseAccess("ask")}
                   >
-                    <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg bg-surface-muted text-muted">
+                    <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-field bg-surface-muted text-muted">
                       <LockKeyhole className="size-3.5" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1.5 text-[12px] font-medium text-ink">
+                      <span className="flex items-center gap-1.5 text-body-sm font-medium text-ink">
                         Ask before commands
                         {access === "ask" ? (
                           <Check className="size-3 text-accent" />
                         ) : null}
                       </span>
-                      <span className="mt-0.5 block text-[10.5px] leading-4 text-faint">
+                      <span className="mt-0.5 block text-meta leading-4 text-faint">
                         File edits run freely. Shell commands wait for you.
                       </span>
                     </span>
@@ -605,18 +606,18 @@ export function Composer({
                     className={menuItemClass}
                     onClick={() => void chooseAccess("full")}
                   >
-                    <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg bg-danger-soft text-danger">
+                    <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-field bg-danger-soft text-danger">
                       <Unlock className="size-3.5" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1.5 text-[12px] font-medium text-danger">
+                      <span className="flex items-center gap-1.5 text-body-sm font-medium text-danger">
                         Full access
                         {access === "full" ? (
                           <Check className="size-3 text-danger" />
                         ) : null}
                       </span>
-                      <span className="mt-0.5 block text-[10.5px] leading-4 text-faint">
-                        Commands run without approval in this workspace.
+                      <span className="mt-0.5 block text-meta leading-4 text-faint">
+                        Commands run without approval in this thread.
                       </span>
                     </span>
                   </Menu.Item>
@@ -628,28 +629,27 @@ export function Composer({
           <div className="ml-auto flex items-center gap-1.5">
             {busy ? (
               <button
-                type="button"
                 aria-label="Stop run"
-                className="grid size-8 place-items-center rounded-full bg-danger text-white transition-opacity hover:opacity-90"
-                title="Stop run"
+                className="grid size-11 place-items-center rounded-field bg-ink text-app transition-colors duration-fast hover:bg-ink/90 sm:size-9"
                 onClick={stop}
+                title="Stop run"
+                type="button"
               >
-                <Square className="size-3 fill-current" />
+                <Square className="size-3.5 fill-current" />
               </button>
             ) : (
               <button
-                type="button"
                 aria-label="Send message"
-                className="grid size-8 place-items-center rounded-full bg-ink text-app transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:bg-line-strong disabled:text-faint"
+                className="grid size-11 place-items-center rounded-field border border-accent bg-accent text-app transition-colors duration-fast hover:bg-accent/90 disabled:cursor-not-allowed disabled:border-line disabled:bg-surface-muted disabled:text-faint sm:size-9"
                 disabled={
                   (!value.trim() && attachments.length === 0) ||
                   sending ||
                   preparing
                 }
-                onClick={() => void submit()}
+                type="submit"
               >
                 {sending ? (
-                  <Spinner className="size-3.5" label="Sending" />
+                  <Spinner className="size-4" label="Sending" />
                 ) : (
                   <ArrowUp className="size-4" strokeWidth={2.25} />
                 )}
@@ -657,21 +657,15 @@ export function Composer({
             )}
           </div>
         </div>
-      </fieldset>
+      </form>
 
-      <div className="mt-2 flex items-center justify-between gap-3 px-2 text-[10px] text-faint">
+      <div className="mt-2 flex items-center justify-between gap-3 px-1 text-meta text-faint">
         <span className="inline-flex min-w-0 items-center gap-1.5">
           <Folder className="size-3 shrink-0" />
           <span className="truncate">{workspaceName || "Workspace"}</span>
-          <span className="text-line-strong">·</span>
-          <span className="shrink-0">Local checkout</span>
         </span>
-        <span className="shrink-0">
-          {access === "full" ? (
-            <span className="text-danger">Full access enabled</span>
-          ) : (
-            "Commands ask first"
-          )}
+        <span className="hidden shrink-0 sm:inline">
+          Enter to send · Shift+Enter for a new line
         </span>
       </div>
 

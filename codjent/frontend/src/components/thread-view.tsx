@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { ArrowDown } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Composer } from "@/components/composer";
 import { Transcript } from "@/components/transcript";
 import type { LiveRun, SendMessage } from "@/hooks/use-codjent";
@@ -39,6 +40,17 @@ export function ThreadView({
 }: ThreadViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+  const [showJump, setShowJump] = useState(false);
+
+  const jumpToLatest = () => {
+    const container = scrollRef.current;
+    if (!container) {
+      return;
+    }
+    stickToBottom.current = true;
+    setShowJump(false);
+    container.scrollTop = container.scrollHeight;
+  };
 
   useEffect(() => {
     stickToBottom.current = true;
@@ -46,6 +58,7 @@ export function ThreadView({
     if (container) {
       container.scrollTop = container.scrollHeight;
     }
+    setShowJump(false);
   }, []);
 
   useEffect(() => {
@@ -53,12 +66,14 @@ export function ThreadView({
     if (!container) {
       return;
     }
-    const scrollToBottom = () => {
+    const onResize = () => {
       if (stickToBottom.current) {
         container.scrollTop = container.scrollHeight;
+      } else {
+        setShowJump(true);
       }
     };
-    const observer = new ResizeObserver(scrollToBottom);
+    const observer = new ResizeObserver(onResize);
     observer.observe(container);
     const content = container.firstElementChild;
     if (content) {
@@ -71,30 +86,46 @@ export function ThreadView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div
-        ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto"
-        onScroll={() => {
-          const container = scrollRef.current;
-          if (!container) {
-            return;
-          }
-          const distance =
-            container.scrollHeight -
-            container.scrollTop -
-            container.clientHeight;
-          stickToBottom.current = distance < 140;
-        }}
-      >
-        <Transcript
-          live={live}
-          messages={messages}
-          onResolveApproval={onResolveApproval}
-          workspaceName={workspaceName}
-        />
+      <div className="relative min-h-0 flex-1">
+        <div
+          className="h-full overflow-y-auto"
+          onScroll={() => {
+            const container = scrollRef.current;
+            if (!container) {
+              return;
+            }
+            const distance =
+              container.scrollHeight -
+              container.scrollTop -
+              container.clientHeight;
+            const next = distance < 140;
+            stickToBottom.current = next;
+            setShowJump(!next);
+          }}
+          ref={scrollRef}
+        >
+          <Transcript
+            live={live}
+            messages={messages}
+            onResolveApproval={onResolveApproval}
+            workspaceName={workspaceName}
+          />
+        </div>
+
+        {showJump ? (
+          <button
+            aria-label="Jump to latest"
+            className="absolute bottom-4 left-1/2 inline-flex min-h-11 -translate-x-1/2 items-center gap-1.5 rounded-full border border-line bg-surface px-4 py-1.5 text-meta font-medium text-muted shadow-overlay transition-colors duration-fast hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 sm:min-h-0 sm:px-3"
+            onClick={jumpToLatest}
+            type="button"
+          >
+            <ArrowDown className="size-3.5" />
+            Latest
+          </button>
+        ) : null}
       </div>
 
-      <div className="shrink-0 border-t border-line/70 bg-app/95 px-4 pb-3 pt-3 backdrop-blur sm:px-6">
+      <div className="shrink-0 border-t border-line bg-app px-4 pb-3 pt-3 sm:px-6">
         <Composer
           autoFocus
           busy={busy}

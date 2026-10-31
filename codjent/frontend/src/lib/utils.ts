@@ -1,4 +1,12 @@
-import type { Message, Part, RunStatus, Thread, ToolCall } from "@/lib/types";
+import { runStatus } from "@/lib/status";
+import type {
+  AccessMode,
+  Message,
+  Part,
+  ProviderInfo,
+  RunStatus,
+  Thread,
+} from "@/lib/types";
 
 export function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -112,76 +120,23 @@ export function upsertThread(threads: Thread[], thread: Thread): Thread[] {
   ]);
 }
 
-export function parseCommand(argumentsText: string): string {
-  try {
-    const parsed = JSON.parse(argumentsText) as Record<string, unknown>;
-    if (typeof parsed.command === "string") {
-      return parsed.command;
-    }
-    if (typeof parsed.cmd === "string") {
-      return parsed.cmd;
-    }
-  } catch {
-    // Fall through to the raw arguments.
-  }
-  return argumentsText;
+export function modelName(
+  providers: ProviderInfo[],
+  providerID: string,
+  modelID: string,
+): string {
+  const provider = providers.find((item) => item.id === providerID);
+  return (
+    provider?.models.find((model) => model.id === modelID)?.name ?? modelID
+  );
 }
 
-export function formatToolArguments(tool: ToolCall): string {
-  try {
-    const parsed = JSON.parse(tool.arguments) as Record<string, unknown>;
-    if (tool.name === "execute_command") {
-      return typeof parsed.command === "string"
-        ? parsed.command
-        : JSON.stringify(parsed, null, 2);
-    }
-    if (typeof parsed.path === "string") {
-      return parsed.path;
-    }
-    return JSON.stringify(parsed, null, 2);
-  } catch {
-    return tool.arguments;
-  }
-}
-
-export function toolLabel(name: string): string {
-  switch (name) {
-    case "execute_command":
-      return "Command";
-    case "read_file":
-      return "Read file";
-    case "write_file":
-      return "Write file";
-    case "edit_file":
-      return "Edit file";
-    case "list_files":
-    case "list_directory":
-      return "List files";
-    case "search_files":
-    case "grep":
-      return "Search";
-    default:
-      return name
-        .replace(/[_-]+/g, " ")
-        .replace(/\b\w/g, (letter) => letter.toUpperCase());
-  }
+export function accessLabel(mode: AccessMode): string {
+  return mode === "full" ? "Full access" : "Ask";
 }
 
 export function statusCopy(status: RunStatus): string {
-  switch (status) {
-    case "starting":
-      return "Starting";
-    case "running":
-      return "Working";
-    case "waiting_approval":
-      return "Needs approval";
-    case "completed":
-      return "Done";
-    case "failed":
-      return "Failed";
-    case "canceled":
-      return "Canceled";
-  }
+  return runStatus[status].label;
 }
 
 export function errorMessage(error: unknown): string {
