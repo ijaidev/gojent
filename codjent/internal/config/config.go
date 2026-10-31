@@ -19,8 +19,8 @@ import (
 const (
 	// DefaultAddr keeps the agent on loopback: it can execute commands.
 	DefaultAddr = "127.0.0.1:8787"
-	// DefaultMaxSteps bounds the ReAct loop.
-	DefaultMaxSteps = 20
+	// DefaultMaxSteps is the default ReAct step limit. Zero means unlimited.
+	DefaultMaxSteps = 0
 )
 
 // Config is the fully resolved runtime configuration.
@@ -97,7 +97,7 @@ func Parse(args []string, output io.Writer) (Config, error) {
 	fs.StringVar(&cfg.Provider, "provider", cfg.Provider, "default model provider")
 	fs.StringVar(&cfg.Model, "model", cfg.Model, "default model ID")
 	fs.StringVar(&models, "google-models", models, "comma-separated Google model IDs")
-	fs.IntVar(&cfg.MaxSteps, "max-steps", cfg.MaxSteps, "maximum ReAct steps per run")
+	fs.IntVar(&cfg.MaxSteps, "max-steps", cfg.MaxSteps, "maximum ReAct steps per run (0 = unlimited)")
 	fs.StringVar(&accessMode, "access-mode", accessMode, "default access mode: ask or full")
 	fs.StringVar(&origins, "allowed-origins", origins, "comma-separated browser origins allowed by CORS")
 	fs.StringVar(&cfg.FrontendDir, "frontend-dir", cfg.FrontendDir, "serve the frontend from this directory instead of the embedded build")
@@ -120,8 +120,8 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.DataDir) == "" {
 		return fmt.Errorf("config: data directory is required")
 	}
-	if c.MaxSteps <= 0 {
-		return fmt.Errorf("config: max steps must be positive")
+	if c.MaxSteps < 0 {
+		return fmt.Errorf("config: max steps must be zero (unlimited) or positive")
 	}
 	if !c.AccessMode.Valid() {
 		return fmt.Errorf("config: access mode %q is invalid (want ask or full)", c.AccessMode)
