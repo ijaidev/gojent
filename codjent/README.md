@@ -1,9 +1,10 @@
 # Codjent
 
 Codjent is a local coding agent built on the [gojent](../README.md) agent
-loop. It pairs a Go backend with a Next.js frontend: persistent threads,
-streaming runs, tool calls, approval prompts, and a provider registry. The
-frontend lives in [`frontend/`](frontend) and is designed to feel like
+loop. It is a sample application that exercises the runtime end to end, not a
+supported product. It pairs a Go backend with a Next.js frontend: persistent
+threads, streaming runs, tool calls, approval prompts, and a provider registry.
+The frontend lives in [`frontend/`](frontend) and is designed to feel like
 [T3 Code](https://t3.codes).
 
 ## Current scope
