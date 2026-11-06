@@ -765,7 +765,9 @@ examples            runnable demonstrations
 ## Development
 
 The repository is a Go workspace with a root module and several optional
-modules. `go.work` is intentionally not tracked; create it once after cloning:
+modules. `go.work` is intentionally not tracked; create it once after cloning.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for module, release, commit, and
+pull-request workflow.
 
 ```bash
 just workspace
@@ -811,9 +813,11 @@ store runs its conformance checks as part of the opt-in integration tests.
 
 ## Versioning
 
-The root module and each optional module are versioned independently. Tag the
-root module as `vX.Y.Z` and every submodule with its directory prefix, so `go
-get` can resolve each one:
+The root module and each optional module are versioned independently. See
+[`CHANGELOG.md`](CHANGELOG.md) for released changes to the root module; adapter
+and codjent release notes belong with their own tags. Tag the root module as
+`vX.Y.Z` and every submodule with its directory prefix, so `go get` can resolve
+each one:
 
 ```bash
 git tag v0.2.0                    # root module

@@ -92,5 +92,9 @@ fmt-check:
 frontend-check:
     just --justfile codjent/justfile frontend-check
 
-# Run all checks (formatting, tidy, vet, build, lint, tests, and frontend)
-check: fmt-check tidy-check vet build lint test frontend-check
+# Test repository shell scripts
+scripts-test:
+    bash scripts/release-notes-test.sh
+
+# Run all checks (formatting, tidy, vet, build, lint, tests, scripts, and frontend)
+check: fmt-check tidy-check vet build lint test scripts-test frontend-check
