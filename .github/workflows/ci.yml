@@ -105,6 +105,9 @@ jobs:
       - name: Run golangci-lint
         run: just lint
 
+      - name: Check dependency boundaries
+        run: just arch-check
+
   test:
     name: Unit tests
     runs-on: ubuntu-latest
