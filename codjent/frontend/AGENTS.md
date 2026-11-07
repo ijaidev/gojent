@@ -20,3 +20,18 @@ The root `AGENTS.md` and the codjent `AGENTS.md` also apply. This file adds the 
 - Vitest covers pure logic under `src/lib`; there is no DOM component-test harness. Keep new tests focused on reducers, state, and serialization. For visual changes, verify with lint, type-check, and a production build; do not add a one-off browser automation stack for a single screen.
 - Frontend dependencies are deliberate: prefer React, Next, Base UI, and the existing local primitives. Do not add a UI kit, state library, or another fetch wrapper without a concrete need.
 - For frontend work, load the relevant skills under `.agents/skills` (for example `design-taste-frontend`, `frontend-design`, `ui-ux-pro-max`, `vercel-composition-patterns`, `vercel-react-best-practices`, and `web-design-guidelines`). Treat `.agents/skills/**` and `skills-lock.json` as vendored; do not hand-edit skill content or hashes.
+
+## Where a change goes
+
+| Change | Home |
+| --- | --- |
+| Server calls and wire types | `src/lib/api.ts` and `src/lib/types.ts`; update both when a Go DTO changes |
+| Run event reduction and live state | `src/lib/run-state.ts` |
+| Presentation helpers | `src/lib/*.ts` next to the view that uses them |
+| Reusable primitives | `src/components/ui` |
+| Product screens and composition | `src/components` and `src/app` |
+| Design tokens and theme | `src/app/globals.css`; use the semantic utilities, never raw colors |
+
+The frontend renders state and sends intent. Do not put run orchestration,
+approvals, or provider translation in components, and do not call `fetch`
+outside `src/lib/api.ts`.

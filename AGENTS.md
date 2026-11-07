@@ -6,6 +6,7 @@ Gojent is a public, Apache-2.0 Go project. The root module is a small, provider-
 
 - Create the local workspace once: `just workspace`
 - Run all race-enabled unit tests: `just test`
+- Check module and package boundaries: `just arch-check` (also part of `just check`)
 - Run the full gate: `just check`
 - Run one module's checks: `just --justfile providers/google/justfile test`
 - Run one test: `go test -race ./core/agent -run TestAgent_Generate`
@@ -27,6 +28,30 @@ Gojent is a public, Apache-2.0 Go project. The root module is a small, provider-
 - Add a provider through a new adapter module with accurate `Info`, canonical error mapping, and deterministic conformance coverage. Reuse shared adapter helpers such as `providers/internal/httpheader`, and keep provider configuration and protocol translation in the adapter.
 - No workflow engine, graph DSL, vector database, UI, or hosted service belongs in the core. Composition is ordinary Go: functions, goroutines, and `errgroup`-style code.
 - Application-specific behavior, including codjent's local-only scope and layering, belongs in its own module and its own `AGENTS.md`; it must not leak into core contracts.
+
+## Where a change goes
+
+Keep each change in the narrowest module that owns it:
+
+| Change | Home |
+| --- | --- |
+| Agent loop, policies, events, run options | `core/agent` |
+| Canonical messages, requests, streams, model errors | `core/llm` |
+| Typed tools, schemas, validation | `core/tool` |
+| Session identity and the `Load`/`Append` contract | `core/session` |
+| A model provider | new module under `providers/<name>/`; run `llmtest.Run` |
+| A session backend | new module under `stores/<name>/`; run `sessiontest.Run` |
+| A ready-made tool | `tools/<name>/`; table-driven tests |
+| The sample app's runs, approvals, persistence | `codjent/internal/app` |
+| HTTP parsing, status codes, SSE | `codjent/internal/httpapi`; call `app`, never the reverse |
+| Provider configuration and catalog | `codjent/internal/provider` |
+| The sample UI | `codjent/frontend`; see its `AGENTS.md` |
+| A runnable example | `examples/<name>/`; its own module |
+
+`just arch-check` parses imports and fails when this direction is broken: the
+root module must stay standard-library only, `core` imports only `core`,
+providers and stores do not import each other, and `codjent/internal/app` never
+imports `httpapi` or `cmd`.
 
 ## Core contracts and invariants
 
@@ -51,6 +76,7 @@ Gojent is a public, Apache-2.0 Go project. The root module is a small, provider-
 ## Tests and verification
 
 - CI runs the same recipes as `just check`. Before handoff, run the narrowest recipe that covers the change; run `just check` for mixed, risky, or cross-module changes. A docs-only change does not need the full frontend build.
+- `just arch-check` parses imports rather than loading packages, so it needs no workspace or network. It fails on third-party imports in the standard-library-only packages, cross-provider or cross-store imports, and codjent layering violations.
 - Add tests for every behavior change and every bug fix. Table-driven tests with `t.Run` are the norm. Use an external `_test` package when exercising the public API and an internal test package when the behavior depends on unexported code.
 - Every provider adapter must run `llmtest.Run`; every session store must run `sessiontest.Run`. Keep the conformance suites deterministic and provider-neutral. Add adapter-specific tests only for behavior the shared suite cannot express.
 - Do not use sleeps or timing guesses to synchronize tests. Use contexts, channels, `httptest`, and injected fakes. Do not weaken assertions or skip tests to make a suite pass.
