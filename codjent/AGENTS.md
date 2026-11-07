@@ -29,8 +29,11 @@ Codjent is the sample coding agent built on Gojent: a Go backend, an embedded st
 | Browser UI | `frontend`, following `frontend/AGENTS.md` |
 
 The dependency direction is `cmd` → `httpapi` → `app` → `provider`/`store` → core.
-`app` never imports `httpapi` or `cmd`, and `httpapi` never imports `cmd`. Run
-`just arch-check` from the repository root after moving code across these layers.
+`app` never imports `httpapi` or `cmd`, and `httpapi` never imports `cmd`.
+Concrete stores and provider catalogs may import `app` types and the
+`app.Store` surface they implement; they must not reach upward into `httpapi`
+or `cmd`. Run `just arch-check` from the repository root after moving code
+across these layers.
 
 ## Persistence and compatibility
 

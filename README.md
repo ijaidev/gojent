@@ -780,9 +780,10 @@ just test            # unit tests
 just vet             # go vet
 just build           # go build
 just lint            # static analysis
+just arch-check      # module and package dependency boundaries
 just tidy            # go mod tidy
 just frontend-check  # rebuild codjent UI and verify committed assets
-just check           # formatting, tidy, vet, build, lint, tests, and frontend
+just check           # formatting, tidy, vet, build, lint, architecture, tests, and frontend
 ```
 
 Run a single module's recipe with `just --justfile <dir>/justfile <recipe>`, for
