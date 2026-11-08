@@ -17,6 +17,24 @@ Codjent is the sample coding agent built on Gojent: a Go backend, an embedded st
 - Runs are asynchronous and per-thread; keep cancellation, approval, and SSE replay consistent. Do not put run orchestration in HTTP handlers or the UI.
 - The frontend is a static export embedded in the binary; `frontend/out` is committed. Use the codjent recipes to rebuild it and never hand-edit it.
 
+## Where a change goes
+
+| Change | Home |
+| --- | --- |
+| Run lifecycle, approvals, persistence, thread state | `internal/app` |
+| HTTP routing, request limits, status codes, SSE | `internal/httpapi`; validate and translate, then call `app` |
+| Provider catalog and connection settings | `internal/provider` and `internal/provider/catalog` |
+| SQLite persistence | `internal/store/sqlite` |
+| Process startup, flags, signal handling | `cmd/codjent` |
+| Browser UI | `frontend`, following `frontend/AGENTS.md` |
+
+The dependency direction is `cmd` → `httpapi` → `app` → `provider`/`store` → core.
+`app` never imports `httpapi` or `cmd`, and `httpapi` never imports `cmd`.
+Concrete stores and provider catalogs may import `app` types and the
+`app.Store` surface they implement; they must not reach upward into `httpapi`
+or `cmd`. Run `just arch-check` from the repository root after moving code
+across these layers.
+
 ## Persistence and compatibility
 
 - Codjent's SQLite store persists canonical `llm.Message` JSON with a format version. Keep schema creation idempotent and preserve existing local databases; if a layout cannot be migrated, fail with a clear message rather than silently rewriting transcripts.

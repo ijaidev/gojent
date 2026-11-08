@@ -50,6 +50,10 @@ lint:
         just --justfile "$dir/justfile" lint
     done
 
+# Check module and package dependency boundaries
+arch-check:
+    go run ./scripts/archcheck
+
 # Tidy go.mod and go.sum in every module
 tidy:
     #!/usr/bin/env bash
@@ -96,5 +100,5 @@ frontend-check:
 scripts-test:
     bash scripts/release-notes-test.sh
 
-# Run all checks (formatting, tidy, vet, build, lint, tests, scripts, and frontend)
-check: fmt-check tidy-check vet build lint test scripts-test frontend-check
+# Run all checks (formatting, tidy, vet, build, lint, architecture, tests, scripts, and frontend)
+check: fmt-check tidy-check vet build lint arch-check test scripts-test frontend-check
