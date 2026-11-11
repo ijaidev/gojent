@@ -348,6 +348,8 @@ The root [`tools`](tools) package bundles the common tool sets:
 
 ```go
 import (
+	"context"
+
 	"github.com/ijaidev/gojent/tools"
 	"github.com/ijaidev/gojent/tools/exec"
 	"github.com/ijaidev/gojent/tools/fs"
@@ -356,14 +358,25 @@ import (
 
 fsTools, err := tools.StandardFilesystemTools(fs.Config{BaseDir: "/workspace"})
 webTools, err := tools.StandardWebTools(web.FetchConfig{})
-execTools, err := tools.StandardExecTools(exec.Config{BaseDir: "/workspace"})
+managedExec, err := tools.NewExecTools(exec.ManagerConfig{BaseDir: "/workspace"})
+defer managedExec.Close(context.Background())
+execTools := managedExec.All()
 tracker, taskTools, err := tools.StandardTaskTools()
 _ = tracker
 ```
 
-Filesystem and command tools are sandboxed to `BaseDir` when one is set. Command
-execution is a destructive capability: gate it with a policy or approver before
-giving it to a model.
+`execute_command` waits in the foreground, then promotes a long-running command
+to the background instead of killing it. Set `background: true` to start a
+command immediately. Background processes are managed with `process_status`,
+`read_process_output`, `wait_process`, and `kill_process`; process IDs are
+opaque handles, not raw PIDs. The manager must be closed to stop any processes
+that are still running. `StandardExecTools` remains the single foreground-only
+tool for callers that do not need the managed tool set.
+
+Filesystem tools are sandboxed to `BaseDir` when one is set. Command tools use
+`BaseDir` for relative working directories, but commands run with the host
+user's permissions; gate them with a policy or approver before giving them to a
+model.
 
 ## Streaming
 

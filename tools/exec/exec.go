@@ -1,4 +1,5 @@
-// Package exec provides readymade tools for executing commands and shell scripts.
+// Package exec provides readymade tools for executing commands and shell
+// scripts, including managed background processes.
 package exec
 
 import (
@@ -69,7 +70,9 @@ func (l *limitedBuffer) String() string {
 	return l.buf.String()
 }
 
-// NewExecuteCommandTool creates a Tool for executing system commands.
+// NewExecuteCommandTool creates a foreground-only Tool for executing system
+// commands. For background processes, auto-promotion, and the companion
+// process tools, use NewManager and NewTools instead.
 func NewExecuteCommandTool(cfg ...Config) (tool.Tool, error) {
 	var c Config
 	if len(cfg) > 0 {

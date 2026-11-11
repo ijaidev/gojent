@@ -13,6 +13,18 @@ Until v1, minor releases may include breaking changes; call them out explicitly.
 Changes land here until a release. When cutting a version, move the entries
 under a new `## [x.y.z] - YYYY-MM-DD` heading.
 
+## [0.2.0] - 2026-11-11
+
+### Added
+
+- Managed background process tools in `tools/exec`: `process_status`,
+  `read_process_output`, `wait_process`, and `kill_process`, plus foreground
+  auto-promotion and an explicit `background` input on the managed
+  `execute_command` tool.
+- `tools.NewExecTools`, which returns the managed exec tool set and a manager
+  that must be closed to stop running processes. `StandardExecTools` remains
+  the foreground-only convenience API.
+
 ## [0.1.0] - 2026-10-30
 
 ### Added
@@ -21,5 +33,6 @@ under a new `## [x.y.z] - YYYY-MM-DD` heading.
   contracts, typed tools, the session store contract, ready-made tools, and the
   deterministic mock provider.
 
-[Unreleased]: https://github.com/ijaidev/gojent/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ijaidev/gojent/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ijaidev/gojent/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ijaidev/gojent/releases/tag/v0.1.0
