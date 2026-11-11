@@ -13,6 +13,8 @@ Until v1, minor releases may include breaking changes; call them out explicitly.
 Changes land here until a release. When cutting a version, move the entries
 under a new `## [x.y.z] - YYYY-MM-DD` heading.
 
+## [0.2.0] - 2026-11-11
+
 ### Added
 
 - Managed background process tools in `tools/exec`: `process_status`,
@@ -31,5 +33,6 @@ under a new `## [x.y.z] - YYYY-MM-DD` heading.
   contracts, typed tools, the session store contract, ready-made tools, and the
   deterministic mock provider.
 
-[Unreleased]: https://github.com/ijaidev/gojent/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ijaidev/gojent/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ijaidev/gojent/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ijaidev/gojent/releases/tag/v0.1.0
