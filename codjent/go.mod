@@ -3,7 +3,7 @@ module github.com/ijaidev/gojent/codjent
 go 1.25.5
 
 require (
-	github.com/ijaidev/gojent v0.1.0
+	github.com/ijaidev/gojent v0.2.0
 	github.com/ijaidev/gojent/providers/anthropic v0.1.0
 	github.com/ijaidev/gojent/providers/google v0.1.0
 	github.com/ijaidev/gojent/providers/openai v0.1.0

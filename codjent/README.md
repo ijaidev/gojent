@@ -20,8 +20,11 @@ The frontend lives in [`frontend/`](frontend) and is designed to feel like
 - Image attachments in prompts: pick, drag/drop, or paste PNG, JPEG, and WebP
   files, preview them in a keyboard-navigable lightbox, and replay them with
   the thread.
-- `execute_command` requires approval in `ask` mode and runs without prompts in
-  `full` mode.
+- `execute_command` supports background execution: long-running foreground
+  commands are promoted to the background, and `background: true` starts
+  immediately. `execute_command` and `kill_process` require approval in `ask`
+  mode; `process_status`, `read_process_output`, and `wait_process` are
+  read-only. All exec tools run without prompts in `full` mode.
 - Per-thread provider, model, and access-mode settings.
 - Replayable run events and resumable SSE streams.
 - Canceled and failed runs persist the work produced before they stopped:
