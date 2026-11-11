@@ -13,6 +13,16 @@ Until v1, minor releases may include breaking changes; call them out explicitly.
 Changes land here until a release. When cutting a version, move the entries
 under a new `## [x.y.z] - YYYY-MM-DD` heading.
 
+### Added
+
+- Managed background process tools in `tools/exec`: `process_status`,
+  `read_process_output`, `wait_process`, and `kill_process`, plus foreground
+  auto-promotion and an explicit `background` input on the managed
+  `execute_command` tool.
+- `tools.NewExecTools`, which returns the managed exec tool set and a manager
+  that must be closed to stop running processes. `StandardExecTools` remains
+  the foreground-only convenience API.
+
 ## [0.1.0] - 2026-10-30
 
 ### Added

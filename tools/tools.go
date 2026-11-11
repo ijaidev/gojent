@@ -2,6 +2,8 @@
 package tools
 
 import (
+	"context"
+
 	"github.com/ijaidev/gojent/core/tool"
 	"github.com/ijaidev/gojent/tools/exec"
 	"github.com/ijaidev/gojent/tools/fs"
@@ -46,6 +48,21 @@ func StandardExecTools(cfg ...exec.Config) ([]tool.Tool, error) {
 		return nil, err
 	}
 	return []tool.Tool{cmdTool}, nil
+}
+
+// NewExecTools returns the managed command execution and process tools. The
+// caller owns the returned set and must close it to stop background processes.
+func NewExecTools(cfg exec.ManagerConfig) (*exec.Tools, error) {
+	manager, err := exec.NewManager(cfg)
+	if err != nil {
+		return nil, err
+	}
+	tools, err := exec.NewTools(manager)
+	if err != nil {
+		_ = manager.Close(context.Background())
+		return nil, err
+	}
+	return tools, nil
 }
 
 // StandardTaskTools returns an in-memory task tracker and its associated tools.
