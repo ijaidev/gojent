@@ -17,6 +17,7 @@ import (
 
 	"github.com/ijaidev/gojent/codjent/internal/provider"
 	"github.com/ijaidev/gojent/core/llm"
+	"github.com/ijaidev/gojent/tools/exec"
 )
 
 func TestThreadCRUD(t *testing.T) {
@@ -87,6 +88,159 @@ func TestThreadCRUD(t *testing.T) {
 	if _, err := svc.CreateThread(ctx, CreateThreadInput{Model: "nope"}); !errors.Is(err, provider.ErrUnknownModel) {
 		t.Fatalf("unknown model error = %v", err)
 	}
+}
+
+func TestManagedExecToolsRegistered(t *testing.T) {
+	svc, _, _, _ := newTestService(t, AccessAsk, scriptedStep{text: "ok"})
+
+	found := make(map[string]bool, len(svc.tools))
+	for _, candidate := range svc.tools {
+		found[candidate.Spec().Name] = true
+	}
+	for _, name := range []string{
+		"execute_command",
+		"process_status",
+		"read_process_output",
+		"wait_process",
+		"kill_process",
+	} {
+		if !found[name] {
+			t.Errorf("tool %q is not registered (have %v)", name, found)
+		}
+	}
+}
+
+func TestRequiresApproval(t *testing.T) {
+	for _, name := range []string{"execute_command", "kill_process"} {
+		if !requiresApproval(name) {
+			t.Errorf("requiresApproval(%q) = false, want true", name)
+		}
+	}
+	for _, name := range []string{"process_status", "read_process_output", "wait_process"} {
+		if requiresApproval(name) {
+			t.Errorf("requiresApproval(%q) = true, want false", name)
+		}
+	}
+}
+
+func TestBackgroundCommandThroughService(t *testing.T) {
+	svc, _, _, _ := newTestService(t, AccessFull,
+		scriptedStep{
+			toolCalls: []llm.ToolCall{{
+				CallID: "call_1",
+				Name:   "execute_command",
+				Input:  json.RawMessage(`{"command":"printf ready; sleep 30","background":true}`),
+			}},
+		},
+		scriptedStep{
+			toolCalls: []llm.ToolCall{{
+				CallID: "call_2",
+				Name:   "process_status",
+				Input:  json.RawMessage(`{}`),
+			}},
+		},
+		scriptedStep{text: "Background command started."},
+	)
+
+	thread, err := svc.CreateThread(context.Background(), CreateThreadInput{AccessMode: AccessFull})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	run, err := svc.StartMessage(context.Background(), thread.ID, "start it")
+	if err != nil {
+		t.Fatalf("StartMessage: %v", err)
+	}
+	reader := subscribe(t, svc, run.ID)
+	events := reader.drain(t)
+	reader.cancel()
+
+	var executeResult, statusResult *ToolResultEvent
+	for _, event := range events {
+		if event.Type != EventToolResult {
+			continue
+		}
+		data := event.Data.(ToolResultEvent)
+		switch data.Name {
+		case "execute_command":
+			executeResult = &data
+		case "process_status":
+			statusResult = &data
+		}
+	}
+	if executeResult == nil || executeResult.Error != "" {
+		t.Fatalf("execute result = %+v", executeResult)
+	}
+	if !strings.Contains(executeResult.Output, `"status":"running"`) {
+		t.Fatalf("execute output = %s", executeResult.Output)
+	}
+	if !strings.Contains(executeResult.Output, `"process_id":"proc_`) {
+		t.Fatalf("execute output has no process id: %s", executeResult.Output)
+	}
+	if statusResult == nil || statusResult.Error != "" {
+		t.Fatalf("status result = %+v", statusResult)
+	}
+	if !strings.Contains(statusResult.Output, `"processes"`) {
+		t.Fatalf("status output = %s", statusResult.Output)
+	}
+
+	var running *exec.Snapshot
+	for _, snapshot := range svc.execTools.Manager().List() {
+		if snapshot.Kind == exec.ProcessBackground && snapshot.Status == exec.ProcessRunning {
+			candidate := snapshot
+			running = &candidate
+			break
+		}
+	}
+	if running == nil {
+		t.Fatal("background process is not tracked by the service manager")
+	}
+	_, confirmed, err := svc.execTools.Manager().Kill(context.Background(), running.ProcessID, exec.SignalTerm, time.Second)
+	if err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if !confirmed {
+		t.Fatal("background process kill was not confirmed")
+	}
+}
+
+func TestKillProcessRequiresApproval(t *testing.T) {
+	svc, _, _, _ := newTestService(t, AccessAsk,
+		scriptedStep{
+			toolCalls: []llm.ToolCall{{
+				CallID: "call_1",
+				Name:   "kill_process",
+				Input:  json.RawMessage(`{"process_id":"proc_missing"}`),
+			}},
+		},
+		scriptedStep{text: "The kill was denied."},
+	)
+
+	thread, err := svc.CreateThread(context.Background(), CreateThreadInput{})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	run, err := svc.StartMessage(context.Background(), thread.ID, "kill it")
+	if err != nil {
+		t.Fatalf("StartMessage: %v", err)
+	}
+	reader := subscribe(t, svc, run.ID)
+	defer reader.cancel()
+	approvalEvent := reader.until(t, func(event Event) bool {
+		return event.Type == EventApprovalRequired
+	})
+	approval := approvalEvent.Data.(ApprovalRequiredEvent).Approval
+	if approval.ToolName != "kill_process" {
+		t.Fatalf("approval tool = %q, want kill_process", approval.ToolName)
+	}
+	if err := svc.ResolveApproval(run.ID, approval.ID, ApprovalDecision{Allow: false}); err != nil {
+		t.Fatalf("ResolveApproval: %v", err)
+	}
+	events := reader.drain(t)
+	result := assertEvent(t, events, EventToolResult)
+	if resultData := result.Data.(ToolResultEvent); !resultData.Skipped {
+		t.Fatalf("kill result = %+v, want skipped", resultData)
+	}
+	assertEvent(t, events, EventRunCompleted)
 }
 
 func TestDynamicProviderDefaults(t *testing.T) {

@@ -842,7 +842,7 @@ func (s *Service) persistResponse(r *run, resp *agent.Response) ([]string, error
 }
 
 func requiresApproval(toolName string) bool {
-	return toolName == "execute_command"
+	return toolName == "execute_command" || toolName == "kill_process"
 }
 
 // GetRun returns a snapshot of a run.

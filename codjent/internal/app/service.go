@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ijaidev/gojent/codjent/internal/provider"
 	"github.com/ijaidev/gojent/core/tool"
@@ -18,7 +19,7 @@ import (
 
 const defaultInstructions = `You are codjent, a pragmatic coding agent working in the repository at %s.
 
-Use the available file tools to inspect and edit code, and the execute_command tool to run commands. Keep changes focused and consistent with the existing code. Verify your work with tests or builds when practical. Never claim that a command or change succeeded unless a tool result confirms it. If a tool call is denied or fails, report that honestly instead of working around it. User messages may include image attachments such as screenshots, diagrams, or photos; inspect them when they are relevant to the request.`
+Use the available file tools to inspect and edit code. Use execute_command to run commands. For long-running commands such as dev servers, watchers, and long builds, set background=true; manage them with process_status, read_process_output, wait_process, and kill_process. Do not append '&' to a command. Keep changes focused and consistent with the existing code. Verify your work with tests or builds when practical. Never claim that a command or change succeeded unless a tool result confirms it. If a tool call is denied or fails, report that honestly instead of working around it. User messages may include image attachments such as screenshots, diagrams, or photos; inspect them when they are relevant to the request.`
 
 // Config configures a codjent application service.
 type Config struct {
@@ -39,6 +40,7 @@ type Service struct {
 	workspace    string
 	instructions string
 	tools        []tool.Tool
+	execTools    *exec.Tools
 
 	defaultProvider   string
 	defaultModel      string
@@ -122,7 +124,7 @@ func New(cfg Config) (*Service, error) {
 		maxSteps = math.MaxInt
 	}
 
-	tools, err := newTools(workspace)
+	tools, execTools, err := newTools(workspace)
 	if err != nil {
 		return nil, fmt.Errorf("app: create tools: %w", err)
 	}
@@ -139,6 +141,7 @@ func New(cfg Config) (*Service, error) {
 		workspace:         workspace,
 		instructions:      instructions,
 		tools:             tools,
+		execTools:         execTools,
 		defaultProvider:   defaultProvider,
 		defaultModel:      defaultModel,
 		defaultAccessMode: accessMode,
@@ -338,7 +341,14 @@ func (s *Service) close(ctx context.Context) error {
 	case <-done:
 	case <-ctx.Done():
 	}
-	return s.store.Close()
+
+	var execErr error
+	if s.execTools != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		execErr = s.execTools.Close(cleanupCtx)
+		cancel()
+	}
+	return errors.Join(execErr, s.store.Close())
 }
 
 func (s *Service) isClosed() bool {
@@ -407,27 +417,34 @@ func hasModel(info provider.Info, modelID string) bool {
 	return false
 }
 
-func newTools(workspace string) ([]tool.Tool, error) {
+func newTools(workspace string) ([]tool.Tool, *exec.Tools, error) {
 	fsConfig := fs.Config{BaseDir: workspace}
 	readFile, err := fs.NewReadFileTool(fsConfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	writeFile, err := fs.NewWriteFileTool(fsConfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	editFile, err := fs.NewEditFileTool(fsConfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	listFiles, err := fs.NewListFilesTool(fsConfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	runCommand, err := exec.NewExecuteCommandTool(exec.Config{BaseDir: workspace})
+	manager, err := exec.NewManager(exec.ManagerConfig{BaseDir: workspace})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return []tool.Tool{readFile, writeFile, editFile, listFiles, runCommand}, nil
+	execTools, err := exec.NewTools(manager)
+	if err != nil {
+		_ = manager.Close(context.Background())
+		return nil, nil, err
+	}
+	all := []tool.Tool{readFile, writeFile, editFile, listFiles}
+	all = append(all, execTools.All()...)
+	return all, execTools, nil
 }
