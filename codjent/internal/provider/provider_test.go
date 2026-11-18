@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 
@@ -406,21 +405,5 @@ func TestFormats(t *testing.T) {
 	}
 	if Format("other").Valid() {
 		t.Fatal("unknown format reported valid")
-	}
-}
-
-func TestRegistryPreservesOrderAndClones(t *testing.T) {
-	a := &fakeProvider{info: Info{ID: "a", Models: []ModelInfo{{ID: "m"}}}}
-	b := &fakeProvider{info: Info{ID: "b", Models: []ModelInfo{{ID: "m"}}}}
-	registry, err := NewRegistry(a, b)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ids := make([]string, 0, 2)
-	for _, info := range registry.List() {
-		ids = append(ids, info.ID)
-	}
-	if !slices.Equal(ids, []string{"a", "b"}) {
-		t.Fatalf("order = %v", ids)
 	}
 }

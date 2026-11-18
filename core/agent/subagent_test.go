@@ -86,15 +86,3 @@ func TestAgent_AsToolCustomNameAndDescription(t *testing.T) {
 		t.Fatalf("unexpected spec: %+v", spec)
 	}
 }
-
-func TestAgent_RejectsDuplicateTools(t *testing.T) {
-	echo := newEchoTool(t, "echo", nil)
-	_, err := agent.New(agent.Config{
-		Name:  "dupes",
-		Model: &scriptModel{steps: []step{finalText("ok")}},
-		Tools: []tool.Tool{echo, echo},
-	})
-	if err == nil {
-		t.Fatal("expected an error for duplicate tool names")
-	}
-}

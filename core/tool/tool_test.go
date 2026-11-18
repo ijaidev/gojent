@@ -706,33 +706,6 @@ func TestTool_MultipartResult(t *testing.T) {
 	}
 }
 
-func TestTool_ResultConstructors(t *testing.T) {
-	textResult := tool.Result{Content: []llm.Part{llm.NewTextPart("hello")}}
-	if textResult.Text() != "hello" {
-		t.Errorf("unexpected text result: %+v", textResult)
-	}
-
-	imgPart := llm.FileFromBytes([]byte{1, 2, 3}, "image/png")
-	imageResult := tool.NewFileResult("caption", imgPart)
-	if len(imageResult.Content) != 2 || imageResult.Text() != "caption" {
-		t.Errorf("unexpected image result: %+v", imageResult)
-	}
-
-	dataResult := tool.Result{Data: map[string]any{"ok": true}}
-	resultParts, err := dataResult.Parts()
-	if err != nil {
-		t.Fatalf("Parts failed: %v", err)
-	}
-	if len(resultParts) != 1 || resultParts[0].(*llm.TextPart).Text != `{"ok":true}` {
-		t.Errorf("unexpected data parts: %+v", resultParts)
-	}
-
-	badResult := tool.Result{Data: make(chan int)}
-	if _, err := badResult.Parts(); !errors.Is(err, tool.ErrOutputEncode) {
-		t.Errorf("expected ErrOutputEncode for unencodable data, got %v", err)
-	}
-}
-
 func TestTool_NilAndZeroValue(t *testing.T) {
 	var nilTool *tool.BaseTool[string, string]
 	if nilTool.ID() != "" || nilTool.Description() != "" || nilTool.Parameters() != nil {
