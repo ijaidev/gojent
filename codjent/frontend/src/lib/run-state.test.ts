@@ -85,12 +85,13 @@ describe("run-state", () => {
       live,
       event({
         type: "approval_resolved",
-        data: { approval_id: "apr_1", allow: false },
+        data: { approval_id: "apr_1", allow: false, note: "not now" },
       }),
     );
     expect(live.status).toBe("running");
     expect(live.approval).toBeNull();
     expect(live.tools[0]?.status).toBe("denied");
+    expect(live.tools[0]?.note).toBe("not now");
 
     live = reduceRunEvent(
       live,
@@ -102,34 +103,6 @@ describe("run-state", () => {
     expect(live.tools[0]?.status).toBe("done");
     expect(live.tools[0]?.output).toBe("ok");
     expect(live.tools[0]?.endedAt).toBeTypeOf("number");
-  });
-
-  it("keeps the denied state distinct from failure", () => {
-    let live = createPendingRun("run_1", "th_1");
-    live = reduceRunEvent(
-      live,
-      event({
-        type: "tool_call",
-        data: {
-          id: "call_1",
-          name: "execute_command",
-          arguments: "{}",
-        },
-      }),
-    );
-    live = reduceRunEvent(
-      live,
-      event({ type: "approval_required", data: { approval } }),
-    );
-    live = reduceRunEvent(
-      live,
-      event({
-        type: "approval_resolved",
-        data: { approval_id: "apr_1", allow: false, note: "not now" },
-      }),
-    );
-    expect(live.tools[0]?.status).toBe("denied");
-    expect(live.tools[0]?.note).toBe("not now");
   });
 
   it("marks unfinished tools when a run is canceled", () => {

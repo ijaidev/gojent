@@ -91,11 +91,27 @@ func TestThreadCRUD(t *testing.T) {
 }
 
 func TestManagedExecToolsRegistered(t *testing.T) {
-	svc, _, _, _ := newTestService(t, AccessAsk, scriptedStep{text: "ok"})
+	svc, _, model, _ := newTestService(t, AccessAsk, scriptedStep{text: "ok"})
 
-	found := make(map[string]bool, len(svc.tools))
-	for _, candidate := range svc.tools {
-		found[candidate.Spec().Name] = true
+	thread, err := svc.CreateThread(context.Background(), CreateThreadInput{})
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	run, err := svc.StartMessage(context.Background(), thread.ID, "hello")
+	if err != nil {
+		t.Fatalf("StartMessage: %v", err)
+	}
+	reader := subscribe(t, svc, run.ID)
+	reader.drain(t)
+	reader.cancel()
+
+	requests := model.snapshotRequests()
+	if len(requests) == 0 {
+		t.Fatal("model received no request")
+	}
+	found := make(map[string]bool, len(requests[0].Tools))
+	for _, candidate := range requests[0].Tools {
+		found[candidate.Name] = true
 	}
 	for _, name := range []string{
 		"execute_command",
@@ -105,7 +121,7 @@ func TestManagedExecToolsRegistered(t *testing.T) {
 		"kill_process",
 	} {
 		if !found[name] {
-			t.Errorf("tool %q is not registered (have %v)", name, found)
+			t.Errorf("tool %q is not exposed to the model (have %v)", name, found)
 		}
 	}
 }
@@ -310,7 +326,7 @@ func TestDynamicProviderDefaults(t *testing.T) {
 }
 
 func TestFullAccessRunPersistsTranscript(t *testing.T) {
-	svc, _, model, workspace := newTestService(t, AccessFull,
+	svc, _, model, _ := newTestService(t, AccessFull,
 		scriptedStep{
 			text: "Running the command.",
 			toolCalls: []llm.ToolCall{{
@@ -405,11 +421,6 @@ func TestFullAccessRunPersistsTranscript(t *testing.T) {
 	}
 	if !sawTool {
 		t.Fatalf("second-run request did not include tool history: %+v", last.Messages)
-	}
-
-	marker := filepath.Join(workspace, "unused")
-	if _, err := os.Stat(marker); err == nil {
-		t.Fatalf("unexpected marker")
 	}
 }
 

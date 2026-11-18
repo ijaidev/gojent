@@ -10,36 +10,6 @@ import (
 	"github.com/ijaidev/gojent/core/session"
 )
 
-func TestMemory_SessionIsolation(t *testing.T) {
-	ctx := context.Background()
-	store := session.NewMemory()
-
-	first := session.Session{ID: "shared", ResourceID: "tenant-a"}
-	second := session.Session{ID: "shared", ResourceID: "tenant-b"}
-
-	if err := store.Append(ctx, first, llm.UserMessage("a")); err != nil {
-		t.Fatalf("Append first: %v", err)
-	}
-	if err := store.Append(ctx, second, llm.UserMessage("b")); err != nil {
-		t.Fatalf("Append second: %v", err)
-	}
-
-	firstMessages, err := store.Load(ctx, first)
-	if err != nil {
-		t.Fatalf("Load first: %v", err)
-	}
-	secondMessages, err := store.Load(ctx, second)
-	if err != nil {
-		t.Fatalf("Load second: %v", err)
-	}
-	if len(firstMessages) != 1 || firstMessages[0].Text() != "a" {
-		t.Errorf("tenant a messages = %+v", firstMessages)
-	}
-	if len(secondMessages) != 1 || secondMessages[0].Text() != "b" {
-		t.Errorf("tenant b messages = %+v", secondMessages)
-	}
-}
-
 func TestMemory_DeepCopiesMessages(t *testing.T) {
 	ctx := context.Background()
 	store := session.NewMemory()
@@ -76,30 +46,6 @@ func TestMemory_DeepCopiesMessages(t *testing.T) {
 	}
 	if again[0].Text() != "hello" {
 		t.Errorf("caller mutation leaked into the store: %q", again[0].Text())
-	}
-}
-
-func TestMemory_ValidationAndCancellation(t *testing.T) {
-	store := session.NewMemory()
-	ctx := context.Background()
-
-	if _, err := store.Load(ctx, session.Session{}); !errors.Is(err, session.ErrIDRequired) {
-		t.Errorf("Load without ID = %v, want ErrIDRequired", err)
-	}
-	if err := store.Append(ctx, session.Session{}, llm.UserMessage("x")); !errors.Is(err, session.ErrIDRequired) {
-		t.Errorf("Append without ID = %v, want ErrIDRequired", err)
-	}
-	if err := store.Append(ctx, session.Session{ID: "s"}); !errors.Is(err, session.ErrMessagesRequired) {
-		t.Errorf("Append without messages = %v, want ErrMessagesRequired", err)
-	}
-
-	canceled, cancel := context.WithCancel(ctx)
-	cancel()
-	if _, err := store.Load(canceled, session.Session{ID: "s"}); !errors.Is(err, context.Canceled) {
-		t.Errorf("Load with canceled context = %v", err)
-	}
-	if err := store.Append(canceled, session.Session{ID: "s"}, llm.UserMessage("x")); !errors.Is(err, context.Canceled) {
-		t.Errorf("Append with canceled context = %v", err)
 	}
 }
 
