@@ -19,6 +19,7 @@ The root `AGENTS.md` and the codjent `AGENTS.md` also apply. This file adds the 
 - Keep UI and copy minimal. Prefer progressive disclosure over persistent explanation or status text, and do not add copy that restates the interface. Give icon-only controls accessible names, preserve keyboard navigation and focus return, respect `prefers-reduced-motion`, and verify both light and dark schemes.
 - Vitest covers pure logic under `src/lib`; there is no DOM component-test harness. Keep new tests focused on reducers, state, and serialization. For visual changes, verify with lint, type-check, and a production build; do not add a one-off browser automation stack for a single screen.
 - Frontend dependencies are deliberate: prefer React, Next, Base UI, and the existing local primitives. Do not add a UI kit, state library, or another fetch wrapper without a concrete need.
+- Skills under `codjent/frontend/.agents/skills/` (`frontend-design`, `vercel-react-best-practices`, `vercel-composition-patterns`, `web-design-guidelines`, `vitest`) are not auto-discovered when running from repo root; read `codjent/frontend/.agents/skills/<name>/SKILL.md` for matching tasks, and treat `.agents/skills/**` and `skills-lock.json` as vendored.
 
 ## Where a change goes
 
@@ -30,7 +31,3 @@ The root `AGENTS.md` and the codjent `AGENTS.md` also apply. This file adds the 
 | Reusable primitives | `src/components/ui` |
 | Product screens and composition | `src/components` and `src/app` |
 | Design tokens and theme | `src/app/globals.css`; use the semantic utilities, never raw colors |
-
-The frontend renders state and sends intent. Do not put run orchestration,
-approvals, or provider translation in components, and do not call `fetch`
-outside `src/lib/api.ts`.
