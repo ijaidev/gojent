@@ -21,7 +21,7 @@ Gojent is a public Apache-2.0 Go agent runtime with a stdlib-only root module an
 
 ## Architecture & conventions
 
-- Dependency direction is one-way (`just arch-check`): root (`core/*`, `tools/*`, `providers/mockllm`) is stdlib-only; child modules import `core`, never each other.
+- Dependency direction is one-way (`just arch-check`): root (`core/*`, `tools/*`, `providers/mockllm`) is stdlib-only; `providers/*` and `stores/*` depend on `core` (`providers/*` also on `providers/internal`), never sibling modules, while `codjent` and `examples/*` may import them.
 - Build providers in `providers/<name>/` using `providers/internal/httpheader`, accurate `llm.Info`, and `llm.Error`/`llm.Kind` classification (never match provider error strings).
 - Standard library first (`no testify`); add interfaces only where implementations vary. Public JSON uses `snake_case` and never exposes secrets, internal paths, or vendor SDK types.
 - Unit tests must be deterministic and offline (`mockllm`, `httptest`, `t.TempDir`, injected errors; no `sleep` or timing guesses). Run `llmtest.Run` in providers and `sessiontest.Run` in stores.

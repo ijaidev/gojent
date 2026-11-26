@@ -1,5 +1,5 @@
 /* biome-ignore-all lint/complexity/noImportantStyles: reduced-motion overrides must beat utility classes */
-@import "tailwindcss";
+@import "tailwindcss" source("../");
 
 :root {
   color-scheme: light dark;
