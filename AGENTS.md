@@ -98,3 +98,11 @@ imports `httpapi` or `cmd`.
 - Keep each rule at the narrowest scope. Nested `AGENTS.md` files add to the root rather than repeat it, and these files are maintained by hand; update stale or contradictory rules with the code change.
 - Do not hand-edit generated files. Regenerate `codjent/frontend/out` with the codjent recipe and commit the result; `go.work`/`go.work.sum` are local, and `next-env.d.ts` is managed by Next.
 - If a task requires a new module, dependency, public interface, provider, or broad UI pattern, state the reason in the change, follow `CONTRIBUTING.md` for workspace and release mechanics, and keep it within the boundaries above. When the correct scope is ambiguous, ask before expanding it.
+
+<!-- os:begin -->
+## OpenShip
+
+This repo uses OpenShip for issue/PR workflows. Read `.openship/CONTRACT.md` before changing a spec, ticket, or PR. If it is missing, run `/os-setup`.
+
+<!-- os:version 0.11.0 -->
+<!-- os:end -->

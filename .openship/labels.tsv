@@ -1,0 +1,17 @@
+os:spec	5319E7	Spec: sole source of behavior
+os:ticket	1D76DB	Tracer ticket: scope and acceptance
+os:triage	FBCA04	Needs assessment
+os:needs-info	D876E3	Waiting on reporter
+os:ready	0E8A16	Brief complete; author may start
+os:in-progress	F9A825	Author is working; stays until merge
+os:in-review	006B75	PR: reviewer is reviewing the latest head
+os:changes	D93F0B	PR: reviewer requested changes
+os:approved	2EA043	PR: gate passed; named merger or human may merge
+os:blocked	B60205	Needs a human decision
+os:wontfix	6A737D	Not being done
+os:done	1A7F37	Merged or closed
+os:bug	D73A4A	Defect
+os:feature	A2EEEF	New behavior
+os:refactor	C5DEF5	No behavior change
+os:chore	FEF2C0	Maintenance
+os:needs-review	1D76DB	PR: latest head awaits review
