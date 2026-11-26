@@ -19,7 +19,6 @@ The root `AGENTS.md` and the codjent `AGENTS.md` also apply. This file adds the 
 - Keep UI and copy minimal. Prefer progressive disclosure over persistent explanation or status text, and do not add copy that restates the interface. Give icon-only controls accessible names, preserve keyboard navigation and focus return, respect `prefers-reduced-motion`, and verify both light and dark schemes.
 - Vitest covers pure logic under `src/lib`; there is no DOM component-test harness. Keep new tests focused on reducers, state, and serialization. For visual changes, verify with lint, type-check, and a production build; do not add a one-off browser automation stack for a single screen.
 - Frontend dependencies are deliberate: prefer React, Next, Base UI, and the existing local primitives. Do not add a UI kit, state library, or another fetch wrapper without a concrete need.
-- For frontend work, load the relevant skills under `.agents/skills` (for example `design-taste-frontend`, `frontend-design`, `ui-ux-pro-max`, `vercel-composition-patterns`, `vercel-react-best-practices`, and `web-design-guidelines`). Treat `.agents/skills/**` and `skills-lock.json` as vendored; do not hand-edit skill content or hashes.
 
 ## Where a change goes
 

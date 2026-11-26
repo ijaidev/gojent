@@ -91,8 +91,7 @@ imports `httpapi` or `cmd`.
 
 ## Agent workflow
 
-- For Go work, start with `.agents/skills/golang-how-to` and load the relevant focused skills (for example `golang-testing`, `golang-error-handling`, `golang-security`, `golang-documentation`, or `golang-continuous-integration`). For interface or module design, use `.agents/skills/codebase-design`.
-- Treat `.agents/skills/**`, `skills-lock.json`, `codjent/frontend/.agents/skills/**`, and `codjent/frontend/skills-lock.json` as vendored. Do not hand-edit skill content or hashes; update them through the project's skills tooling.
+- Treat `.agents/skills/**`, `skills-lock.json`, and `codjent/frontend/skills-lock.json` as vendored. Do not hand-edit skill content or hashes; update them through the project's skills tooling.
 - Before committing, opening a PR, adding a module or dependency, or cutting a release, follow `CONTRIBUTING.md`.
 - Read the surrounding code before editing. Match its naming, error style, test layout, and dependency choices; do not reformat untouched files or rename things outside the task.
 - Keep each rule at the narrowest scope. Nested `AGENTS.md` files add to the root rather than repeat it, and these files are maintained by hand; update stale or contradictory rules with the code change.
