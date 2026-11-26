@@ -17,9 +17,9 @@ The root `AGENTS.md` and the codjent `AGENTS.md` also apply. This file adds the 
 - The browser talks to the backend only through `src/lib/api.ts`; components render state and send intent. Do not put run orchestration, approvals, or provider translation in React components. Keep wire types in `src/lib/types.ts` and run-state reduction in `src/lib/run-state.ts`; do not call `fetch` directly or duplicate server contracts.
 - Use the semantic design tokens in `src/app/globals.css` through utilities such as `bg-app`, `bg-surface`, `text-ink`, `text-muted`, `border-line`, and `bg-accent`, including the status, radius, shadow, and motion tokens. Do not introduce a second palette or hardcode product colors in components; the tokens and the viewport theme metadata are the source of truth. Reuse the primitives in `src/components/ui` and the existing dialog, lightbox, transcript, and tool-card patterns before writing new chrome.
 - Keep UI and copy minimal. Prefer progressive disclosure over persistent explanation or status text, and do not add copy that restates the interface. Give icon-only controls accessible names, preserve keyboard navigation and focus return, respect `prefers-reduced-motion`, and verify both light and dark schemes.
-- Vitest covers pure logic under `src/lib`; there is no DOM component-test harness. Keep new tests focused on reducers, state, and serialization. For visual changes, verify with lint, type-check, and a production build; do not add a one-off browser automation stack for a single screen.
+- Vitest covers pure logic under `src/lib`; there is no DOM component-test harness. The lockfile pins Vitest 5.0.5, so ignore 5.1+-only CLI flags (such as `--since-last-run`) in the vendored `vitest` skill. Keep new tests focused on reducers, state, and serialization. For visual changes, verify with lint, type-check, and a production build; do not add a one-off browser automation stack for a single screen.
 - Frontend dependencies are deliberate: prefer React, Next, Base UI, and the existing local primitives. Do not add a UI kit, state library, or another fetch wrapper without a concrete need.
-- For frontend work, load the relevant skills under `.agents/skills` (for example `design-taste-frontend`, `frontend-design`, `ui-ux-pro-max`, `vercel-composition-patterns`, `vercel-react-best-practices`, and `web-design-guidelines`). Treat `.agents/skills/**` and `skills-lock.json` as vendored; do not hand-edit skill content or hashes.
+- Skills under `codjent/frontend/.agents/skills/` (`frontend-design`, `vercel-react-best-practices`, `vercel-composition-patterns`, `web-design-guidelines`, `vitest`) are not auto-discovered when running from repo root; read `codjent/frontend/.agents/skills/<name>/SKILL.md` for matching tasks, and treat `.agents/skills/**` and `skills-lock.json` as vendored.
 
 ## Where a change goes
 
@@ -31,7 +31,3 @@ The root `AGENTS.md` and the codjent `AGENTS.md` also apply. This file adds the 
 | Reusable primitives | `src/components/ui` |
 | Product screens and composition | `src/components` and `src/app` |
 | Design tokens and theme | `src/app/globals.css`; use the semantic utilities, never raw colors |
-
-The frontend renders state and sends intent. Do not put run orchestration,
-approvals, or provider translation in components, and do not call `fetch`
-outside `src/lib/api.ts`.
