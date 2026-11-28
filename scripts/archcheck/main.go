@@ -163,6 +163,8 @@ func areaFor(rel string) string {
 		return "store:" + pathSegment(rel, "stores/")
 	case strings.HasPrefix(rel, "tools/"):
 		return "tools"
+	case strings.HasPrefix(rel, "mcp/"):
+		return "mcp"
 	case strings.HasPrefix(rel, "codjent/internal/app/"):
 		return "codjent/app"
 	case strings.HasPrefix(rel, "codjent/internal/httpapi/"):
@@ -208,6 +210,8 @@ func importArea(importPath string) (string, bool) {
 		return "store:" + firstSegment(strings.TrimPrefix(rest, "stores/")), true
 	case rest == "tools" || strings.HasPrefix(rest, "tools/"):
 		return "tools", true
+	case rest == "mcp" || strings.HasPrefix(rest, "mcp/"):
+		return "mcp", true
 	case rest == "codjent/internal/app" || strings.HasPrefix(rest, "codjent/internal/app/"):
 		return "codjent/app", true
 	case rest == "codjent/internal/httpapi" || strings.HasPrefix(rest, "codjent/internal/httpapi/"):
@@ -244,6 +248,8 @@ func allowed(from, to string) bool {
 	case "core":
 		return to == "core"
 	case "tools":
+		return to == "core"
+	case "mcp":
 		return to == "core"
 	case "providers/internal":
 		return to == "core" || to == "providers/internal"

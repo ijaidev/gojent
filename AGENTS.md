@@ -13,15 +13,16 @@ Gojent is a public Apache-2.0 Go agent runtime with a stdlib-only root module an
 | A model provider | `providers/<name>/`; run `llmtest.Run` |
 | A session backend | `stores/<name>/`; run `sessiontest.Run` |
 | A ready-made tool | `tools/<name>/`; table-driven tests |
+| MCP client behavior | `mcp/`; client-only adapter, never imported by `core`, `tools`, or `providers` |
 | Sample app runs, approvals, persistence | `codjent/internal/app` (see `codjent/AGENTS.md`) |
 | HTTP parsing, status codes, SSE | `codjent/internal/httpapi`; calls `app`, never the reverse |
 | Provider configuration and catalog | `codjent/internal/provider` |
 | Sample UI | `codjent/frontend` (see `codjent/frontend/AGENTS.md`) |
-| A runnable example | `examples/<name>/`; must compile and match current APIs |
+| A runnable example | `examples/<name>/`, or a self-contained module `examples/` command; must compile and match current APIs |
 
 ## Architecture & conventions
 
-- Dependency direction is one-way (`just arch-check`): root (`core/*`, `tools/*`, `providers/mockllm`) is stdlib-only; `providers/*` and `stores/*` depend on `core` (`providers/*` also on `providers/internal`), never sibling modules, while `codjent` and `examples/*` may import them.
+- Dependency direction is one-way (`just arch-check`): root (`core/*`, `tools/*`, `providers/mockllm`) is stdlib-only; `providers/*` and `stores/*` depend on `core` (`providers/*` also on `providers/internal`), never sibling modules, while `mcp` depends on `core` and its official SDK; `codjent` and `examples/*` may import the root and child modules.
 - Build providers in `providers/<name>/` using `providers/internal/httpheader`, accurate `llm.Info`, and `llm.Error`/`llm.Kind` classification (never match provider error strings).
 - Standard library first (`no testify`); add interfaces only where implementations vary. Public JSON uses `snake_case` and never exposes secrets, internal paths, or vendor SDK types.
 - Unit tests must be deterministic and offline (`mockllm`, `httptest`, `t.TempDir`, injected errors; no `sleep` or timing guesses). Run `llmtest.Run` in providers and `sessiontest.Run` in stores.

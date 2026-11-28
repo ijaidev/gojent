@@ -1,0 +1,23 @@
+# Run this module's unit tests
+test:
+    go test -race ./...
+
+# Run go vet for this module
+vet:
+    go vet ./...
+
+# Build this module's packages
+build:
+    go build ./...
+
+# Run static analysis for this module
+lint:
+    golangci-lint run ./...
+
+# Tidy this module's go.mod and go.sum
+tidy:
+    go mod tidy
+
+# Check that this module's go.mod and go.sum are tidy
+tidy-check:
+    go mod tidy -diff
