@@ -1,5 +1,5 @@
 # Non-root modules. Keep in sync with the go.work use directives.
-modules := "codjent examples/google providers/anthropic providers/google providers/openai stores/postgres stores/sqlite"
+modules := "codjent examples/google mcp providers/anthropic providers/google providers/openai stores/postgres stores/sqlite"
 
 # Create the local Go workspace (go.work is not tracked)
 workspace:
