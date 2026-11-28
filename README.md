@@ -54,7 +54,7 @@ Go 1.25.5 or newer is required.
 go get github.com/ijaidev/gojent@latest
 ```
 
-Optional providers and stores are separate modules:
+Optional providers, stores, and the MCP client are separate modules:
 
 ```bash
 go get github.com/ijaidev/gojent/providers/anthropic
@@ -62,6 +62,7 @@ go get github.com/ijaidev/gojent/providers/google
 go get github.com/ijaidev/gojent/providers/openai
 go get github.com/ijaidev/gojent/stores/sqlite
 go get github.com/ijaidev/gojent/stores/postgres
+go get github.com/ijaidev/gojent/mcp
 ```
 
 ## Quickstart
@@ -260,13 +261,14 @@ cannot leave a transcript with unanswered tool calls.
 | [`core/tool`](core/tool) | `Tool`, typed `Config`, JSON Schema generation and validation. |
 | [`core/session`](core/session) | `Session` identity, the two-method `Store` contract, `Memory`. |
 | [`tools`](tools) | Ready-made filesystem, command, web, and task tools. |
+| [`mcp`](mcp) | Client adapter for stdio MCP servers (separate module). |
 | [`providers/mockllm`](providers/mockllm) | Deterministic model for tests and examples (root module). |
 | [`providers/anthropic`](providers/anthropic) | Anthropic Messages adapter (separate module). |
 | [`providers/google`](providers/google) | Google Gemini adapter (separate module). |
 | [`providers/openai`](providers/openai) | OpenAI Responses and Chat Completions adapter (separate module). |
 | [`stores/sqlite`](stores/sqlite) | Durable SQLite session store (separate module). |
 | [`stores/postgres`](stores/postgres) | Durable PostgreSQL session store (separate module). |
-| [`examples`](examples) | Runnable examples; `examples/google` is its own module. |
+| [`examples`](examples) | Runnable examples; `examples/google` is its own module. The MCP demo lives in [`mcp/examples/stdio`](mcp/examples/stdio). |
 
 ## Tools
 
@@ -377,6 +379,47 @@ Filesystem tools are sandboxed to `BaseDir` when one is set. Command tools use
 `BaseDir` for relative working directories, but commands run with the host
 user's permissions; gate them with a policy or approver before giving them to a
 model.
+
+### MCP servers
+
+The [`mcp`](mcp) module consumes Model Context Protocol servers and exposes
+their tools as ordinary Gojent tools:
+
+```go
+import "github.com/ijaidev/gojent/mcp"
+
+client := mcp.New()
+defer func() { _ = client.Close() }()
+
+statuses, err := client.Connect(ctx, []mcp.ServerConfig{{
+	Name:    "workspace",
+	Command: "my-mcp-server",
+	Args:    []string{"--root", "/workspace"},
+	Env:     []string{"WORKSPACE=/workspace"},
+}})
+if err != nil {
+	return err
+}
+for _, status := range statuses {
+	if status.Status != mcp.StatusConnected {
+		return status.Err
+	}
+}
+
+mcpTools, err := client.Tools()
+if err != nil {
+	return err
+}
+// mcpTools are tool.Tool values; pass them to agent.Config.Tools.
+```
+
+`Env` is the complete child environment allowlist; the child also receives a
+small platform minimum and no other host variables. Tools are named
+`<server>_<tool>` with ASCII normalization, and a name collision is an error
+before any model call. MCP servers validate their own input schemas; the
+adapter does not apply Gojent's schema subset to them. This first release
+supports stdio servers and text tool results; Streamable HTTP, resources,
+prompts, elicitation, and rich content follow.
 
 ## Streaming
 
@@ -765,6 +808,8 @@ core/llm            model contract, messages, streams, errors
 core/tool           typed tools, schemas, validation, results
 core/session        session identity, store contract, memory store
 tools               filesystem, command, web, and task tools
+mcp                 MCP client adapter for stdio servers (separate module)
+mcp/examples/stdio  self-contained MCP client demonstration
 providers/anthropic Anthropic Messages adapter (separate module)
 providers/google    Gemini adapter (separate module)
 providers/openai    OpenAI Responses and Chat Completions adapter (separate module)
