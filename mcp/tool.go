@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/ijaidev/gojent/core/llm"
@@ -95,6 +96,13 @@ func decodeArguments(raw json.RawMessage) (any, error) {
 	var arguments any
 	if err := decoder.Decode(&arguments); err != nil {
 		return nil, fmt.Errorf("%w: decode arguments: %w", tool.ErrInvalidInput, err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, fmt.Errorf("%w: arguments contain trailing data", tool.ErrInvalidInput)
+		}
+		return nil, fmt.Errorf("%w: arguments contain trailing data: %w", tool.ErrInvalidInput, err)
 	}
 	if arguments == nil {
 		return map[string]any{}, nil

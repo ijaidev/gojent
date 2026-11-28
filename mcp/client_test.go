@@ -375,7 +375,9 @@ func inMemoryDial(servers map[string]*sdk.Server) func(context.Context, ServerCo
 		}
 		serverTransport, clientTransport := sdk.NewInMemoryTransports()
 		go func() {
-			_ = server.Run(ctx, serverTransport)
+			// The server outlives the connection setup context; closing the
+			// client session closes the transport and stops Run.
+			_ = server.Run(context.Background(), serverTransport)
 		}()
 		client := sdk.NewClient(
 			&sdk.Implementation{Name: "test-client", Version: "1"},

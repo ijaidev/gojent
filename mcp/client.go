@@ -94,7 +94,7 @@ type server struct {
 //
 // Connect must be called once before Tools or any returned tool. Tools and
 // Execute are safe for concurrent use; Close is safe to call concurrently
-// with them and is idempotent.
+// with Connect, Tools, and Execute and is idempotent.
 type Client struct {
 	dial func(context.Context, ServerConfig) (session, error)
 
@@ -103,6 +103,13 @@ type Client struct {
 	byName    map[string]*server
 	connected bool
 	closed    bool
+
+	setupCtx    context.Context
+	setupCancel context.CancelFunc
+	setupWG     sync.WaitGroup
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // New creates a client that launches stdio servers.
@@ -111,9 +118,12 @@ func New() *Client {
 }
 
 func newClient(dial func(context.Context, ServerConfig) (session, error)) *Client {
+	setupCtx, setupCancel := context.WithCancel(context.Background())
 	return &Client{
-		dial:   dial,
-		byName: make(map[string]*server),
+		dial:        dial,
+		byName:      make(map[string]*server),
+		setupCtx:    setupCtx,
+		setupCancel: setupCancel,
 	}
 }
 
@@ -142,15 +152,33 @@ func (c *Client) Connect(ctx context.Context, configs []ServerConfig) ([]ServerS
 		return nil, ErrAlreadyConnected
 	}
 	c.connected = true
+	// Register before releasing the lock so Close cannot miss this setup and
+	// return while a session is still being created.
+	c.setupWG.Add(1)
 	c.mu.Unlock()
+	defer c.setupWG.Done()
+
+	// Setup honors both the caller's context and client shutdown. Canceling
+	// this context after Connect returns does not close the established
+	// session; Close owns the session lifetime.
+	connectCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(c.setupCtx, cancel)
+	defer stop()
 
 	statuses := make([]ServerStatus, 0, len(configs))
 	for _, config := range configs {
 		status := ServerStatus{Name: config.Name}
-		sess, err := c.dial(ctx, config)
+		if ctxErr := connectCtx.Err(); ctxErr != nil {
+			status.Status = StatusFailed
+			status.Err = ctxErr
+			statuses = append(statuses, status)
+			continue
+		}
+		sess, err := c.dial(connectCtx, config)
 		if err == nil {
 			var tools []*sdk.Tool
-			tools, err = listTools(ctx, sess)
+			tools, err = listTools(connectCtx, sess)
 			if err == nil {
 				version := protocolVersion(sess)
 				err = c.addServer(&server{
@@ -241,30 +269,36 @@ func (c *Client) Tools() ([]tool.Tool, error) {
 }
 
 // Close closes every server session and waits for its subprocess to exit. It
-// is idempotent and joins per-server close errors.
+// is idempotent; concurrent callers wait for the same shutdown and receive the
+// same joined error.
 func (c *Client) Close() error {
 	if c == nil {
 		return nil
 	}
 
-	c.mu.Lock()
-	if c.closed {
+	c.closeOnce.Do(func() {
+		c.mu.Lock()
+		c.closed = true
+		c.setupCancel()
+		servers := c.servers
+		c.servers = nil
+		c.byName = nil
 		c.mu.Unlock()
-		return nil
-	}
-	c.closed = true
-	servers := c.servers
-	c.servers = nil
-	c.byName = nil
-	c.mu.Unlock()
 
-	var errs []error
-	for _, srv := range servers {
-		if err := srv.session.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("mcp: close server %q: %w", srv.config.Name, err))
+		// Connect holds setupWG until every session it created is either
+		// registered or closed. Waiting here makes Close's subprocess
+		// guarantee hold even when setup is still dialing or listing.
+		c.setupWG.Wait()
+
+		var errs []error
+		for _, srv := range servers {
+			if err := srv.session.Close(); err != nil {
+				errs = append(errs, fmt.Errorf("mcp: close server %q: %w", srv.config.Name, err))
+			}
 		}
-	}
-	return errors.Join(errs...)
+		c.closeErr = errors.Join(errs...)
+	})
+	return c.closeErr
 }
 
 func (c *Client) session(name string) (session, error) {
